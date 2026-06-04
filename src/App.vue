@@ -890,6 +890,13 @@ watch([mappedPixelData, highlightColorKey], () => {
   renderCanvas()
 }, { flush: 'post' })
 
+watch(isProcessing, () => {
+  if (!isProcessing.value) {
+    // 处理完成后，canvas 元素才挂载到 DOM，需要重新渲染
+    renderCanvas()
+  }
+})
+
 watch(originalImageSrc, () => {
   if (!originalImageSrc.value) renderCanvas()
 })
