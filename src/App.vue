@@ -90,6 +90,7 @@ const granularity = ref(50)
 const granularityInput = ref('50')
 const granularityY = ref(0)
 const granularityYInput = ref('0')
+const lockAspectRatio = ref(false)
 const similarityThreshold = ref(30)
 const similarityThresholdInput = ref('30')
 const pixelationMode = ref<PixelationMode>(PixelationMode.Dominant)
@@ -385,7 +386,19 @@ const currentGridColors = computed(() => {
 })
 
 // ========== 输入同步 ==========
-watch(granularity, v => { granularityInput.value = v.toString() })
+watch(granularity, v => {
+  granularityInput.value = v.toString()
+  // 锁定比例时自动计算高度
+  if (lockAspectRatio.value) {
+    const src = croppedImageCanvas.value || originalImage.value
+    if (src) {
+      const aspectRatio = ('height' in src ? src.height : (src as HTMLCanvasElement).height) / ('width' in src ? src.width : (src as HTMLCanvasElement).width)
+      const newY = Math.max(1, Math.round(v * aspectRatio))
+      granularityY.value = newY
+      granularityYInput.value = newY.toString()
+    }
+  }
+})
 watch(granularityY, v => { granularityYInput.value = v.toString() })
 watch(similarityThreshold, v => { similarityThresholdInput.value = v.toString() })
 
@@ -1445,22 +1458,44 @@ function handleExportCsv() {
                   </div>
                 </div>
 
+                <!-- Lock aspect ratio -->
+                <div class="flex justify-center">
+                  <button
+                    @click="lockAspectRatio = !lockAspectRatio"
+                    :class="[
+                      'flex items-center gap-1 px-3 py-1 text-xs rounded-full border transition-colors',
+                      lockAspectRatio
+                        ? 'bg-indigo-50 border-indigo-300 text-indigo-600'
+                        : 'bg-gray-50 border-gray-200 text-gray-500 hover:border-gray-300'
+                    ]"
+                    :title="lockAspectRatio ? '解锁长宽比' : '锁定长宽比'"
+                  >
+                    <svg v-if="lockAspectRatio" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    </svg>
+                    <svg v-else class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+                    </svg>
+                    {{ lockAspectRatio ? '已锁定' : '锁定比例' }}
+                  </button>
+                </div>
+
                 <!-- Height -->
                 <div>
                   <label class="text-xs text-gray-500 mb-1 block">
                     高度 (纵向格子数)
-                    <span v-if="!croppedImageCanvas" class="text-gray-400 font-normal ml-1">裁剪后可调</span>
+                    <span v-if="!croppedImageCanvas && !lockAspectRatio" class="text-gray-400 font-normal ml-1">裁剪后可调</span>
                   </label>
                   <div class="flex items-center gap-2">
                     <input
                       v-model.number="granularityY"
                       type="range" min="10" max="300" step="1"
-                      :disabled="!croppedImageCanvas"
+                      :disabled="!croppedImageCanvas || lockAspectRatio"
                       class="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-500 disabled:opacity-40"
                     />
                     <input
                       v-model="granularityYInput"
-                      :disabled="!croppedImageCanvas"
+                      :disabled="!croppedImageCanvas || lockAspectRatio"
                       @blur="granularityY = Math.max(10, Math.min(300, parseInt(granularityYInput) || 0))"
                       @keyup.enter="granularityY = Math.max(10, Math.min(300, parseInt(granularityYInput) || 0))"
                       type="text"
