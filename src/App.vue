@@ -936,15 +936,6 @@ function handleExportCsv() {
           </div>
         </div>
         <div class="flex items-center gap-2">
-          <!-- 色号系统选择 -->
-          <select
-            v-model="selectedColorSystem"
-            class="text-sm border border-gray-300 rounded-lg px-3 py-1.5 bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
-          >
-            <option v-for="sys in colorSystemOptions" :key="sys.key" :value="sys.key">
-              {{ sys.name }}
-            </option>
-          </select>
           <!-- 专心模式按钮 -->
           <button
             v-if="mappedPixelData"
@@ -1085,6 +1076,26 @@ function handleExportCsv() {
             >
               回撤上一步
             </button>
+          </div>
+
+          <!-- 色号系统选择 -->
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">色号系统</label>
+            <div class="flex flex-wrap gap-1.5">
+              <button
+                v-for="sys in colorSystemOptions"
+                :key="sys.key"
+                @click="selectedColorSystem = sys.key"
+                :class="[
+                  'px-2.5 py-1 text-xs rounded-lg border transition-all duration-150',
+                  selectedColorSystem === sys.key
+                    ? 'bg-indigo-500 text-white border-indigo-500 shadow-sm'
+                    : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-300'
+                ]"
+              >
+                {{ sys.name }}
+              </button>
+            </div>
           </div>
         </div>
 
