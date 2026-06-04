@@ -737,11 +737,6 @@ function handlePreDownloadConfirm() {
   saveAndJumpToFocus()
 }
 
-function handlePreDownloadSkip() {
-  showPreDownloadModal.value = false
-  saveAndJumpToFocus()
-}
-
 function saveAndJumpToFocus() {
   localStorage.setItem('focusMode_pixelData', JSON.stringify(mappedPixelData.value))
   localStorage.setItem('focusMode_gridDimensions', JSON.stringify(gridDimensions.value))
@@ -1534,14 +1529,15 @@ function handleExportCsv() {
     </Teleport>
 
     <!-- 专心模式预下载提醒弹窗 -->
-    <Teleport to="body">
-      <FocusModePreDownloadModal
-        v-if="showPreDownloadModal"
-        @confirm="handlePreDownloadConfirm"
-        @skip="handlePreDownloadSkip"
-        @close="showPreDownloadModal = false"
-      />
-    </Teleport>
+    <FocusModePreDownloadModal
+      v-if="showPreDownloadModal"
+      :is-open="showPreDownloadModal"
+      :mapped-pixel-data="mappedPixelData"
+      :grid-dimensions="gridDimensions"
+      :selected-color-system="selectedColorSystem"
+      @proceed="handlePreDownloadConfirm"
+      @close="showPreDownloadModal = false"
+    />
 
     <!-- PWA 安装提示 -->
     <InstallPWA />

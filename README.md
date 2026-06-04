@@ -1,6 +1,6 @@
 # Pixbeads 拼豆图纸生成器
 
-一款跨平台的拼豆图纸生成工具，帮助拼豆爱好者将任意图片快速转换为标准拼豆图纸。所有计算均在本地完成，无需网络，保护隐私。
+本项目基于本项目基于[perler-beads](https://github.com/Zippland/perler-beads)进行vue3版本的重构。是一款跨平台的拼豆图纸生成工具，帮助拼豆爱好者将任意图片快速转换为标准拼豆图纸。所有计算均在本地完成，无需网络，保护隐私。
 
 ## 功能特点
 
@@ -163,5 +163,4 @@ Pixbeads/
 
 
 ## 许可证
-本项目基于[perler-beads](https://github.com/Zippland/perler-beads)
 [AGPL-3.0](./LICENSE)
