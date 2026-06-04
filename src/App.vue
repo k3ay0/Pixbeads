@@ -1314,6 +1314,30 @@ function handleExportCsv() {
             <div class="text-gray-400 mt-1">行 {{ tooltipData.row }} · 列 {{ tooltipData.col }}</div>
           </div>
         </div>
+
+        <!-- 模式入口按钮 -->
+        <div
+          v-if="mappedPixelData && gridDimensions"
+          class="mt-4 space-y-2"
+        >
+          <button
+            @click="isManualColoringMode ? exitManualMode() : enterManualMode()"
+            :class="[
+              'w-full px-4 py-2.5 rounded-xl text-sm font-medium transition-colors',
+              isManualColoringMode
+                ? 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                : 'bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:from-blue-600 hover:to-blue-700'
+            ]"
+          >
+            {{ isManualColoringMode ? '退出手动编辑' : '进入手动编辑模式' }}
+          </button>
+          <button
+            @click="enterFocusMode"
+            class="w-full px-4 py-2.5 rounded-xl text-sm font-medium bg-gradient-to-r from-purple-500 to-purple-600 text-white hover:from-purple-600 hover:to-purple-700 transition-colors"
+          >
+            专心拼豆模式
+          </button>
+        </div>
       </main>
     </div>
 
