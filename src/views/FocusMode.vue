@@ -16,6 +16,13 @@ import ProgressBar from '../components/ProgressBar.vue'
 import FocusToolBar from '../components/FocusToolBar.vue'
 import FocusColorPanel from '../components/FocusColorPanel.vue'
 
+// ========== 响应式状态 ==========
+const isDesktop = ref(window.innerWidth >= 768)
+
+function handleResize() {
+  isDesktop.value = window.innerWidth >= 768
+}
+
 // ========== 数据加载 ==========
 const mappedPixelData = ref(null)
 const gridDimensions = ref(null)
@@ -50,6 +57,8 @@ const availableColors = ref([])
 
 // ========== 从 localStorage 加载数据 ==========
 onMounted(() => {
+  window.addEventListener('resize', handleResize)
+
   const savedPixelData = localStorage.getItem('focusMode_pixelData')
   const savedGridDimensions = localStorage.getItem('focusMode_gridDimensions')
   const savedColorCounts = localStorage.getItem('focusMode_colorCounts')
@@ -101,6 +110,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('resize', handleResize)
   stopTimer()
 })
 
@@ -379,87 +389,140 @@ function goBack() {
 
   <!-- 主界面 -->
   <div v-else class="h-screen flex flex-col bg-gray-50">
-    <!-- 顶部导航栏 -->
-    <header
-      class="h-14 bg-white shadow-sm border-b border-gray-200 px-4 py-2 flex items-center justify-between"
-    >
-      <button
-        @click="goBack"
-        class="flex items-center text-gray-600 hover:text-gray-800"
-      >
-        <svg class="w-6 h-6 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M15 19l-7-7 7-7"
-          />
-        </svg>
-        返回
-      </button>
-
-      <h1 class="text-lg font-medium text-gray-800">专心拼豆</h1>
-
-      <div class="flex items-center gap-2">
-        <button
-          @click="cycleGuidanceMode"
-          class="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded-full text-gray-600 transition-colors"
-        >
-          {{ guidanceModeLabel }}
+    <!-- 桌面端布局 -->
+    <template v-if="isDesktop">
+      <header class="h-14 bg-white shadow-sm border-b border-gray-200 px-4 py-2 flex items-center justify-between">
+        <button @click="goBack" class="flex items-center text-gray-600 hover:text-gray-800">
+          <svg class="w-6 h-6 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+          </svg>
+          返回
         </button>
+
+        <!-- 桌面端：Header 中显示当前颜色信息 -->
+        <div class="flex items-center gap-4">
+          <div class="flex items-center gap-2">
+            <div class="w-8 h-8 rounded-full border-2 border-gray-300" :style="{ backgroundColor: currentColor }"></div>
+            <div>
+              <div class="text-sm font-medium text-gray-800 font-mono">{{ currentColorInfo?.name }}</div>
+              <div class="text-xs text-gray-500">{{ currentColorInfo?.completed }}/{{ currentColorInfo?.total }} · {{ progressPercentage }}%</div>
+            </div>
+          </div>
+          <span class="text-gray-300">|</span>
+          <div class="text-sm font-medium text-blue-600">{{ progressPercentage }}%</div>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <span class="text-sm text-gray-500">{{ elapsedTime }}</span>
+          <button @click="cycleGuidanceMode" class="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded-full text-gray-600 transition-colors">
+            {{ guidanceModeLabel }}
+          </button>
+        </div>
+      </header>
+
+      <div class="flex-1 flex overflow-hidden">
+        <!-- Canvas 区域 -->
+        <div class="flex-1 relative overflow-hidden">
+          <FocusCanvas
+            :mapped-pixel-data="mappedPixelData"
+            :grid-dimensions="gridDimensions"
+            :current-color="currentColor"
+            :completed-cells="completedCells"
+            :recommended-cell="recommendedCell"
+            :recommended-region="recommendedRegion"
+            :canvas-scale="canvasScale"
+            :canvas-offset="canvasOffset"
+            :grid-section-interval="gridSectionInterval"
+            :show-section-lines="showSectionLines"
+            :section-line-color="sectionLineColor"
+            @cell-click="handleCellClick"
+            @scale-change="(s) => (canvasScale = s)"
+            @offset-change="(o) => (canvasOffset = o)"
+          />
+        </div>
+
+        <!-- 桌面端：颜色面板侧边栏 -->
+        <FocusColorPanel
+          v-if="showColorPanel"
+          mode="sidebar"
+          :colors="availableColors"
+          :current-color="currentColor"
+          @color-select="handleColorChange"
+          @close="showColorPanel = false"
+        />
       </div>
-    </header>
 
-    <!-- 当前颜色状态栏 -->
-    <ColorStatusBar
-      :current-color="currentColor"
-      :color-info="currentColorInfo"
-      :progress-percentage="progressPercentage"
-    />
-
-    <!-- 主画布区域 -->
-    <div class="flex-1 relative overflow-hidden">
-      <FocusCanvas
-        :mapped-pixel-data="mappedPixelData"
-        :grid-dimensions="gridDimensions"
-        :current-color="currentColor"
-        :completed-cells="completedCells"
+      <ProgressBar
+        :progress-percentage="progressPercentage"
         :recommended-cell="recommendedCell"
-        :recommended-region="recommendedRegion"
-        :canvas-scale="canvasScale"
-        :canvas-offset="canvasOffset"
-        :grid-section-interval="gridSectionInterval"
-        :show-section-lines="showSectionLines"
-        :section-line-color="sectionLineColor"
-        @cell-click="handleCellClick"
-        @scale-change="(s) => (canvasScale = s)"
-        @offset-change="(o) => (canvasOffset = o)"
+        :color-info="currentColorInfo"
       />
-    </div>
+    </template>
 
-    <!-- 进度条 -->
-    <ProgressBar
-      :progress-percentage="progressPercentage"
-      :recommended-cell="recommendedCell"
-      :color-info="currentColorInfo"
-    />
+    <!-- 移动端布局 -->
+    <template v-else>
+      <header class="h-14 bg-white shadow-sm border-b border-gray-200 px-4 py-2 flex items-center justify-between">
+        <button @click="goBack" class="flex items-center text-gray-600 hover:text-gray-800">
+          <svg class="w-6 h-6 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+          </svg>
+          返回
+        </button>
+        <h1 class="text-lg font-medium text-gray-800">专心拼豆</h1>
+        <div class="flex items-center gap-2">
+          <button @click="cycleGuidanceMode" class="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded-full text-gray-600 transition-colors">
+            {{ guidanceModeLabel }}
+          </button>
+        </div>
+      </header>
 
-    <!-- 底部工具栏 -->
-    <FocusToolBar
-      @color-select="showColorPanel = true"
-      @locate="handleLocateRecommended"
-      @pause="handlePauseToggle"
-      :is-paused="isPaused"
-      :elapsed-time="elapsedTime"
-    />
+      <ColorStatusBar
+        :current-color="currentColor"
+        :color-info="currentColorInfo"
+        :progress-percentage="progressPercentage"
+      />
 
-    <!-- 颜色选择面板 -->
-    <FocusColorPanel
-      v-if="showColorPanel"
-      :colors="availableColors"
-      :current-color="currentColor"
-      @color-select="handleColorChange"
-      @close="showColorPanel = false"
-    />
+      <div class="flex-1 relative overflow-hidden">
+        <FocusCanvas
+          :mapped-pixel-data="mappedPixelData"
+          :grid-dimensions="gridDimensions"
+          :current-color="currentColor"
+          :completed-cells="completedCells"
+          :recommended-cell="recommendedCell"
+          :recommended-region="recommendedRegion"
+          :canvas-scale="canvasScale"
+          :canvas-offset="canvasOffset"
+          :grid-section-interval="gridSectionInterval"
+          :show-section-lines="showSectionLines"
+          :section-line-color="sectionLineColor"
+          @cell-click="handleCellClick"
+          @scale-change="(s) => (canvasScale = s)"
+          @offset-change="(o) => (canvasOffset = o)"
+        />
+      </div>
+
+      <ProgressBar
+        :progress-percentage="progressPercentage"
+        :recommended-cell="recommendedCell"
+        :color-info="currentColorInfo"
+      />
+
+      <FocusToolBar
+        @color-select="showColorPanel = true"
+        @locate="handleLocateRecommended"
+        @pause="handlePauseToggle"
+        :is-paused="isPaused"
+        :elapsed-time="elapsedTime"
+      />
+
+      <FocusColorPanel
+        v-if="showColorPanel"
+        mode="bottomsheet"
+        :colors="availableColors"
+        :current-color="currentColor"
+        @color-select="handleColorChange"
+        @close="showColorPanel = false"
+      />
+    </template>
   </div>
 </template>

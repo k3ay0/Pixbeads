@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 
-const props = defineProps({
-  colors: { type: Array, default: () => [] },
-  currentColor: { type: String, default: '' },
-})
+const props = defineProps<{
+  colors: Array<{ color: string; name: string; total: number; completed: number }>
+  currentColor: string
+  mode?: 'sidebar' | 'bottomsheet'
+}>()
 
-const emit = defineEmits(['colorSelect', 'close'])
+const emit = defineEmits<{
+  colorSelect: [color: string]
+  close: []
+}>()
 
 const searchTerm = ref('')
 const sortBy = ref('progress')
@@ -35,13 +39,91 @@ const filteredAndSortedColors = computed(() => {
     })
 })
 
-function handleSelect(color) {
+function handleSelect(color: string) {
   emit('colorSelect', color)
 }
+
+const isSidebar = computed(() => props.mode === 'sidebar')
 </script>
 
 <template>
-  <div class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end" @click.self="emit('close')">
+  <!-- 桌面端：右侧侧边栏 -->
+  <div
+    v-if="isSidebar"
+    class="w-72 bg-white border-l border-gray-200 flex flex-col h-full flex-shrink-0"
+  >
+    <div class="px-4 py-3 border-b border-gray-200">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-medium text-gray-700">选择颜色</h3>
+        <button @click="emit('close')" class="text-gray-400 hover:text-gray-600">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+      <!-- 搜索框 -->
+      <div class="relative">
+        <input
+          v-model="searchTerm"
+          type="text"
+          placeholder="搜索颜色..."
+          class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <svg class="absolute left-3 top-2.5 h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        </svg>
+      </div>
+      <!-- 排序 -->
+      <select v-model="sortBy" class="w-full mt-2 p-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <option value="progress">按进度排序</option>
+        <option value="name">按名称排序</option>
+        <option value="total">按数量排序</option>
+      </select>
+    </div>
+
+    <!-- 颜色列表 -->
+    <div class="flex-1 overflow-y-auto px-3 py-2">
+      <button
+        v-for="colorInfo in filteredAndSortedColors"
+        :key="colorInfo.color"
+        @click="handleSelect(colorInfo.color)"
+        class="w-full p-2.5 mb-1.5 rounded-lg border-2 transition-all text-left"
+        :class="[
+          colorInfo.color === currentColor
+            ? 'border-blue-500 bg-blue-50'
+            : 'border-gray-200 bg-white hover:border-gray-300',
+          colorInfo.completed >= colorInfo.total ? 'opacity-60' : '',
+        ]"
+      >
+        <div class="flex items-center justify-between">
+          <div class="flex items-center space-x-2">
+            <div class="w-7 h-7 rounded-full border-2 border-gray-300 flex-shrink-0" :style="{ backgroundColor: colorInfo.color }" />
+            <div>
+              <div class="text-xs font-medium text-gray-800 font-mono">{{ colorInfo.name }}</div>
+              <div class="text-[10px] text-gray-500">{{ colorInfo.completed }}/{{ colorInfo.total }}</div>
+            </div>
+          </div>
+          <div v-if="colorInfo.completed >= colorInfo.total" class="text-green-500">
+            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+              <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+            </svg>
+          </div>
+          <div v-else-if="colorInfo.color === currentColor" class="text-blue-500">
+            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+            </svg>
+          </div>
+        </div>
+        <!-- 进度条 -->
+        <div class="mt-1.5 w-full bg-gray-200 rounded-full h-1">
+          <div class="h-1 rounded-full transition-all" :class="colorInfo.completed >= colorInfo.total ? 'bg-green-500' : 'bg-blue-500'" :style="{ width: `${Math.round((colorInfo.completed / colorInfo.total) * 100)}%` }" />
+        </div>
+      </button>
+    </div>
+  </div>
+
+  <!-- 移动端：底部弹窗 -->
+  <div v-else class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end" @click.self="emit('close')">
     <div class="w-full bg-white rounded-t-2xl max-h-[80vh] flex flex-col">
       <!-- 拖拽指示条 -->
       <div class="flex justify-center py-2">
