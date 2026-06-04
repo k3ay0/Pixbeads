@@ -80,8 +80,14 @@ const activeBeadPalette = ref([])
 const isProcessing = ref(false)
 const showDownloadModal = ref(false)
 const tooltipData = ref(null)
+const toastMessage = ref(null)
 
 const previewCanvas = ref(null)
+
+function showToast(msg) {
+  toastMessage.value = msg
+  setTimeout(() => { toastMessage.value = null }, 2000)
+}
 
 // ========== 撤销/重做 ==========
 const editHistory = ref([])
@@ -619,6 +625,7 @@ function undoEdit() {
   const stats = recalculateColorStats(mappedPixelData.value)
   colorCounts.value = stats.colorCounts
   totalBeadCount.value = stats.totalCount
+  showToast('已撤回上一步')
 }
 
 function redoEdit() {
@@ -629,6 +636,7 @@ function redoEdit() {
   const stats = recalculateColorStats(mappedPixelData.value)
   colorCounts.value = stats.colorCounts
   totalBeadCount.value = stats.totalCount
+  showToast('已重做上一步')
 }
 
 // ========== 洪水填充擦除模式 ==========
@@ -814,8 +822,10 @@ function toggleExcludeColor(hex) {
 }
 
 function restoreAllExcludedColors() {
+  const count = excludedColorKeys.value.size
   excludedColorKeys.value = new Set()
   showExcludedColors.value = false
+  if (count > 0) showToast(`已恢复 ${count} 种颜色`)
 }
 
 // ========== 保存色板到 localStorage ==========
@@ -1512,6 +1522,21 @@ function handleExportCsv() {
 
     <!-- PWA 安装提示 -->
     <InstallPWA />
+
+    <!-- 页脚 -->
+    <footer class="max-w-7xl mx-auto px-4 py-6 mt-8 border-t border-gray-200 text-center">
+      <p class="text-xs text-gray-400">PIXBEADS — 拼豆图纸生成工具</p>
+    </footer>
+
+    <!-- Toast 通知 -->
+    <Transition name="toast">
+      <div
+        v-if="toastMessage"
+        class="fixed bottom-20 left-1/2 -translate-x-1/2 px-4 py-2 bg-gray-900 text-white text-sm rounded-lg shadow-lg z-50 pointer-events-none"
+      >
+        {{ toastMessage }}
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -1521,6 +1546,12 @@ function handleExportCsv() {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #9CA3AF; }
+
+/* Toast 过渡动画 */
+.toast-enter-active { transition: all 0.3s ease-out; }
+.toast-leave-active { transition: all 0.3s ease-in; }
+.toast-enter-from { opacity: 0; transform: translate(-50%, 10px); }
+.toast-leave-to { opacity: 0; transform: translate(-50%, 10px); }
 
 /* 悬浮调色盘拖拽时禁止选中 */
 .palette-dragging * {
