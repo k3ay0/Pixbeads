@@ -7,11 +7,6 @@ const routes: RouteRecordRaw[] = [
     name: 'Home',
     component: App,
   },
-  {
-    path: '/focus',
-    name: 'Focus',
-    component: () => import('../views/FocusMode.vue'),
-  },
 ]
 
 const router = createRouter({

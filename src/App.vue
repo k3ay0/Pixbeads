@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, defineAsyncComponent, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
 import {
   hexToRgb,
   calculatePixelGrid,
@@ -18,10 +17,23 @@ import { useManualEditingState } from './composables/useManualEditingState'
 import { usePixelEditingOperations } from './composables/usePixelEditingOperations'
 import { clientToGridCoords } from './utils/canvasUtils'
 import { loadPaletteSelections, savePaletteSelections, presetToSelections } from './utils/localStorageUtils'
+import {
+  getConnectedRegion,
+  getAllConnectedRegions,
+  isRegionCompleted,
+  getRegionCenter,
+  sortRegionsByDistance,
+  sortRegionsBySize,
+} from './utils/floodFillUtils'
 import DownloadSettingsModal from './components/DownloadSettingsModal.vue'
 import ColorPalette from './components/ColorPalette.vue'
 import InstallPWA from './components/InstallPWA.vue'
 import ImageCropper from './components/ImageCropper.vue'
+import FocusCanvas from './components/FocusCanvas.vue'
+import ColorStatusBar from './components/ColorStatusBar.vue'
+import ProgressBar from './components/ProgressBar.vue'
+import FocusToolBar from './components/FocusToolBar.vue'
+import FocusColorPanel from './components/FocusColorPanel.vue'
 import type {
   PaletteColor,
   MappedPixel,
@@ -48,11 +60,16 @@ const DonationModal = defineAsyncComponent(() =>
 const CustomPaletteEditor = defineAsyncComponent(() =>
   import('./components/CustomPaletteEditor.vue').catch(() => ({ render: () => null }))
 )
-const FocusModePreDownloadModal = defineAsyncComponent(() =>
-  import('./components/FocusModePreDownloadModal.vue').catch(() => ({ render: () => null }))
-)
 
-const router = useRouter()
+// ========== 模式系统 ==========
+type AppMode = 'optimize' | 'edit' | 'preview' | 'focus'
+const activeMode = ref<AppMode>('optimize')
+const modes = [
+  { key: 'optimize' as const, label: '优化' },
+  { key: 'edit' as const, label: '编辑' },
+  { key: 'preview' as const, label: '预览' },
+  { key: 'focus' as const, label: '专心' },
+]
 
 // ========== 调色板初始化 ==========
 const mardToHexMapping = getMardToHexMapping()
@@ -105,6 +122,26 @@ function showToast(msg: string) {
   toastMessage.value = msg
   setTimeout(() => { toastMessage.value = null }, 2000)
 }
+
+// ========== 拼豆模式状态 ==========
+const currentColor = ref('')
+const selectedCell = ref<{ row: number; col: number } | null>(null)
+const canvasScale = ref(1)
+const canvasOffset = ref({ x: 0, y: 0 })
+const completedCells = ref<Set<string>>(new Set())
+const colorProgress = ref<Record<string, { completed: number; total: number }>>({})
+const recommendedRegion = ref<Array<{ row: number; col: number }> | null>(null)
+const recommendedCell = ref<{ row: number; col: number } | null>(null)
+const guidanceMode = ref<'nearest' | 'largest' | 'edge-first'>('nearest')
+const showColorPanel = ref(false)
+const isPaused = ref(true)
+const totalElapsedTime = ref(0)
+const lastResumeTime = ref(Date.now())
+let timerInterval: ReturnType<typeof setInterval> | null = null
+const gridSectionInterval = ref(10)
+const showSectionLines = ref(true)
+const sectionLineColor = ref('#007acc')
+const availableColors = ref<Array<{ color: string; name: string; total: number; completed: number }>>([])
 
 // ========== 撤销/重做 ==========
 const editHistory = ref<MappedPixel[][][]>([])
@@ -278,9 +315,6 @@ const showSettingsPanel = ref(false)
 
 // ========== 打赏弹窗 ==========
 const showDonationModal = ref(false)
-
-// ========== 专心模式预下载提醒 ==========
-const showPreDownloadModal = ref(false)
 
 // 下载选项
 const downloadOptions = ref<GridDownloadOptions>({
@@ -779,25 +813,6 @@ function handleColorReplaceClick(row, col) {
   }
 }
 
-// ========== 专心模式 ==========
-function enterFocusMode() {
-  if (!mappedPixelData.value) return
-  showPreDownloadModal.value = true
-}
-
-function handlePreDownloadConfirm() {
-  showPreDownloadModal.value = false
-  saveAndJumpToFocus()
-}
-
-function saveAndJumpToFocus() {
-  localStorage.setItem('focusMode_pixelData', JSON.stringify(mappedPixelData.value))
-  localStorage.setItem('focusMode_gridDimensions', JSON.stringify(gridDimensions.value))
-  localStorage.setItem('focusMode_colorCounts', JSON.stringify(colorCounts.value))
-  localStorage.setItem('focusMode_selectedColorSystem', selectedColorSystem.value)
-  router.push('/focus')
-}
-
 // ========== 色板编辑器关闭 ==========
 function handlePaletteEditorClose() {
   showPaletteEditor.value = false
@@ -865,6 +880,184 @@ function handleKeyDown(e) {
 watch(selectedColorSystem, () => {
   if (originalImage.value) processImage()
 })
+
+// ========== 拼豆模式逻辑 ==========
+function initFocusMode() {
+  if (!mappedPixelData.value || !colorCounts.value) return
+  const colors = Object.entries(colorCounts.value).map(([, data]) => ({
+    color: data.color,
+    name: getColorKeyByHex(data.color, selectedColorSystem.value),
+    total: data.count,
+    completed: 0,
+  }))
+  availableColors.value = colors
+  if (colors.length > 0) {
+    currentColor.value = colors[0].color
+    const progress: Record<string, { completed: number; total: number }> = {}
+    colors.forEach(c => { progress[c.color] = { completed: 0, total: c.total } })
+    colorProgress.value = progress
+  }
+  completedCells.value = new Set()
+  selectedCell.value = null
+  canvasScale.value = 1
+  canvasOffset.value = { x: 0, y: 0 }
+  startTimer()
+}
+
+function startTimer() {
+  stopTimer()
+  isPaused.value = false
+  lastResumeTime.value = Date.now()
+  totalElapsedTime.value = 0
+  timerInterval = setInterval(() => {
+    if (!isPaused.value) {
+      const now = Date.now()
+      const elapsed = Math.floor((now - lastResumeTime.value) / 1000)
+      if (elapsed > 0) {
+        totalElapsedTime.value += elapsed
+        lastResumeTime.value = now
+      }
+    }
+  }, 1000)
+}
+
+function stopTimer() {
+  if (timerInterval) {
+    clearInterval(timerInterval)
+    timerInterval = null
+  }
+}
+
+function handlePauseToggle() {
+  if (isPaused.value) {
+    isPaused.value = false
+    lastResumeTime.value = Date.now()
+  } else {
+    const now = Date.now()
+    totalElapsedTime.value += Math.floor((now - lastResumeTime.value) / 1000)
+    isPaused.value = true
+  }
+}
+
+function formatTime(seconds: number): string {
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  const secs = seconds % 60
+  if (hours > 0) return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+  return `${minutes}:${secs.toString().padStart(2, '0')}`
+}
+
+const calculateRecommendedRegion = computed(() => {
+  if (!mappedPixelData.value || !currentColor.value) return { region: null, cell: null }
+  const allRegions = getAllConnectedRegions(mappedPixelData.value, currentColor.value)
+  const incomplete = allRegions.filter(r => !isRegionCompleted(r, completedCells.value))
+  if (incomplete.length === 0) return { region: null, cell: null }
+  let selected: Array<{ row: number; col: number }>
+  switch (guidanceMode.value) {
+    case 'nearest': {
+      const ref = selectedCell.value ?? { row: Math.floor(mappedPixelData.value.length / 2), col: Math.floor(mappedPixelData.value[0].length / 2) }
+      selected = sortRegionsByDistance(incomplete, ref)[0]
+      break
+    }
+    case 'largest':
+      selected = sortRegionsBySize(incomplete)[0]
+      break
+    case 'edge-first': {
+      const M = mappedPixelData.value.length
+      const N = mappedPixelData.value[0].length
+      const edge = incomplete.filter(r => r.some(c => c.row === 0 || c.row === M - 1 || c.col === 0 || c.col === N - 1))
+      selected = edge.length > 0 ? edge[0] : incomplete[0]
+      break
+    }
+    default:
+      selected = incomplete[0]
+  }
+  return { region: selected, cell: getRegionCenter(selected) }
+})
+
+watch(calculateRecommendedRegion, val => {
+  recommendedRegion.value = val.region
+  recommendedCell.value = val.cell
+})
+
+const currentColorInfo = computed(() => availableColors.value.find(c => c.color === currentColor.value))
+const progressPercentage = computed(() => currentColorInfo.value ? Math.round((currentColorInfo.value.completed / currentColorInfo.value.total) * 100) : 0)
+const elapsedTime = computed(() => formatTime(totalElapsedTime.value))
+const guidanceModeLabel = computed(() => ({ nearest: '最近优先', largest: '最大优先', 'edge-first': '边缘优先' }[guidanceMode.value] || guidanceMode.value))
+
+function cycleGuidanceMode() {
+  const modes = ['nearest', 'largest', 'edge-first'] as const
+  guidanceMode.value = modes[(modes.indexOf(guidanceMode.value) + 1) % modes.length]
+}
+
+function handleCellClick(row: number, col: number) {
+  if (!mappedPixelData.value) return
+  const cellColor = mappedPixelData.value[row][col].color
+  if (cellColor !== currentColor.value) return
+  const region = getConnectedRegion(mappedPixelData.value, row, col, currentColor.value)
+  if (region.length === 0) return
+  const newSet = new Set(completedCells.value)
+  const done = isRegionCompleted(region, completedCells.value)
+  region.forEach(({ row: r, col: c }) => {
+    const key = `${r},${c}`
+    done ? newSet.delete(key) : newSet.add(key)
+  })
+  const newProgress = { ...colorProgress.value }
+  if (newProgress[currentColor.value]) {
+    newProgress[currentColor.value] = {
+      ...newProgress[currentColor.value],
+      completed: Array.from(newSet).filter(k => {
+        const [r, c] = k.split(',').map(Number)
+        return mappedPixelData.value![r]?.[c]?.color === currentColor.value
+      }).length,
+    }
+  }
+  completedCells.value = newSet
+  selectedCell.value = { row, col }
+  colorProgress.value = newProgress
+  availableColors.value = availableColors.value.map(c =>
+    c.color === currentColor.value ? { ...c, completed: newProgress[currentColor.value]?.completed || 0 } : c
+  )
+  if (newProgress[currentColor.value]?.completed >= newProgress[currentColor.value]?.total) {
+    switchToNextIncompleteColor()
+  }
+}
+
+function switchToNextIncompleteColor() {
+  const idx = availableColors.value.findIndex(c => c.color === currentColor.value)
+  if (idx === -1) return
+  for (let i = 1; i <= availableColors.value.length; i++) {
+    const next = availableColors.value[(idx + i) % availableColors.value.length]
+    if (next.completed < next.total) {
+      currentColor.value = next.color
+      return
+    }
+  }
+}
+
+function handleFocusColorChange(color: string) {
+  currentColor.value = color
+  showColorPanel.value = false
+}
+
+function handleLocateRecommended() {
+  if (!recommendedCell.value || !gridDimensions.value) return
+  const { row, col } = recommendedCell.value
+  const cellSize = Math.max(15, Math.min(40, 300 / Math.max(gridDimensions.value.N, gridDimensions.value.M)))
+  const cx = (col + 0.5) * cellSize
+  const cy = (row + 0.5) * cellSize
+  canvasOffset.value = { x: gridDimensions.value.N * cellSize / 2 - cx, y: gridDimensions.value.M * cellSize / 2 - cy }
+}
+
+// ========== 模式切换 ==========
+function switchMode(mode: AppMode) {
+  if (activeMode.value === 'edit') exitManualMode()
+  if (activeMode.value === 'focus') stopTimer()
+  activeMode.value = mode
+  if (mode === 'focus') initFocusMode()
+}
+
+onUnmounted(() => { stopTimer() })
 
 // ========== 颜色排除 ==========
 const showExcludedColors = ref(false)
@@ -1010,50 +1203,85 @@ function handleExportCsv() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-gray-50 text-gray-900">
-    <!-- 顶部导航 -->
-    <header class="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-50">
-      <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
-        <div class="flex items-center gap-3">
-          <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center">
-            <span class="text-white text-sm font-bold">P</span>
+  <!-- 裁剪工具 -->
+  <ImageCropper
+    v-if="showCropper && originalImageSrc"
+    :image-src="originalImageSrc"
+    @confirm="handleCropConfirm"
+    @skip="handleCropSkip"
+  />
+
+  <!-- 主布局 -->
+  <div class="h-screen flex flex-col bg-gray-50 overflow-hidden">
+    <!-- Header -->
+    <header class="h-12 bg-white border-b border-gray-200/70 sticky top-0 z-40">
+      <div class="mx-auto w-full h-full px-2 sm:px-4 flex items-center gap-2 sm:gap-3">
+        <!-- Logo -->
+        <div class="flex items-center gap-2 flex-shrink-0">
+          <div class="grid grid-cols-2 gap-0.5 p-1.5 rounded-md bg-gray-100 border border-gray-200/60">
+            <span class="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+            <span class="w-1.5 h-1.5 rounded-full bg-pink-400"></span>
+            <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
           </div>
-          <div>
-            <h1 class="text-lg font-semibold">PIXBEADS</h1>
-            <p class="text-xs text-gray-500">拼豆图纸生成工具</p>
+          <span class="hidden md:inline text-sm font-semibold text-gray-800">PIXBEADS</span>
+        </div>
+
+        <!-- Mode tabs -->
+        <div class="flex-1 min-w-0 flex justify-center">
+          <div class="inline-flex items-center gap-0.5 p-0.5 rounded-lg bg-gray-200/60 border border-gray-300/40">
+            <button
+              @click="switchMode('optimize')"
+              :class="['px-2 sm:px-3 h-8 text-xs rounded-md font-medium transition-colors min-w-[44px]',
+                activeMode === 'optimize' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700']"
+            >优化</button>
+            <button
+              @click="switchMode('edit')"
+              :class="['px-2 sm:px-3 h-8 text-xs rounded-md font-medium transition-colors min-w-[44px]',
+                activeMode === 'edit' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700']"
+            >编辑</button>
+            <button
+              @click="switchMode('preview')"
+              :class="['px-2 sm:px-3 h-8 text-xs rounded-md font-medium transition-colors min-w-[44px]',
+                activeMode === 'preview' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700']"
+            >预览</button>
+            <button
+              @click="switchMode('focus')"
+              :class="['px-2 sm:px-3 h-8 text-xs rounded-md font-medium transition-colors min-w-[44px]',
+                activeMode === 'focus' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700']"
+            >专心</button>
           </div>
         </div>
-        <div class="flex items-center gap-2">
-          <!-- 专心模式按钮 -->
+
+        <!-- Right actions -->
+        <div class="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
+          <!-- Palette info -->
+          <div class="hidden md:flex items-center gap-1.5 ml-1">
+            <button
+              @click="showPaletteEditor = true"
+              class="min-h-[44px] flex flex-col items-start leading-tight px-2 py-1 rounded-lg border border-gray-300 bg-gray-50 text-gray-700 hover:bg-gray-100 transition-colors"
+              title="色板设置"
+            >
+              <span class="text-[10px] text-gray-500">{{ selectedColorSystem }}</span>
+              <span class="text-[11px] font-semibold">{{ Object.keys(customPaletteSelections).filter(k => customPaletteSelections[k]).length }}</span>
+            </button>
+          </div>
+          <!-- Import button -->
+          <button
+            @click="triggerFileInput"
+            class="min-h-[44px] px-3 text-xs rounded-lg border border-gray-200 bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors"
+          >导入</button>
+          <!-- Download button -->
           <button
             v-if="mappedPixelData"
-            @click="enterFocusMode"
-            class="px-4 py-1.5 bg-emerald-500 text-white text-sm rounded-lg hover:bg-emerald-600 transition-colors"
-            title="保存当前图纸并进入专心模式"
-          >
-            专心模式
-          </button>
-          <!-- 下载按钮 -->
-          <button
-            v-if="mappedPixelData"
-            @click="showDownloadModal = !showDownloadModal"
-            class="px-4 py-1.5 bg-indigo-500 text-white text-sm rounded-lg hover:bg-indigo-600 transition-colors"
-          >
-            下载
-          </button>
-          <!-- 打赏按钮 -->
-          <button
-            @click="showDonationModal = true"
-            class="px-4 py-1.5 bg-yellow-500 text-white text-sm rounded-lg hover:bg-yellow-600 transition-colors"
-            title="请作者喝杯咖啡"
-          >
-            ☕ 打赏
-          </button>
-          <!-- 设置按钮 -->
+            @click="showDownloadModal = true"
+            class="min-h-[44px] px-3 text-xs rounded-lg border border-gray-200 bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors"
+          >下载</button>
+          <!-- Settings button -->
           <button
             v-if="mappedPixelData"
             @click="showSettingsPanel = true"
-            class="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            class="min-h-[44px] min-w-[44px] flex items-center justify-center text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
             title="高级设置"
           >
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1061,596 +1289,679 @@ function handleExportCsv() {
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
           </button>
+          <!-- Mobile import -->
+          <div class="md:hidden relative">
+            <button
+              @click="triggerFileInput"
+              class="min-h-[44px] min-w-[44px] flex items-center justify-center text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
+            >
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v12m6-6H6" /></svg>
+            </button>
+          </div>
         </div>
       </div>
     </header>
 
-    <div class="max-w-7xl mx-auto px-4 py-6 flex gap-6">
-      <!-- 左侧控制面板 -->
-      <aside class="w-72 flex-shrink-0 space-y-4">
-        <!-- 图片上传 -->
-        <div class="bg-white rounded-xl border border-gray-200 p-4">
-          <h3 class="text-sm font-medium text-gray-700 mb-3">图片上传</h3>
-          <div
-            @click="triggerFileInput"
-            @dragover.prevent
-            @drop="handleFileDrop"
-            class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center cursor-pointer hover:border-indigo-400 hover:bg-indigo-50 transition-colors"
-          >
-            <div v-if="!originalImageSrc" class="space-y-2">
-              <svg class="w-10 h-10 mx-auto text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 6v12m6-6H6" />
-              </svg>
-              <p class="text-sm text-gray-500">点击或拖放图片</p>
-              <p class="text-xs text-gray-400">支持 JPG / PNG / CSV</p>
-            </div>
-            <img v-else :src="originalImageSrc" class="max-h-32 mx-auto rounded" alt="预览" />
-          </div>
-          <input ref="fileInput" type="file" accept="image/*,.csv" class="hidden" @change="handleFileChange" />
-        </div>
+    <!-- Hidden file input -->
+    <input ref="fileInput" type="file" accept="image/*,.csv" class="hidden" @change="handleFileChange" />
 
-        <!-- 参数控制 -->
-        <div class="bg-white rounded-xl border border-gray-200 p-4 space-y-4">
-          <h3 class="text-sm font-medium text-gray-700">参数设置</h3>
-
-          <!-- 宽度粒度 -->
-          <div>
-            <label class="text-xs text-gray-500 mb-1 block">
-              宽度 (横向格子数)
-            </label>
-            <div class="flex items-center gap-2">
-              <input
-                v-model.number="granularity"
-                type="range" min="10" max="300" step="1"
-                class="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-              />
-              <input
-                v-model="granularityInput"
-                @blur="granularity = Math.max(10, Math.min(300, parseInt(granularityInput) || 50))"
-                @keyup.enter="granularity = Math.max(10, Math.min(300, parseInt(granularityInput) || 50))"
-                type="text"
-                class="w-14 px-1.5 py-0.5 text-xs font-mono text-center border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              />
-            </div>
-          </div>
-
-          <!-- 高度粒度 -->
-          <div>
-            <label class="text-xs text-gray-500 mb-1 block">
-              高度 (纵向格子数)
-              <span v-if="!croppedImageCanvas" class="text-gray-400 font-normal ml-1">裁剪后可调</span>
-            </label>
-            <div class="flex items-center gap-2">
-              <input
-                v-model.number="granularityY"
-                type="range" min="10" max="300" step="1"
-                :disabled="!croppedImageCanvas"
-                class="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-500 disabled:opacity-40"
-              />
-              <input
-                v-model="granularityYInput"
-                :disabled="!croppedImageCanvas"
-                @blur="granularityY = Math.max(10, Math.min(300, parseInt(granularityYInput) || 0))"
-                @keyup.enter="granularityY = Math.max(10, Math.min(300, parseInt(granularityYInput) || 0))"
-                type="text"
-                :placeholder="granularityY > 0 ? granularityY.toString() : '自动'"
-                class="w-14 px-1.5 py-0.5 text-xs font-mono text-center border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-40"
-              />
-            </div>
-          </div>
-
-          <!-- 相似度阈值 -->
-          <div>
-            <label class="text-xs text-gray-500 mb-1 block">
-              颜色合并阈值
-              <span class="float-right font-mono text-gray-700">{{ similarityThreshold }}</span>
-            </label>
-            <input
-              v-model.number="similarityThreshold"
-              type="range" min="0" max="100" step="1"
-              class="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-            />
-          </div>
-
-          <!-- 像素化模式 -->
-          <div>
-            <label class="text-xs text-gray-500 mb-1 block">像素化模式</label>
-            <div class="flex gap-2">
-              <button
-                @click="pixelationMode = 'dominant'"
-                :class="[
-                  'flex-1 px-3 py-1.5 text-xs rounded-lg border transition-colors',
-                  pixelationMode === 'dominant'
-                    ? 'bg-indigo-500 text-white border-indigo-500'
-                    : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-300'
-                ]"
-              >
-                卡通(主色)
-              </button>
-              <button
-                @click="pixelationMode = 'average'"
-                :class="[
-                  'flex-1 px-3 py-1.5 text-xs rounded-lg border transition-colors',
-                  pixelationMode === 'average'
-                    ? 'bg-indigo-500 text-white border-indigo-500'
-                    : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-300'
-                ]"
-              >
-                真实(均色)
-              </button>
-            </div>
-          </div>
-
-          <!-- 一键去背景 -->
-          <div class="flex gap-2">
-            <button
-              @click="handleAutoRemoveBackground"
-              :disabled="!mappedPixelData"
-              class="flex-1 px-3 py-1.5 text-xs rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              一键去背景
-            </button>
-            <button
-              @click="handleUndoBgRemoval"
-              :disabled="!bgRemovalSnapshot"
-              class="flex-1 px-3 py-1.5 text-xs rounded-lg border border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              回撤上一步
-            </button>
-          </div>
-
-          <!-- 色号系统选择 -->
-          <div>
-            <label class="text-xs text-gray-500 mb-1 block">色号系统</label>
-            <div class="flex flex-wrap gap-1.5">
-              <button
-                v-for="sys in colorSystemOptions"
-                :key="sys.key"
-                @click="selectedColorSystem = sys.key"
-                :class="[
-                  'px-2.5 py-1 text-xs rounded-lg border transition-all duration-150',
-                  selectedColorSystem === sys.key
-                    ? 'bg-indigo-500 text-white border-indigo-500 shadow-sm'
-                    : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-300'
-                ]"
-              >
-                {{ sys.name }}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- 编辑工具 -->
-        <div v-if="mappedPixelData" class="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
-          <h3 class="text-sm font-medium text-gray-700">编辑工具</h3>
-          <!-- 放大镜按钮（与手动编辑同级） -->
-          <div class="flex gap-2">
-            <button
-              @click="isManualColoringMode && toggleMagnifier()"
-              :class="[
-                'flex-1 px-3 py-1.5 text-xs rounded-lg border transition-colors',
-                isMagnifierActive
-                  ? 'bg-cyan-500 text-white border-cyan-500'
-                  : 'bg-white text-gray-600 border-gray-300 hover:border-cyan-300'
-              ]"
-              :disabled="!isManualColoringMode"
-            >
-              🔍 放大镜
-            </button>
-          </div>
-          <div class="flex gap-2 flex-wrap">
-            <button
-              @click="isManualColoringMode ? exitManualMode() : enterManualMode()"
-              :class="[
-                'flex-1 px-3 py-1.5 text-xs rounded-lg border transition-colors',
-                isManualColoringMode
-                  ? 'bg-green-500 text-white border-green-500'
-                  : 'bg-white text-gray-600 border-gray-300 hover:border-green-300'
-              ]"
-            >
-              {{ isManualColoringMode ? '退出编辑' : '手动编辑' }}
-            </button>
-          </div>
-
-          <!-- 使用 ColorPalette 组件替代内联颜色列表和模式按钮 -->
-          <ColorPalette
-            v-if="isManualColoringMode && currentGridColors.length > 0"
-            :colors="currentGridColors"
-            :selected-color="selectedEditColor"
-            :transparent-key="TRANSPARENT_KEY"
-            :selected-color-system="selectedColorSystem"
-            :is-erase-mode="isEraseMode"
-            :full-palette-colors="activeBeadPalette"
-            :show-full-palette="showFullPalette"
-            :color-replace-state="colorReplaceState"
-            @color-select="handlePaletteColorSelect"
-            @erase-toggle="toggleEraseMode"
-            @highlight-color="setHighlight"
-            @toggle-full-palette="showFullPalette = !showFullPalette"
-            @color-replace-toggle="toggleColorReplaceMode"
-            @color-replace="handlePaletteColorReplace"
-          />
-
-          <!-- 无颜色时提示 -->
-          <p v-if="isManualColoringMode && currentGridColors.length === 0" class="text-xs text-gray-400">
-            当前图纸无可用颜色。
-          </p>
-        </div>
-
-        <!-- 颜色统计 -->
-        <div v-if="colorCounts" class="bg-white rounded-xl border border-gray-200 p-4">
-          <h3 class="text-sm font-medium text-gray-700 mb-2">
-            去除杂色
-            <span class="text-xs text-gray-400 font-normal ml-1">
-              {{ Object.keys(colorCounts).length }} 种 / {{ totalBeadCount }} 粒
-            </span>
-          </h3>
-          <div class="max-h-60 overflow-y-auto space-y-1">
+    <!-- Main content area -->
+    <div class="relative flex-1 min-h-0 flex">
+      <div class="mx-auto w-full flex-1 min-h-0 flex">
+        <!-- Canvas area -->
+        <div
+          class="flex-1 min-h-0 px-2 sm:px-4 py-3 transition-[padding] duration-200 ease-out flex"
+          :style="{ paddingRight: mappedPixelData ? '320px' : undefined }"
+        >
+          <main class="relative flex flex-col flex-1 min-h-0 min-w-0">
+            <!-- Welcome screen -->
             <div
-              v-for="item in currentGridColors"
-              :key="item.color"
-              class="flex items-center gap-2 py-1 px-2 rounded hover:bg-gray-50 cursor-pointer group"
-              :class="excludedColorKeys.has(item.color.toUpperCase()) ? 'bg-red-50 opacity-60' : ''"
-              @click="isManualColoringMode && selectEditColor(item)"
+              v-if="!originalImageSrc"
+              @click="triggerFileInput"
+              @dragover.prevent
+              @drop="handleFileDrop"
+              class="flex-1 flex flex-col items-center justify-center cursor-pointer border-2 border-dashed border-gray-300 rounded-xl hover:border-indigo-400 hover:bg-indigo-50/30 transition-colors"
             >
-              <div
-                class="w-5 h-5 rounded border border-gray-200 flex-shrink-0"
-                :style="{ backgroundColor: item.color }"
-              ></div>
-              <span
-                class="text-xs font-mono flex-1"
-                :class="excludedColorKeys.has(item.color.toUpperCase()) ? 'text-red-500 line-through' : 'text-gray-700'"
-              >{{ item.key }}</span>
-              <span class="text-xs text-gray-400">
-                {{ colorCounts[item.color.toUpperCase()]?.count || 0 }}
-              </span>
-              <button
-                @click.stop="toggleExcludeColor(item.color.toUpperCase())"
-                class="text-xs text-red-400 hover:text-red-600"
-                :class="excludedColorKeys.has(item.color.toUpperCase()) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
-              >
-                {{ excludedColorKeys.has(item.color.toUpperCase()) ? '恢复' : '✕' }}
-              </button>
+              <div class="grid grid-cols-2 gap-1 p-3 rounded-xl bg-gray-100 border border-gray-200/60 mb-6">
+                <span class="w-6 h-6 rounded-full bg-blue-400"></span>
+                <span class="w-6 h-6 rounded-full bg-pink-400"></span>
+                <span class="w-6 h-6 rounded-full bg-amber-400"></span>
+                <span class="w-6 h-6 rounded-full bg-emerald-400"></span>
+              </div>
+              <p class="text-gray-400 text-lg mb-1">拖放或点击上传图片</p>
+              <p class="text-gray-300 text-sm">支持 JPG / PNG / CSV 格式</p>
+              <p class="text-gray-300 text-xs mt-3">建议将图片主体边缘对齐画布边界，减少后期去背景工作量</p>
             </div>
-          </div>
 
-          <!-- 已排除颜色面板 -->
-          <div v-if="excludedColorKeys.size > 0" class="mt-3 pt-3 border-t border-gray-100">
-            <button
-              @click="showExcludedColors = !showExcludedColors"
-              class="flex items-center gap-1 text-xs text-red-500 hover:text-red-600 w-full"
-            >
-              <span>{{ showExcludedColors ? '▼' : '▶' }}</span>
-              <span>已排除 {{ excludedColorKeys.size }} 种颜色</span>
-            </button>
-            <div v-if="showExcludedColors" class="mt-2 space-y-1 max-h-40 overflow-y-auto">
-              <div
-                v-for="hex in Array.from(excludedColorKeys)"
-                :key="hex"
-                class="flex items-center gap-2 py-1 px-2 rounded bg-red-50"
-              >
-                <div class="w-4 h-4 rounded border border-gray-200 flex-shrink-0" :style="{ backgroundColor: hex }"></div>
-                <span class="text-xs font-mono text-red-500 flex-1">{{ getColorKeyByHex(hex, selectedColorSystem) }}</span>
-                <button @click="toggleExcludeColor(hex)" class="text-xs text-blue-500 hover:text-blue-600">恢复</button>
+            <!-- Processing -->
+            <div v-else-if="isProcessing" class="flex-1 flex items-center justify-center">
+              <div class="text-center">
+                <div class="w-12 h-12 border-4 border-indigo-200 border-t-indigo-500 rounded-full animate-spin mx-auto mb-4"></div>
+                <p class="text-gray-500">处理中...</p>
               </div>
             </div>
-            <button
-              @click="restoreAllExcludedColors"
-              class="mt-2 w-full px-3 py-1.5 text-xs rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
-            >
-              一键恢复所有颜色
-            </button>
-          </div>
-        </div>
 
-        <!-- 编辑色板按钮 -->
-        <button
-          v-if="mappedPixelData"
-          @click="showPaletteEditor = true"
-          class="w-full px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm text-gray-700 hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
-        >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-          </svg>
-          编辑色板 ({{ fullBeadPalette.length }} 色)
-        </button>
-
-        <!-- 空调色板警告 -->
-        <div
-          v-if="mappedPixelData && activeBeadPalette.length === 0 && excludedColorKeys.size > 0"
-          class="bg-yellow-50 border border-yellow-200 rounded-xl p-4"
-        >
-          <p class="text-xs text-yellow-700 mb-2">所有颜色已被排除，请恢复部分颜色后重试。</p>
-          <button
-            @click="restoreAllExcludedColors"
-            class="w-full px-3 py-1.5 text-xs rounded-lg border border-yellow-300 bg-yellow-100 text-yellow-800 hover:bg-yellow-200 transition-colors"
-          >
-            查看已排除颜色
-          </button>
-        </div>
-      </aside>
-
-      <!-- 主画布区域 -->
-      <main class="flex-1 min-w-0">
-        <!-- 无图片时显示上传引导 -->
-        <div
-          v-if="!originalImageSrc"
-          @click="triggerFileInput"
-          @dragover.prevent
-          @drop="handleFileDrop"
-          class="bg-white rounded-xl border-2 border-dashed border-gray-300 h-[600px] flex flex-col items-center justify-center cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/30 transition-colors"
-        >
-          <svg class="w-20 h-20 text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-          </svg>
-          <p class="text-gray-400 text-lg mb-1">拖放或点击上传图片</p>
-          <p class="text-gray-300 text-sm">支持 JPG / PNG / CSV 格式</p>
-        </div>
-
-        <!-- 提示框 -->
-        <div
-          v-if="!originalImageSrc"
-          class="mt-4 p-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl text-xs text-blue-700"
-        >
-          💡 建议将图片主体边缘对齐画布边界，减少后期手动去除背景的工作量。
-        </div>
-
-        <!-- 处理中 -->
-        <div v-else-if="isProcessing" class="bg-white rounded-xl border border-gray-200 h-[600px] flex items-center justify-center">
-          <div class="text-center">
-            <div class="w-12 h-12 border-4 border-indigo-200 border-t-indigo-500 rounded-full animate-spin mx-auto mb-4"></div>
-            <p class="text-gray-500">处理中...</p>
-          </div>
-        </div>
-
-        <!-- 像素预览画布 -->
-        <div v-else class="bg-white rounded-xl border border-gray-200 overflow-hidden relative">
-          <!-- 大网格提示 -->
-          <div
-            v-if="gridDimensions && gridDimensions.N > 100"
-            class="px-4 py-2 bg-blue-50 border-b border-blue-200 text-xs text-blue-700 text-center"
-          >
-            高精度网格 ({{ gridDimensions.N }}×{{ gridDimensions.M }}) — 画布已自动放大，可滚动查看完整图像
-          </div>
-          <canvas
-            ref="previewCanvas"
-            width="800"
-            height="600"
-            class="w-full h-auto block"
-            :style="{ imageRendering: 'pixelated', cursor: isManualColoringMode ? (isFloodFillEraseMode ? 'cell' : colorReplaceState.isActive ? 'copy' : isEraseMode ? 'crosshair' : 'crosshair') : 'default' }"
-            @click="handleCanvasClick"
-            @mousemove="handleCanvasHover"
-            @mouseleave="handleCanvasLeave"
-          ></canvas>
-
-          <!-- Tooltip -->
-          <div
-            v-if="tooltipData"
-            class="absolute pointer-events-none bg-gray-900 text-white text-xs rounded-lg px-3 py-2 shadow-lg z-10"
-            :style="{ left: tooltipData.x + 'px', top: tooltipData.y + 'px' }"
-          >
-            <div class="flex items-center gap-2">
-              <div class="w-4 h-4 rounded border border-white/30" :style="{ backgroundColor: tooltipData.color }"></div>
-              <span class="font-mono">{{ tooltipData.key }}</span>
+            <!-- Canvas preview (optimize/edit/preview modes) -->
+            <div v-else-if="activeMode !== 'focus'" class="flex-1 relative overflow-auto">
+              <!-- Large grid hint -->
+              <div
+                v-if="gridDimensions && gridDimensions.N > 100"
+                class="px-4 py-2 bg-blue-50 border-b border-blue-200 text-xs text-blue-700 text-center rounded-t-xl"
+              >
+                高精度网格 ({{ gridDimensions.N }}×{{ gridDimensions.M }}) — 画布已自动放大，可滚动查看完整图像
+              </div>
+              <canvas
+                ref="previewCanvas"
+                class="w-full h-auto block"
+                :style="{ imageRendering: 'pixelated', cursor: isManualColoringMode ? (isFloodFillEraseMode ? 'cell' : colorReplaceState.isActive ? 'copy' : isEraseMode ? 'crosshair' : 'crosshair') : 'default' }"
+                @click="handleCanvasClick"
+                @mousemove="handleCanvasHover"
+                @mouseleave="handleCanvasLeave"
+              ></canvas>
+              <!-- Tooltip -->
+              <div
+                v-if="tooltipData"
+                class="absolute pointer-events-none bg-gray-900 text-white text-xs rounded-lg px-3 py-2 shadow-lg z-10"
+                :style="{ left: tooltipData.x + 'px', top: tooltipData.y + 'px' }"
+              >
+                <div class="flex items-center gap-2">
+                  <div class="w-4 h-4 rounded border border-white/30" :style="{ backgroundColor: tooltipData.color }"></div>
+                  <span class="font-mono">{{ tooltipData.key }}</span>
+                </div>
+                <div class="text-gray-400 mt-1">行 {{ tooltipData.row }} · 列 {{ tooltipData.col }}</div>
+              </div>
             </div>
-            <div class="text-gray-400 mt-1">行 {{ tooltipData.row }} · 列 {{ tooltipData.col }}</div>
-          </div>
+
+            <!-- Focus mode canvas -->
+            <div v-else class="flex-1 relative overflow-hidden">
+              <FocusCanvas
+                :mapped-pixel-data="mappedPixelData"
+                :grid-dimensions="gridDimensions"
+                :current-color="currentColor"
+                :completed-cells="completedCells"
+                :recommended-cell="recommendedCell"
+                :recommended-region="recommendedRegion"
+                :canvas-scale="canvasScale"
+                :canvas-offset="canvasOffset"
+                :grid-section-interval="gridSectionInterval"
+                :show-section-lines="showSectionLines"
+                :section-line-color="sectionLineColor"
+                @cell-click="handleCellClick"
+                @scale-change="(s) => (canvasScale = s)"
+                @offset-change="(o) => (canvasOffset = o)"
+              />
+            </div>
+          </main>
         </div>
 
-        <!-- 模式入口按钮 -->
+        <!-- Right sidebar (320px, only when image loaded) -->
         <div
-          v-if="mappedPixelData && gridDimensions"
-          class="mt-4 space-y-2"
+          v-if="mappedPixelData"
+          class="absolute top-0 bottom-0 right-0 z-30 flex flex-col bg-gray-50 border-l border-gray-200/70"
+          style="width: 320px;"
         >
-          <button
-            @click="isManualColoringMode ? exitManualMode() : enterManualMode()"
-            :class="[
-              'w-full px-4 py-2.5 rounded-xl text-sm font-medium transition-colors',
-              isManualColoringMode
-                ? 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                : 'bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:from-blue-600 hover:to-blue-700'
-            ]"
-          >
-            {{ isManualColoringMode ? '退出手动编辑' : '进入手动编辑模式' }}
-          </button>
-          <button
-            @click="enterFocusMode"
-            class="w-full px-4 py-2.5 rounded-xl text-sm font-medium bg-gradient-to-r from-purple-500 to-purple-600 text-white hover:from-purple-600 hover:to-purple-700 transition-colors"
-          >
-            专心拼豆模式
-          </button>
+          <div class="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-3">
+            <!-- Optimize mode sidebar -->
+            <template v-if="activeMode === 'optimize'">
+              <!-- Upload card -->
+              <div class="bg-white rounded-xl border border-gray-200 p-4">
+                <h3 class="text-sm font-medium text-gray-700 mb-3">图片上传</h3>
+                <div
+                  @click="triggerFileInput"
+                  @dragover.prevent
+                  @drop="handleFileDrop"
+                  class="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center cursor-pointer hover:border-indigo-400 hover:bg-indigo-50 transition-colors"
+                >
+                  <img v-if="originalImageSrc" :src="originalImageSrc" class="max-h-24 mx-auto rounded mb-2" alt="预览" />
+                  <div v-else class="space-y-1">
+                    <svg class="w-8 h-8 mx-auto text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 6v12m6-6H6" />
+                    </svg>
+                    <p class="text-xs text-gray-500">点击或拖放图片</p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Parameter controls card -->
+              <div class="bg-white rounded-xl border border-gray-200 p-4 space-y-4">
+                <h3 class="text-sm font-medium text-gray-700">参数设置</h3>
+
+                <!-- Width -->
+                <div>
+                  <label class="text-xs text-gray-500 mb-1 block">宽度 (横向格子数)</label>
+                  <div class="flex items-center gap-2">
+                    <input
+                      v-model.number="granularity"
+                      type="range" min="10" max="300" step="1"
+                      class="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                    />
+                    <input
+                      v-model="granularityInput"
+                      @blur="granularity = Math.max(10, Math.min(300, parseInt(granularityInput) || 50))"
+                      @keyup.enter="granularity = Math.max(10, Math.min(300, parseInt(granularityInput) || 50))"
+                      type="text"
+                      class="w-14 px-1.5 py-0.5 text-xs font-mono text-center border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                  </div>
+                </div>
+
+                <!-- Height -->
+                <div>
+                  <label class="text-xs text-gray-500 mb-1 block">
+                    高度 (纵向格子数)
+                    <span v-if="!croppedImageCanvas" class="text-gray-400 font-normal ml-1">裁剪后可调</span>
+                  </label>
+                  <div class="flex items-center gap-2">
+                    <input
+                      v-model.number="granularityY"
+                      type="range" min="10" max="300" step="1"
+                      :disabled="!croppedImageCanvas"
+                      class="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-500 disabled:opacity-40"
+                    />
+                    <input
+                      v-model="granularityYInput"
+                      :disabled="!croppedImageCanvas"
+                      @blur="granularityY = Math.max(10, Math.min(300, parseInt(granularityYInput) || 0))"
+                      @keyup.enter="granularityY = Math.max(10, Math.min(300, parseInt(granularityYInput) || 0))"
+                      type="text"
+                      :placeholder="granularityY > 0 ? granularityY.toString() : '自动'"
+                      class="w-14 px-1.5 py-0.5 text-xs font-mono text-center border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-40"
+                    />
+                  </div>
+                </div>
+
+                <!-- Similarity threshold -->
+                <div>
+                  <label class="text-xs text-gray-500 mb-1 block">
+                    颜色合并阈值
+                    <span class="float-right font-mono text-gray-700">{{ similarityThreshold }}</span>
+                  </label>
+                  <input
+                    v-model.number="similarityThreshold"
+                    type="range" min="0" max="100" step="1"
+                    class="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                  />
+                </div>
+
+                <!-- Pixelation mode -->
+                <div>
+                  <label class="text-xs text-gray-500 mb-1 block">像素化模式</label>
+                  <div class="flex gap-2">
+                    <button
+                      @click="pixelationMode = 'dominant'"
+                      :class="[
+                        'flex-1 px-3 py-1.5 text-xs rounded-lg border transition-colors',
+                        pixelationMode === 'dominant'
+                          ? 'bg-indigo-500 text-white border-indigo-500'
+                          : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-300'
+                      ]"
+                    >卡通(主色)</button>
+                    <button
+                      @click="pixelationMode = 'average'"
+                      :class="[
+                        'flex-1 px-3 py-1.5 text-xs rounded-lg border transition-colors',
+                        pixelationMode === 'average'
+                          ? 'bg-indigo-500 text-white border-indigo-500'
+                          : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-300'
+                      ]"
+                    >真实(均色)</button>
+                  </div>
+                </div>
+
+                <!-- Background removal -->
+                <div class="flex gap-2">
+                  <button
+                    @click="handleAutoRemoveBackground"
+                    :disabled="!mappedPixelData"
+                    class="flex-1 px-3 py-1.5 text-xs rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >一键去背景</button>
+                  <button
+                    @click="handleUndoBgRemoval"
+                    :disabled="!bgRemovalSnapshot"
+                    class="flex-1 px-3 py-1.5 text-xs rounded-lg border border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >回撤上一步</button>
+                </div>
+              </div>
+
+              <!-- Color system card -->
+              <div class="bg-white rounded-xl border border-gray-200 p-4">
+                <h3 class="text-sm font-medium text-gray-700 mb-3">色号系统</h3>
+                <div class="flex flex-wrap gap-1.5">
+                  <button
+                    v-for="sys in colorSystemOptions"
+                    :key="sys.key"
+                    @click="selectedColorSystem = sys.key"
+                    :class="[
+                      'px-2.5 py-1 text-xs rounded-lg border transition-all duration-150',
+                      selectedColorSystem === sys.key
+                        ? 'bg-indigo-500 text-white border-indigo-500 shadow-sm'
+                        : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-300'
+                    ]"
+                  >{{ sys.name }}</button>
+                </div>
+              </div>
+            </template>
+
+            <!-- Edit mode sidebar -->
+            <template v-if="activeMode === 'edit'">
+              <!-- Edit tools card -->
+              <div class="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+                <h3 class="text-sm font-medium text-gray-700">编辑工具</h3>
+                <div class="flex gap-2">
+                  <button
+                    @click="isManualColoringMode && toggleMagnifier()"
+                    :class="[
+                      'flex-1 px-3 py-1.5 text-xs rounded-lg border transition-colors',
+                      isMagnifierActive
+                        ? 'bg-cyan-500 text-white border-cyan-500'
+                        : 'bg-white text-gray-600 border-gray-300 hover:border-cyan-300'
+                    ]"
+                    :disabled="!isManualColoringMode"
+                  >🔍 放大镜</button>
+                </div>
+                <div class="flex gap-2 flex-wrap">
+                  <button
+                    @click="isManualColoringMode ? exitManualMode() : enterManualMode()"
+                    :class="[
+                      'flex-1 px-3 py-1.5 text-xs rounded-lg border transition-colors',
+                      isManualColoringMode
+                        ? 'bg-green-500 text-white border-green-500'
+                        : 'bg-white text-gray-600 border-gray-300 hover:border-green-300'
+                    ]"
+                  >{{ isManualColoringMode ? '退出编辑' : '手动编辑' }}</button>
+                </div>
+
+                <ColorPalette
+                  v-if="isManualColoringMode && currentGridColors.length > 0"
+                  :colors="currentGridColors"
+                  :selected-color="selectedEditColor"
+                  :transparent-key="TRANSPARENT_KEY"
+                  :selected-color-system="selectedColorSystem"
+                  :is-erase-mode="isEraseMode"
+                  :full-palette-colors="activeBeadPalette"
+                  :show-full-palette="showFullPalette"
+                  :color-replace-state="colorReplaceState"
+                  @color-select="handlePaletteColorSelect"
+                  @erase-toggle="toggleEraseMode"
+                  @highlight-color="setHighlight"
+                  @toggle-full-palette="showFullPalette = !showFullPalette"
+                  @color-replace-toggle="toggleColorReplaceMode"
+                  @color-replace="handlePaletteColorReplace"
+                />
+
+                <p v-if="isManualColoringMode && currentGridColors.length === 0" class="text-xs text-gray-400">
+                  当前图纸无可用颜色。
+                </p>
+              </div>
+
+              <!-- Color palette card -->
+              <div class="bg-white rounded-xl border border-gray-200 p-4">
+                <h3 class="text-sm font-medium text-gray-700 mb-3">
+                  调色盘
+                  <span class="text-xs text-gray-400 font-normal ml-1">{{ currentGridColors.length }} 种</span>
+                </h3>
+                <div v-if="currentGridColors.length === 0" class="text-xs text-gray-400 text-center py-2">暂无颜色</div>
+                <div v-else class="grid grid-cols-8 gap-1">
+                  <button
+                    v-for="color in currentGridColors"
+                    :key="color.color"
+                    @click="selectEditColor(color)"
+                    class="w-7 h-7 rounded border border-gray-200 hover:scale-125 transition-transform relative group"
+                    :style="{ backgroundColor: color.color }"
+                    :title="color.key"
+                    :class="{ 'ring-2 ring-indigo-500 ring-offset-1': selectedEditColor?.color === color.color }"
+                  >
+                    <span class="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[9px] text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none bg-white px-1 rounded shadow">
+                      {{ color.key }}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Color stats/exclude card -->
+              <div v-if="colorCounts" class="bg-white rounded-xl border border-gray-200 p-4">
+                <h3 class="text-sm font-medium text-gray-700 mb-2">
+                  颜色统计
+                  <span class="text-xs text-gray-400 font-normal ml-1">
+                    {{ Object.keys(colorCounts).length }} 种 / {{ totalBeadCount }} 粒
+                  </span>
+                </h3>
+                <div class="max-h-60 overflow-y-auto space-y-1">
+                  <div
+                    v-for="item in currentGridColors"
+                    :key="item.color"
+                    class="flex items-center gap-2 py-1 px-2 rounded hover:bg-gray-50 cursor-pointer group"
+                    :class="excludedColorKeys.has(item.color.toUpperCase()) ? 'bg-red-50 opacity-60' : ''"
+                    @click="selectEditColor(item)"
+                  >
+                    <div
+                      class="w-5 h-5 rounded border border-gray-200 flex-shrink-0"
+                      :style="{ backgroundColor: item.color }"
+                    ></div>
+                    <span
+                      class="text-xs font-mono flex-1"
+                      :class="excludedColorKeys.has(item.color.toUpperCase()) ? 'text-red-500 line-through' : 'text-gray-700'"
+                    >{{ item.key }}</span>
+                    <span class="text-xs text-gray-400">
+                      {{ colorCounts[item.color.toUpperCase()]?.count || 0 }}
+                    </span>
+                    <button
+                      @click.stop="toggleExcludeColor(item.color.toUpperCase())"
+                      class="text-xs text-red-400 hover:text-red-600"
+                      :class="excludedColorKeys.has(item.color.toUpperCase()) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
+                    >
+                      {{ excludedColorKeys.has(item.color.toUpperCase()) ? '恢复' : '✕' }}
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Excluded colors panel -->
+                <div v-if="excludedColorKeys.size > 0" class="mt-3 pt-3 border-t border-gray-100">
+                  <button
+                    @click="showExcludedColors = !showExcludedColors"
+                    class="flex items-center gap-1 text-xs text-red-500 hover:text-red-600 w-full"
+                  >
+                    <span>{{ showExcludedColors ? '▼' : '▶' }}</span>
+                    <span>已排除 {{ excludedColorKeys.size }} 种颜色</span>
+                  </button>
+                  <div v-if="showExcludedColors" class="mt-2 space-y-1 max-h-40 overflow-y-auto">
+                    <div
+                      v-for="hex in Array.from(excludedColorKeys)"
+                      :key="hex"
+                      class="flex items-center gap-2 py-1 px-2 rounded bg-red-50"
+                    >
+                      <div class="w-4 h-4 rounded border border-gray-200 flex-shrink-0" :style="{ backgroundColor: hex }"></div>
+                      <span class="text-xs font-mono text-red-500 flex-1">{{ getColorKeyByHex(hex, selectedColorSystem) }}</span>
+                      <button @click="toggleExcludeColor(hex)" class="text-xs text-blue-500 hover:text-blue-600">恢复</button>
+                    </div>
+                  </div>
+                  <button
+                    @click="restoreAllExcludedColors"
+                    class="mt-2 w-full px-3 py-1.5 text-xs rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
+                  >一键恢复所有颜色</button>
+                </div>
+              </div>
+
+              <!-- Edit palette button -->
+              <button
+                @click="showPaletteEditor = true"
+                class="w-full px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm text-gray-700 hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
+                编辑色板 ({{ fullBeadPalette.length }} 色)
+              </button>
+
+              <!-- Empty palette warning -->
+              <div
+                v-if="activeBeadPalette.length === 0 && excludedColorKeys.size > 0"
+                class="bg-yellow-50 border border-yellow-200 rounded-xl p-4"
+              >
+                <p class="text-xs text-yellow-700 mb-2">所有颜色已被排除，请恢复部分颜色后重试。</p>
+                <button
+                  @click="restoreAllExcludedColors"
+                  class="w-full px-3 py-1.5 text-xs rounded-lg border border-yellow-300 bg-yellow-100 text-yellow-800 hover:bg-yellow-200 transition-colors"
+                >查看已排除颜色</button>
+              </div>
+            </template>
+
+            <!-- Preview mode sidebar -->
+            <template v-if="activeMode === 'preview'">
+              <!-- Color stats card -->
+              <div v-if="colorCounts" class="bg-white rounded-xl border border-gray-200 p-4">
+                <h3 class="text-sm font-medium text-gray-700 mb-2">
+                  颜色统计
+                  <span class="text-xs text-gray-400 font-normal ml-1">
+                    {{ Object.keys(colorCounts).length }} 种 / {{ totalBeadCount }} 粒
+                  </span>
+                </h3>
+                <div class="max-h-80 overflow-y-auto space-y-1">
+                  <div
+                    v-for="item in currentGridColors"
+                    :key="item.color"
+                    class="flex items-center gap-2 py-1 px-2 rounded hover:bg-gray-50"
+                  >
+                    <div
+                      class="w-5 h-5 rounded border border-gray-200 flex-shrink-0"
+                      :style="{ backgroundColor: item.color }"
+                    ></div>
+                    <span class="text-xs font-mono flex-1 text-gray-700">{{ item.key }}</span>
+                    <span class="text-xs text-gray-400">
+                      {{ colorCounts[item.color.toUpperCase()]?.count || 0 }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Edit palette button -->
+              <button
+                @click="showPaletteEditor = true"
+                class="w-full px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm text-gray-700 hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
+                编辑色板 ({{ fullBeadPalette.length }} 色)
+              </button>
+
+              <!-- Download stats button -->
+              <button
+                @click="handleDownloadStats"
+                class="w-full px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm text-gray-700 hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                下载颜色统计表
+              </button>
+            </template>
+
+            <!-- Focus mode sidebar -->
+            <template v-if="activeMode === 'focus'">
+              <!-- Current color info -->
+              <div v-if="currentColorInfo" class="bg-white rounded-xl border border-gray-200 p-4">
+                <div class="flex items-center gap-3 mb-3">
+                  <div class="w-10 h-10 rounded-full border-2 border-gray-300" :style="{ backgroundColor: currentColor }"></div>
+                  <div>
+                    <div class="text-sm font-medium text-gray-800 font-mono">{{ currentColorInfo.name }}</div>
+                    <div class="text-xs text-gray-500">{{ currentColorInfo.completed }}/{{ currentColorInfo.total }} · {{ progressPercentage }}%</div>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2 text-xs text-gray-500">
+                  <span>{{ elapsedTime }}</span>
+                  <span class="text-gray-300">|</span>
+                  <button @click="cycleGuidanceMode" class="px-2 py-0.5 bg-gray-100 hover:bg-gray-200 rounded-full text-gray-600 transition-colors">
+                    {{ guidanceModeLabel }}
+                  </button>
+                </div>
+              </div>
+
+              <!-- Progress bar -->
+              <ProgressBar
+                :progress-percentage="progressPercentage"
+                :recommended-cell="recommendedCell"
+                :color-info="currentColorInfo"
+              />
+
+              <!-- Focus color panel -->
+              <FocusColorPanel
+                mode="sidebar"
+                :colors="availableColors"
+                :current-color="currentColor"
+                @color-select="handleFocusColorChange"
+                @close="showColorPanel = false"
+              />
+            </template>
+          </div>
         </div>
-      </main>
+      </div>
     </div>
 
-    <!-- 悬浮调色盘 -->
-    <Teleport to="body">
-      <div
-        v-if="mappedPixelData"
-        class="fixed z-40 select-none"
-        :style="{ left: floatingPalette.x + 'px', top: floatingPalette.y + 'px' }"
-      >
-        <div class="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden" :class="{ 'w-12': floatingPalette.collapsed, 'w-64': !floatingPalette.collapsed }">
-          <!-- 拖拽头 -->
-          <div
-            class="bg-gradient-to-r from-indigo-500 to-purple-500 px-3 py-2 flex items-center justify-between cursor-move"
-            @mousedown="onPaletteHeaderMouseDown"
-          >
-            <span class="text-white text-xs font-medium" v-if="!floatingPalette.collapsed">调色盘</span>
+    <!-- Footer -->
+    <footer class="border-t border-gray-200/60 bg-gray-50/70">
+      <div class="mx-auto w-full px-4 py-2 flex items-center justify-between text-xs text-gray-500">
+        <span>PIXBEADS — 拼豆图纸生成工具</span>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Floating palette (edit mode only) -->
+  <Teleport to="body">
+    <div
+      v-if="mappedPixelData && activeMode === 'edit'"
+      class="fixed z-40 select-none"
+      :style="{ left: floatingPalette.x + 'px', top: floatingPalette.y + 'px' }"
+    >
+      <div class="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden" :class="{ 'w-12': floatingPalette.collapsed, 'w-64': !floatingPalette.collapsed }">
+        <!-- Drag handle -->
+        <div
+          class="bg-gradient-to-r from-indigo-500 to-purple-500 px-3 py-2 flex items-center justify-between cursor-move"
+          @mousedown="onPaletteHeaderMouseDown"
+        >
+          <span class="text-white text-xs font-medium" v-if="!floatingPalette.collapsed">调色盘</span>
+          <button
+            @click.stop="togglePaletteCollapse"
+            class="text-white/80 hover:text-white text-xs ml-1"
+            :title="floatingPalette.collapsed ? '展开' : '收起'"
+          >{{ floatingPalette.collapsed ? '◀' : '▶' }}</button>
+        </div>
+
+        <!-- Tool buttons -->
+        <div v-if="!floatingPalette.collapsed" class="p-2 border-b border-gray-100">
+          <div class="flex gap-1 flex-wrap">
             <button
-              @click.stop="togglePaletteCollapse"
-              class="text-white/80 hover:text-white text-xs ml-1"
-              :title="floatingPalette.collapsed ? '展开' : '收起'"
+              @click="undoEdit"
+              :disabled="editHistoryIndex < 0"
+              class="px-2 py-1 text-xs rounded bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              title="撤销 (Ctrl+Z)"
+            >↩ 撤销</button>
+            <button
+              @click="redoEdit"
+              :disabled="editHistoryIndex >= editHistory.length - 1"
+              class="px-2 py-1 text-xs rounded bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              title="重做 (Ctrl+Shift+Z)"
+            >↪ 重做</button>
+            <button
+              @click="toggleEraseMode()"
+              :class="[
+                'px-2 py-1 text-xs rounded transition-colors',
+                isEraseMode ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              ]"
+              title="橡皮擦"
+            >🧹 橡皮</button>
+            <button
+              @click="isFloodFillEraseMode ? exitFloodFillEraseMode() : enterFloodFillEraseMode()"
+              :class="[
+                'px-2 py-1 text-xs rounded transition-colors',
+                isFloodFillEraseMode ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              ]"
+              title="洪水填充擦除"
+            >🪣 区域</button>
+            <button
+              @click="colorReplaceState.isActive ? exitColorReplaceMode() : enterColorReplaceMode()"
+              :class="[
+                'px-2 py-1 text-xs rounded transition-colors',
+                colorReplaceState.isActive ? 'bg-purple-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              ]"
+              title="颜色批量替换"
+            >🔄 替换</button>
+          </div>
+        </div>
+
+        <!-- Color grid -->
+        <div v-if="!floatingPalette.collapsed" class="p-2 max-h-48 overflow-y-auto">
+          <div v-if="currentGridColors.length === 0" class="text-xs text-gray-400 text-center py-2">暂无颜色</div>
+          <div class="grid grid-cols-8 gap-1">
+            <button
+              v-for="color in currentGridColors"
+              :key="color.color"
+              @click="selectEditColor(color)"
+              class="w-6 h-6 rounded border border-gray-200 hover:scale-125 transition-transform relative group"
+              :style="{ backgroundColor: color.color }"
+              :title="color.key"
+              :class="{ 'ring-2 ring-indigo-500 ring-offset-1': selectedEditColor?.color === color.color }"
             >
-              {{ floatingPalette.collapsed ? '◀' : '▶' }}
+              <span class="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[9px] text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none bg-white px-1 rounded shadow">
+                {{ color.key }}
+              </span>
             </button>
-          </div>
-
-          <!-- 工具按钮 -->
-          <div v-if="!floatingPalette.collapsed" class="p-2 border-b border-gray-100">
-            <div class="flex gap-1 flex-wrap">
-              <!-- 撤销 -->
-              <button
-                @click="undoEdit"
-                :disabled="editHistoryIndex < 0"
-                class="px-2 py-1 text-xs rounded bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                title="撤销 (Ctrl+Z)"
-              >↩ 撤销</button>
-              <!-- 重做 -->
-              <button
-                @click="redoEdit"
-                :disabled="editHistoryIndex >= editHistory.length - 1"
-                class="px-2 py-1 text-xs rounded bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                title="重做 (Ctrl+Shift+Z)"
-              >↪ 重做</button>
-              <!-- 橡皮擦 -->
-              <button
-                @click="isManualColoringMode && toggleEraseMode()"
-                :class="[
-                  'px-2 py-1 text-xs rounded transition-colors',
-                  isEraseMode ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                ]"
-                title="橡皮擦"
-              >🧹 橡皮</button>
-              <!-- 区域擦除 -->
-              <button
-                @click="isManualColoringMode && (isFloodFillEraseMode ? exitFloodFillEraseMode() : enterFloodFillEraseMode())"
-                :class="[
-                  'px-2 py-1 text-xs rounded transition-colors',
-                  isFloodFillEraseMode ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                ]"
-                title="洪水填充擦除"
-              >🪣 区域</button>
-              <!-- 批量替换 -->
-              <button
-                @click="isManualColoringMode && (colorReplaceState.isActive ? exitColorReplaceMode() : enterColorReplaceMode())"
-                :class="[
-                  'px-2 py-1 text-xs rounded transition-colors',
-                  colorReplaceState.isActive ? 'bg-purple-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                ]"
-                title="颜色批量替换"
-              >🔄 替换</button>
-            </div>
-          </div>
-
-          <!-- 颜色网格 -->
-          <div v-if="!floatingPalette.collapsed" class="p-2 max-h-48 overflow-y-auto">
-            <div v-if="currentGridColors.length === 0" class="text-xs text-gray-400 text-center py-2">暂无颜色</div>
-            <div class="grid grid-cols-8 gap-1">
-              <button
-                v-for="color in currentGridColors"
-                :key="color.color"
-                @click="isManualColoringMode && selectEditColor(color)"
-                class="w-6 h-6 rounded border border-gray-200 hover:scale-125 transition-transform relative group"
-                :style="{ backgroundColor: color.color }"
-                :title="color.key"
-                :class="{ 'ring-2 ring-indigo-500 ring-offset-1': selectedEditColor?.color === color.color }"
-              >
-                <span class="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[9px] text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none bg-white px-1 rounded shadow">
-                  {{ color.key }}
-                </span>
-              </button>
-            </div>
           </div>
         </div>
       </div>
-    </Teleport>
+    </div>
+  </Teleport>
 
-    <!-- 放大镜工具（覆盖在主画布上方） -->
-    <Teleport to="body">
-      <MagnifierTool
-        v-if="isMagnifierActive && mappedPixelData && gridDimensions"
-        :pixel-data="mappedPixelData"
-        :grid-dimensions="gridDimensions"
-        :selected-color="selectedEditColor"
-        :is-erase-mode="isEraseMode"
-        @selection="handleMagnifierSelection"
-        @pixel-edit="handleMagnifierPixelEdit"
-        @close="exitMagnifierMode"
-      />
-    </Teleport>
-
-    <!-- 下载弹窗（使用组件） -->
-    <DownloadSettingsModal
-      :is-open="showDownloadModal"
-      :options="downloadOptions"
-      @update:options="downloadOptions = $event"
-      @download-grid="handleDownloadGridWithOptions"
-      @close="showDownloadModal = false"
-    />
-
-    <!-- 自定义色板编辑器弹窗 -->
-    <Teleport to="body">
-      <CustomPaletteEditor
-        v-if="showPaletteEditor"
-        :all-colors="fullBeadPalette"
-        :current-selections="customPaletteSelections"
-        @save="handlePaletteEditorSave"
-        @close="handlePaletteEditorClose"
-      />
-    </Teleport>
-
-    <!-- 设置面板弹窗 -->
-    <Teleport to="body">
-      <SettingsPanel
-        v-if="showSettingsPanel"
-        :download-options="downloadOptions"
-        :granularity="granularity"
-        :similarity-threshold="similarityThreshold"
-        :pixelation-mode="pixelationMode"
-        @update:downloadOptions="downloadOptions = $event"
-        @update:granularity="granularity = $event"
-        @update:similarityThreshold="similarityThreshold = $event"
-        @update:pixelationMode="pixelationMode = $event"
-        @close="showSettingsPanel = false"
-      />
-    </Teleport>
-
-    <!-- 打赏弹窗 -->
-    <Teleport to="body">
-      <DonationModal
-        v-if="showDonationModal"
-        @close="showDonationModal = false"
-      />
-    </Teleport>
-
-    <!-- 专心模式预下载提醒弹窗 -->
-    <FocusModePreDownloadModal
-      v-if="showPreDownloadModal"
-      :is-open="showPreDownloadModal"
-      :mapped-pixel-data="mappedPixelData"
+  <!-- Magnifier tool -->
+  <Teleport to="body">
+    <MagnifierTool
+      v-if="isMagnifierActive && mappedPixelData && gridDimensions"
+      :pixel-data="mappedPixelData"
       :grid-dimensions="gridDimensions"
-      :selected-color-system="selectedColorSystem"
-      @proceed="handlePreDownloadConfirm"
-      @close="showPreDownloadModal = false"
+      :selected-color="selectedEditColor"
+      :is-erase-mode="isEraseMode"
+      @selection="handleMagnifierSelection"
+      @pixel-edit="handleMagnifierPixelEdit"
+      @close="exitMagnifierMode"
     />
+  </Teleport>
 
-    <!-- 裁剪工具 -->
-    <ImageCropper
-      v-if="showCropper && originalImageSrc"
-      :image-src="originalImageSrc"
-      @confirm="handleCropConfirm"
-      @skip="handleCropSkip"
+  <!-- Download modal -->
+  <DownloadSettingsModal
+    :is-open="showDownloadModal"
+    :options="downloadOptions"
+    @update:options="downloadOptions = $event"
+    @download-grid="handleDownloadGridWithOptions"
+    @close="showDownloadModal = false"
+  />
+
+  <!-- Custom palette editor -->
+  <Teleport to="body">
+    <CustomPaletteEditor
+      v-if="showPaletteEditor"
+      :all-colors="fullBeadPalette"
+      :current-selections="customPaletteSelections"
+      @save="handlePaletteEditorSave"
+      @close="handlePaletteEditorClose"
     />
+  </Teleport>
 
-    <!-- PWA 安装提示 -->
-    <InstallPWA />
+  <!-- Settings panel -->
+  <Teleport to="body">
+    <SettingsPanel
+      v-if="showSettingsPanel"
+      :download-options="downloadOptions"
+      :granularity="granularity"
+      :similarity-threshold="similarityThreshold"
+      :pixelation-mode="pixelationMode"
+      @update:downloadOptions="downloadOptions = $event"
+      @update:granularity="granularity = $event"
+      @update:similarityThreshold="similarityThreshold = $event"
+      @update:pixelationMode="pixelationMode = $event"
+      @close="showSettingsPanel = false"
+    />
+  </Teleport>
 
-    <!-- 页脚 -->
-    <footer class="max-w-7xl mx-auto px-4 py-6 mt-8 border-t border-gray-200 text-center">
-      <p class="text-xs text-gray-400">PIXBEADS — 拼豆图纸生成工具</p>
-    </footer>
+  <!-- Donation modal -->
+  <Teleport to="body">
+    <DonationModal
+      v-if="showDonationModal"
+      @close="showDonationModal = false"
+    />
+  </Teleport>
 
-    <!-- Toast 通知 -->
-    <Transition name="toast">
-      <div
-        v-if="toastMessage"
-        class="fixed bottom-20 left-1/2 -translate-x-1/2 px-4 py-2 bg-gray-900 text-white text-sm rounded-lg shadow-lg z-50 pointer-events-none"
-      >
-        {{ toastMessage }}
-      </div>
-    </Transition>
-  </div>
+  <!-- PWA install prompt -->
+  <InstallPWA />
+
+  <!-- Toast -->
+  <Transition name="toast">
+    <div
+      v-if="toastMessage"
+      class="fixed bottom-20 left-1/2 -translate-x-1/2 px-4 py-2 bg-gray-900 text-white text-sm rounded-lg shadow-lg z-50 pointer-events-none"
+    >
+      {{ toastMessage }}
+    </div>
+  </Transition>
 </template>
 
 <style>
