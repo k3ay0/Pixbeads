@@ -801,6 +801,8 @@ watch(selectedColorSystem, () => {
 })
 
 // ========== 颜色排除 ==========
+const showExcludedColors = ref(false)
+
 function toggleExcludeColor(hex) {
   const newSet = new Set(excludedColorKeys.value)
   if (newSet.has(hex)) {
@@ -809,6 +811,11 @@ function toggleExcludeColor(hex) {
     newSet.add(hex)
   }
   excludedColorKeys.value = newSet
+}
+
+function restoreAllExcludedColors() {
+  excludedColorKeys.value = new Set()
+  showExcludedColors.value = false
 }
 
 // ========== 保存色板到 localStorage ==========
@@ -1159,34 +1166,66 @@ function handleExportCsv() {
         <!-- 颜色统计 -->
         <div v-if="colorCounts" class="bg-white rounded-xl border border-gray-200 p-4">
           <h3 class="text-sm font-medium text-gray-700 mb-2">
-            颜色统计
+            去除杂色
             <span class="text-xs text-gray-400 font-normal ml-1">
               {{ Object.keys(colorCounts).length }} 种 / {{ totalBeadCount }} 粒
             </span>
           </h3>
-          <div class="max-h-64 overflow-y-auto space-y-1">
+          <div class="max-h-60 overflow-y-auto space-y-1">
             <div
               v-for="item in currentGridColors"
               :key="item.color"
               class="flex items-center gap-2 py-1 px-2 rounded hover:bg-gray-50 cursor-pointer group"
+              :class="excludedColorKeys.has(item.color.toUpperCase()) ? 'bg-red-50 opacity-60' : ''"
               @click="isManualColoringMode && selectEditColor(item)"
             >
               <div
                 class="w-5 h-5 rounded border border-gray-200 flex-shrink-0"
                 :style="{ backgroundColor: item.color }"
               ></div>
-              <span class="text-xs font-mono text-gray-700 flex-1">{{ item.key }}</span>
+              <span
+                class="text-xs font-mono flex-1"
+                :class="excludedColorKeys.has(item.color.toUpperCase()) ? 'text-red-500 line-through' : 'text-gray-700'"
+              >{{ item.key }}</span>
               <span class="text-xs text-gray-400">
                 {{ colorCounts[item.color.toUpperCase()]?.count || 0 }}
               </span>
               <button
-                v-if="isManualColoringMode"
                 @click.stop="toggleExcludeColor(item.color.toUpperCase())"
-                class="opacity-0 group-hover:opacity-100 text-xs text-red-400 hover:text-red-600"
+                class="text-xs text-red-400 hover:text-red-600"
+                :class="excludedColorKeys.has(item.color.toUpperCase()) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
               >
-                ✕
+                {{ excludedColorKeys.has(item.color.toUpperCase()) ? '恢复' : '✕' }}
               </button>
             </div>
+          </div>
+
+          <!-- 已排除颜色面板 -->
+          <div v-if="excludedColorKeys.size > 0" class="mt-3 pt-3 border-t border-gray-100">
+            <button
+              @click="showExcludedColors = !showExcludedColors"
+              class="flex items-center gap-1 text-xs text-red-500 hover:text-red-600 w-full"
+            >
+              <span>{{ showExcludedColors ? '▼' : '▶' }}</span>
+              <span>已排除 {{ excludedColorKeys.size }} 种颜色</span>
+            </button>
+            <div v-if="showExcludedColors" class="mt-2 space-y-1 max-h-40 overflow-y-auto">
+              <div
+                v-for="hex in Array.from(excludedColorKeys)"
+                :key="hex"
+                class="flex items-center gap-2 py-1 px-2 rounded bg-red-50"
+              >
+                <div class="w-4 h-4 rounded border border-gray-200 flex-shrink-0" :style="{ backgroundColor: hex }"></div>
+                <span class="text-xs font-mono text-red-500 flex-1">{{ getColorKeyByHex(hex, selectedColorSystem) }}</span>
+                <button @click="toggleExcludeColor(hex)" class="text-xs text-blue-500 hover:text-blue-600">恢复</button>
+              </div>
+            </div>
+            <button
+              @click="restoreAllExcludedColors"
+              class="mt-2 w-full px-3 py-1.5 text-xs rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
+            >
+              一键恢复所有颜色
+            </button>
           </div>
         </div>
 
