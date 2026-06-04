@@ -65,7 +65,7 @@ export function downloadGridImage({
     const colorKeys = Object.keys(colorCounts)
     const numColumns = Math.max(1, Math.min(4, Math.floor((gridWidth - 40) / 250)))
     const numRows = Math.ceil(colorKeys.length / numColumns)
-    statsHeight = 40 + numRows * 25 + 40 + 40
+    statsHeight = 40 + numRows * 25 + 40 + 30
   }
 
   const downloadWidth = gridWidth + axisLabelSize * 2
@@ -163,6 +163,12 @@ export function downloadGridImage({
       ctx.fillStyle = cell.color
       ctx.fillRect(x, y, cellSize, cellSize)
 
+      // 基础单元格边框（始终绘制）
+      ctx.strokeStyle = '#DDDDDD'
+      ctx.lineWidth = 0.5
+      ctx.strokeRect(x, y, cellSize, cellSize)
+
+      // 网格线（在基础边框之上）
       if (showGrid) {
         ctx.strokeStyle = gridLineColor
         ctx.lineWidth = 0.5
@@ -181,6 +187,11 @@ export function downloadGridImage({
     }
   }
 
+  // 网格外边框
+  ctx.strokeStyle = '#000000'
+  ctx.lineWidth = 1.5
+  ctx.strokeRect(gridOffsetX, gridOffsetY, gridWidth, gridHeight)
+
   // 统计区域
   if (includeStats && colorCounts) {
     const statsY = gridOffsetY + gridHeight + axisLabelSize * 2
@@ -198,6 +209,13 @@ export function downloadGridImage({
     ctx.textAlign = 'left'
     ctx.textBaseline = 'top'
     ctx.fillText(`颜色统计 — 共 ${Object.keys(colorCounts).length} 种颜色，${totalBeadCount} 粒`, 20, statsY + 12)
+
+    // 总计行
+    ctx.fillStyle = '#6B7280'
+    ctx.font = '400 12px system-ui, sans-serif'
+    ctx.textAlign = 'right'
+    ctx.textBaseline = 'top'
+    ctx.fillText(`总计: ${totalBeadCount} 颗`, downloadWidth - 20, statsY + 12)
 
     const sortedKeys = Object.keys(colorCounts).sort(sortColorKeys)
     const numColumns = Math.max(1, Math.min(4, Math.floor((gridWidth - 40) / 250)))
