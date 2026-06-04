@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
 import {
   hexToRgb,
   calculatePixelGrid,
@@ -20,6 +20,23 @@ import {
   sortColorsByHue,
 } from './utils/colorSystemUtils'
 import { downloadGridImage, downloadStatsImage, exportCsv } from './utils/downloader'
+
+// ========== 安全异步组件导入 ==========
+const MagnifierTool = defineAsyncComponent(() =>
+  import('./components/MagnifierTool.vue').catch(() => ({ render: () => null }))
+)
+const SettingsPanel = defineAsyncComponent(() =>
+  import('./components/SettingsPanel.vue').catch(() => ({ render: () => null }))
+)
+const DonationModal = defineAsyncComponent(() =>
+  import('./components/DonationModal.vue').catch(() => ({ render: () => null }))
+)
+const CustomPaletteEditor = defineAsyncComponent(() =>
+  import('./components/CustomPaletteEditor.vue').catch(() => ({ render: () => null }))
+)
+const FocusModePreDownloadModal = defineAsyncComponent(() =>
+  import('./components/FocusModePreDownloadModal.vue').catch(() => ({ render: () => null }))
+)
 
 // ========== 调色板初始化 ==========
 const mardToHexMapping = getMardToHexMapping()
@@ -85,6 +102,70 @@ const floatingPalette = ref({
   dragOffsetY: 0,
   collapsed: false,
 })
+
+// ========== 放大镜工具 ==========
+const isMagnifierActive = ref(false)
+const magnifierSelectionArea = ref(null) // { x1, y1, x2, y2 } in grid coords
+
+function toggleMagnifier() {
+  if (isMagnifierActive.value) {
+    exitMagnifierMode()
+  } else {
+    isMagnifierActive.value = true
+    magnifierSelectionArea.value = null
+    // 退出其他互斥编辑模式
+    isEraseMode.value = false
+    isFloodFillEraseMode.value = false
+    colorReplaceState.value.isActive = false
+    selectedEditColor.value = null
+  }
+}
+
+function exitMagnifierMode() {
+  isMagnifierActive.value = false
+  magnifierSelectionArea.value = null
+}
+
+function handleMagnifierSelection(area) {
+  magnifierSelectionArea.value = area
+}
+
+function handleMagnifierPixelEdit({ row, col, color }) {
+  if (!mappedPixelData.value || !gridDimensions.value) return
+  saveEditSnapshot()
+  const newData = mappedPixelData.value.map(r => r.map(c => ({ ...c })))
+  if (color === null) {
+    // 擦除像素
+    newData[row][col] = { key: TRANSPARENT_KEY, color: '#FFFFFF', isExternal: true }
+  } else {
+    newData[row][col] = {
+      key: color.key,
+      color: color.color,
+      isExternal: false,
+    }
+  }
+  mappedPixelData.value = newData
+  const stats = recalculateColorStats(newData)
+  colorCounts.value = stats.colorCounts
+  totalBeadCount.value = stats.totalCount
+}
+
+// ========== 自定义色板编辑器 ==========
+const showPaletteEditor = ref(false)
+
+function handlePaletteEditorSave(selections) {
+  customPaletteSelections.value = selections
+  showPaletteEditor.value = false
+}
+
+// ========== 设置面板 ==========
+const showSettingsPanel = ref(false)
+
+// ========== 打赏弹窗 ==========
+const showDonationModal = ref(false)
+
+// ========== 专心模式预下载提醒 ==========
+const showPreDownloadModal = ref(false)
 
 // 下载选项
 const downloadOptions = ref({
@@ -278,6 +359,8 @@ function exitManualMode() {
   colorReplaceState.value.isActive = false
   colorReplaceState.value.step = 'select-source'
   colorReplaceState.value.sourceColor = null
+  isMagnifierActive.value = false
+  magnifierSelectionArea.value = null
 }
 
 function toggleEraseMode() {
@@ -519,10 +602,29 @@ function handleColorReplaceClick(row, col) {
 // ========== 专心模式 ==========
 function enterFocusMode() {
   if (!mappedPixelData.value) return
+  showPreDownloadModal.value = true
+}
+
+function handlePreDownloadConfirm() {
+  showPreDownloadModal.value = false
+  saveAndJumpToFocus()
+}
+
+function handlePreDownloadSkip() {
+  showPreDownloadModal.value = false
+  saveAndJumpToFocus()
+}
+
+function saveAndJumpToFocus() {
   localStorage.setItem('pixbeads_focus_data', JSON.stringify(mappedPixelData.value))
   localStorage.setItem('pixbeads_focus_dims', JSON.stringify(gridDimensions.value))
   localStorage.setItem('pixbeads_focus_colorSystem', selectedColorSystem.value)
   window.location.href = '/focus'
+}
+
+// ========== 色板编辑器关闭 ==========
+function handlePaletteEditorClose() {
+  showPaletteEditor.value = false
 }
 
 // ========== 悬浮调色盘拖拽 ==========
@@ -577,6 +679,8 @@ function handleKeyDown(e) {
       exitColorReplaceMode()
     } else if (isFloodFillEraseMode.value) {
       exitFloodFillEraseMode()
+    } else if (isMagnifierActive.value) {
+      exitMagnifierMode()
     }
   }
 }
@@ -733,6 +837,26 @@ function handleExportCsv() {
           >
             下载
           </button>
+          <!-- 打赏按钮 -->
+          <button
+            @click="showDonationModal = true"
+            class="px-4 py-1.5 bg-yellow-500 text-white text-sm rounded-lg hover:bg-yellow-600 transition-colors"
+            title="请作者喝杯咖啡"
+          >
+            ☕ 打赏
+          </button>
+          <!-- 设置按钮 -->
+          <button
+            v-if="mappedPixelData"
+            @click="showSettingsPanel = true"
+            class="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            title="高级设置"
+          >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </button>
         </div>
       </div>
     </header>
@@ -824,6 +948,21 @@ function handleExportCsv() {
         <!-- 编辑工具 -->
         <div v-if="mappedPixelData" class="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
           <h3 class="text-sm font-medium text-gray-700">编辑工具</h3>
+          <!-- 放大镜按钮（与手动编辑同级） -->
+          <div class="flex gap-2">
+            <button
+              @click="isManualColoringMode && toggleMagnifier()"
+              :class="[
+                'flex-1 px-3 py-1.5 text-xs rounded-lg border transition-colors',
+                isMagnifierActive
+                  ? 'bg-cyan-500 text-white border-cyan-500'
+                  : 'bg-white text-gray-600 border-gray-300 hover:border-cyan-300'
+              ]"
+              :disabled="!isManualColoringMode"
+            >
+              🔍 放大镜
+            </button>
+          </div>
           <div class="flex gap-2 flex-wrap">
             <button
               @click="isManualColoringMode ? exitManualMode() : enterManualMode()"
@@ -920,6 +1059,18 @@ function handleExportCsv() {
             </div>
           </div>
         </div>
+
+        <!-- 编辑色板按钮 -->
+        <button
+          v-if="mappedPixelData"
+          @click="showPaletteEditor = true"
+          class="w-full px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm text-gray-700 hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+          </svg>
+          编辑色板 ({{ fullBeadPalette.length }} 色)
+        </button>
       </aside>
 
       <!-- 主画布区域 -->
@@ -1069,6 +1220,20 @@ function handleExportCsv() {
       </div>
     </Teleport>
 
+    <!-- 放大镜工具（覆盖在主画布上方） -->
+    <Teleport to="body">
+      <MagnifierTool
+        v-if="isMagnifierActive && mappedPixelData && gridDimensions"
+        :pixel-data="mappedPixelData"
+        :grid-dimensions="gridDimensions"
+        :selected-color="selectedEditColor"
+        :is-erase-mode="isEraseMode"
+        @selection="handleMagnifierSelection"
+        @pixel-edit="handleMagnifierPixelEdit"
+        @close="exitMagnifierMode"
+      />
+    </Teleport>
+
     <!-- 下载弹窗 -->
     <Teleport to="body">
       <div
@@ -1122,6 +1287,51 @@ function handleExportCsv() {
           </button>
         </div>
       </div>
+    </Teleport>
+
+    <!-- 自定义色板编辑器弹窗 -->
+    <Teleport to="body">
+      <CustomPaletteEditor
+        v-if="showPaletteEditor"
+        :all-colors="fullBeadPalette"
+        :current-selections="customPaletteSelections"
+        @save="handlePaletteEditorSave"
+        @close="handlePaletteEditorClose"
+      />
+    </Teleport>
+
+    <!-- 设置面板弹窗 -->
+    <Teleport to="body">
+      <SettingsPanel
+        v-if="showSettingsPanel"
+        :download-options="downloadOptions"
+        :granularity="granularity"
+        :similarity-threshold="similarityThreshold"
+        :pixelation-mode="pixelationMode"
+        @update:downloadOptions="downloadOptions = $event"
+        @update:granularity="granularity = $event"
+        @update:similarityThreshold="similarityThreshold = $event"
+        @update:pixelationMode="pixelationMode = $event"
+        @close="showSettingsPanel = false"
+      />
+    </Teleport>
+
+    <!-- 打赏弹窗 -->
+    <Teleport to="body">
+      <DonationModal
+        v-if="showDonationModal"
+        @close="showDonationModal = false"
+      />
+    </Teleport>
+
+    <!-- 专心模式预下载提醒弹窗 -->
+    <Teleport to="body">
+      <FocusModePreDownloadModal
+        v-if="showPreDownloadModal"
+        @confirm="handlePreDownloadConfirm"
+        @skip="handlePreDownloadSkip"
+        @close="showPreDownloadModal = false"
+      />
     </Teleport>
   </div>
 </template>
