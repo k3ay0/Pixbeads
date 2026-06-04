@@ -1240,6 +1240,20 @@ function handleExportCsv() {
           </svg>
           编辑色板 ({{ fullBeadPalette.length }} 色)
         </button>
+
+        <!-- 空调色板警告 -->
+        <div
+          v-if="mappedPixelData && activeBeadPalette.length === 0 && excludedColorKeys.size > 0"
+          class="bg-yellow-50 border border-yellow-200 rounded-xl p-4"
+        >
+          <p class="text-xs text-yellow-700 mb-2">所有颜色已被排除，请恢复部分颜色后重试。</p>
+          <button
+            @click="restoreAllExcludedColors"
+            class="w-full px-3 py-1.5 text-xs rounded-lg border border-yellow-300 bg-yellow-100 text-yellow-800 hover:bg-yellow-200 transition-colors"
+          >
+            查看已排除颜色
+          </button>
+        </div>
       </aside>
 
       <!-- 主画布区域 -->
@@ -1269,6 +1283,13 @@ function handleExportCsv() {
 
         <!-- 像素预览画布 -->
         <div v-else class="bg-white rounded-xl border border-gray-200 overflow-hidden relative">
+          <!-- 大网格提示 -->
+          <div
+            v-if="gridDimensions && gridDimensions.N > 100"
+            class="px-4 py-2 bg-blue-50 border-b border-blue-200 text-xs text-blue-700 text-center"
+          >
+            高精度网格 ({{ gridDimensions.N }}×{{ gridDimensions.M }}) — 画布已自动放大，可滚动查看完整图像
+          </div>
           <canvas
             ref="previewCanvas"
             width="800"
