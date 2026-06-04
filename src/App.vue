@@ -1,17 +1,16 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   hexToRgb,
   calculatePixelGrid,
   mergeSimilarRegions,
-  removeBackground,
   recalculateColorStats,
   TRANSPARENT_KEY,
   PixelationMode,
 } from './utils/pixelation'
 import {
   getMardToHexMapping,
-  convertPaletteToColorSystem,
   getColorKeyByHex,
   colorSystemOptions,
   sortColorsByHue,
@@ -41,6 +40,8 @@ const CustomPaletteEditor = defineAsyncComponent(() =>
 const FocusModePreDownloadModal = defineAsyncComponent(() =>
   import('./components/FocusModePreDownloadModal.vue').catch(() => ({ render: () => null }))
 )
+
+const router = useRouter()
 
 // ========== 调色板初始化 ==========
 const mardToHexMapping = getMardToHexMapping()
@@ -86,6 +87,98 @@ const previewCanvas = ref(null)
 const editHistory = ref([])
 const editHistoryIndex = ref(-1)
 const MAX_HISTORY = 50
+
+// ========== 一键去背景 ==========
+const bgRemovalSnapshot = ref(null)
+
+function handleAutoRemoveBackground() {
+  if (!mappedPixelData.value || !gridDimensions.value) return
+
+  // 保存快照用于单步撤回
+  bgRemovalSnapshot.value = {
+    mappedPixelData: mappedPixelData.value.map(r => r.map(c => ({ ...c }))),
+    colorCounts: colorCounts.value ? { ...colorCounts.value } : {},
+    totalBeadCount: totalBeadCount.value,
+  }
+  // 去背景会大幅改变数据，清空编辑撤回历史
+  editHistory.value = []
+  editHistoryIndex.value = -1
+
+  const { N, M } = gridDimensions.value
+  const borderCounts = new Map()
+
+  const countBorderCell = (row, col) => {
+    const cell = mappedPixelData.value[row]?.[col]
+    if (!cell || cell.isExternal || cell.key === TRANSPARENT_KEY) return
+    const key = cell.key
+    borderCounts.set(key, (borderCounts.get(key) || 0) + 1)
+  }
+
+  for (let col = 0; col < N; col++) {
+    countBorderCell(0, col)
+    if (M > 1) countBorderCell(M - 1, col)
+  }
+  for (let row = 1; row < M - 1; row++) {
+    countBorderCell(row, 0)
+    if (N > 1) countBorderCell(row, N - 1)
+  }
+
+  if (borderCounts.size === 0) return
+
+  let targetKey = ''
+  let maxCount = -1
+  borderCounts.forEach((count, key) => {
+    if (count > maxCount) {
+      maxCount = count
+      targetKey = key
+    }
+  })
+
+  const newPixelData = mappedPixelData.value.map(r => r.map(c => ({ ...c })))
+  const visited = Array(M).fill(null).map(() => Array(N).fill(false))
+  const stack = []
+
+  const pushIfTarget = (row, col) => {
+    if (row < 0 || row >= M || col < 0 || col >= N || visited[row][col]) return
+    const cell = newPixelData[row][col]
+    if (!cell || cell.isExternal || cell.key !== targetKey) return
+    visited[row][col] = true
+    stack.push({ row, col })
+  }
+
+  for (let col = 0; col < N; col++) {
+    pushIfTarget(0, col)
+    if (M > 1) pushIfTarget(M - 1, col)
+  }
+  for (let row = 1; row < M - 1; row++) {
+    pushIfTarget(row, 0)
+    if (N > 1) pushIfTarget(row, N - 1)
+  }
+
+  if (stack.length === 0) return
+
+  while (stack.length > 0) {
+    const { row, col } = stack.pop()
+    newPixelData[row][col] = { key: TRANSPARENT_KEY, color: '#FFFFFF', isExternal: true }
+    pushIfTarget(row - 1, col)
+    pushIfTarget(row + 1, col)
+    pushIfTarget(row, col - 1)
+    pushIfTarget(row, col + 1)
+  }
+
+  mappedPixelData.value = newPixelData
+  const stats = recalculateColorStats(newPixelData)
+  colorCounts.value = stats.colorCounts
+  totalBeadCount.value = stats.totalCount
+}
+
+function handleUndoBgRemoval() {
+  if (!bgRemovalSnapshot.value) return
+  mappedPixelData.value = bgRemovalSnapshot.value.mappedPixelData
+  colorCounts.value = bgRemovalSnapshot.value.colorCounts
+  totalBeadCount.value = bgRemovalSnapshot.value.totalBeadCount
+  bgRemovalSnapshot.value = null
+}
 
 // ========== 洪水填充擦除 ==========
 const isFloodFillEraseMode = ref(false)
@@ -260,6 +353,7 @@ function loadImage(file) {
   const reader = new FileReader()
   reader.onload = (e) => {
     originalImageSrc.value = e.target.result
+    bgRemovalSnapshot.value = null
     const img = new Image()
     img.onload = () => {
       originalImage.value = img
@@ -290,24 +384,14 @@ function processImage() {
       const ctx = canvas.getContext('2d')
       ctx.drawImage(img, 0, 0)
 
-      // 像素化
-      const palette = convertPaletteToColorSystem(activeBeadPalette.value, selectedColorSystem.value)
-      const fallbackColor = palette[0] || { key: '?', hex: '#000000', rgb: { r: 0, g: 0, b: 0 } }
-      let result = calculatePixelGrid(ctx, img.width, img.height, N, M, palette, pixelationMode.value, fallbackColor)
+      // 像素化 — 传入原始 MARD 调色板（hex key），不进行色号系统转换
+      const fallbackColor = activeBeadPalette.value[0] || { key: '?', hex: '#000000', rgb: { r: 0, g: 0, b: 0 } }
+      let result = calculatePixelGrid(ctx, img.width, img.height, N, M, activeBeadPalette.value, pixelationMode.value, fallbackColor)
 
-      // 区域合并
+      // 区域合并 — 传入调色板用于 key→RGB 查找
       if (similarityThreshold.value > 0) {
-        result = mergeSimilarRegions(result, similarityThreshold.value)
+        result = mergeSimilarRegions(result, similarityThreshold.value, activeBeadPalette.value)
       }
-
-      // 背景移除
-      const bgKeys = [
-        hexToRgb('#FFFFFF'),
-        hexToRgb('#FAFAFA'),
-        hexToRgb('#F5F5F5'),
-      ].filter(Boolean).map(() => '#FFFFFF')
-
-      result = removeBackground(result, [''])
 
       // 更新状态
       mappedPixelData.value = result
@@ -332,6 +416,7 @@ function processImage() {
 
 // 重新处理
 watch([granularity, similarityThreshold, pixelationMode, activeBeadPalette], () => {
+  bgRemovalSnapshot.value = null
   if (originalImage.value) processImage()
 })
 
@@ -600,10 +685,11 @@ function handlePreDownloadSkip() {
 }
 
 function saveAndJumpToFocus() {
-  localStorage.setItem('pixbeads_focus_data', JSON.stringify(mappedPixelData.value))
-  localStorage.setItem('pixbeads_focus_dims', JSON.stringify(gridDimensions.value))
-  localStorage.setItem('pixbeads_focus_colorSystem', selectedColorSystem.value)
-  window.location.href = '/focus'
+  localStorage.setItem('focusMode_pixelData', JSON.stringify(mappedPixelData.value))
+  localStorage.setItem('focusMode_gridDimensions', JSON.stringify(gridDimensions.value))
+  localStorage.setItem('focusMode_colorCounts', JSON.stringify(colorCounts.value))
+  localStorage.setItem('focusMode_selectedColorSystem', selectedColorSystem.value)
+  router.push('/focus')
 }
 
 // ========== 色板编辑器关闭 ==========
@@ -932,6 +1018,24 @@ function handleExportCsv() {
                 真实(均色)
               </button>
             </div>
+          </div>
+
+          <!-- 一键去背景 -->
+          <div class="flex gap-2">
+            <button
+              @click="handleAutoRemoveBackground"
+              :disabled="!mappedPixelData"
+              class="flex-1 px-3 py-1.5 text-xs rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              一键去背景
+            </button>
+            <button
+              @click="handleUndoBgRemoval"
+              :disabled="!bgRemovalSnapshot"
+              class="flex-1 px-3 py-1.5 text-xs rounded-lg border border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              回撤上一步
+            </button>
           </div>
         </div>
 
