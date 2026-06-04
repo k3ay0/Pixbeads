@@ -6,7 +6,10 @@ import { TRANSPARENT_KEY } from './pixelation'
  * 获取对比色（黑/白）
  */
 function getContrastColor(hex) {
-  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+  // 支持简写 hex（#abc → #aabbcc）
+  const shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i
+  const formattedHex = hex.replace(shorthandRegex, (m, r, g, b) => r + r + g + g + b + b)
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(formattedHex)
   if (!result) return '#000000'
   const r = parseInt(result[1], 16)
   const g = parseInt(result[2], 16)
