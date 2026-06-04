@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, defineAsyncComponent, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   hexToRgb,
@@ -310,7 +310,7 @@ function initDefaultPalette(allHexValues) {
 watch([customPaletteSelections, excludedColorKeys], () => {
   const palette = fullBeadPalette.filter(color => {
     const hex = color.hex.toUpperCase()
-    return customPaletteSelections[hex] && !excludedColorKeys.value.has(hex)
+    return customPaletteSelections.value[hex] && !excludedColorKeys.value.has(hex)
   })
   activeBeadPalette.value = palette
 }, { immediate: true })
@@ -849,6 +849,10 @@ function renderCanvas() {
   ctx.fillStyle = '#E5E7EB'
   ctx.fillRect(0, 0, canvas.width, canvas.height)
 
+  let extCount = 0
+  let colorCount = 0
+  let sampleColors = []
+
   for (let j = 0; j < M; j++) {
     for (let i = 0; i < N; i++) {
       const cell = mappedPixelData.value[j]?.[i]
@@ -858,10 +862,12 @@ function renderCanvas() {
       const y = j * cellSize
 
       if (cell.isExternal) {
-        // 外部区域用浅灰棋盘格
         ctx.fillStyle = (i + j) % 2 === 0 ? '#F3F4F6' : '#E5E7EB'
+        extCount++
       } else {
         ctx.fillStyle = cell.color
+        colorCount++
+        if (sampleColors.length < 3) sampleColors.push(cell.color)
       }
       ctx.fillRect(x, y, cellSize, cellSize)
 

@@ -161,13 +161,7 @@ Pixbeads/
 
 ## 路由
 
-项目不使用 vue-router，而是通过 `main.js` 中的路径判断实现简单路由：
-
-- `/` → App.vue（主页面）
-- `/focus` → FocusMode.vue（专心拼豆模式）
-
-专心模式通过 localStorage 传递像素数据。
 
 ## 许可证
 
-Apache 2.0
+GAGP V3
