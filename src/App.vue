@@ -6,9 +6,6 @@ import {
   mergeSimilarRegions,
   removeBackground,
   recalculateColorStats,
-  floodFillErase,
-  replaceAllColor,
-  paintPixel,
   TRANSPARENT_KEY,
   PixelationMode,
 } from './utils/pixelation'
@@ -20,6 +17,13 @@ import {
   sortColorsByHue,
 } from './utils/colorSystemUtils'
 import { downloadGridImage, downloadStatsImage, exportCsv } from './utils/downloader'
+import { useManualEditingState } from './composables/useManualEditingState.js'
+import { usePixelEditingOperations } from './composables/usePixelEditingOperations.js'
+import { clientToGridCoords } from './utils/canvasUtils.js'
+import { loadPaletteSelections, savePaletteSelections, presetToSelections } from './utils/localStorageUtils.js'
+import DownloadSettingsModal from './components/DownloadSettingsModal.vue'
+import ColorPalette from './components/ColorPalette.vue'
+import InstallPWA from './components/InstallPWA.vue'
 
 // ========== 安全异步组件导入 ==========
 const MagnifierTool = defineAsyncComponent(() =>
@@ -75,7 +79,7 @@ const activeBeadPalette = ref([])
 const isProcessing = ref(false)
 const showDownloadModal = ref(false)
 const tooltipData = ref(null)
-const highlightColorKey = ref(null)
+
 const previewCanvas = ref(null)
 
 // ========== 撤销/重做 ==========
@@ -86,12 +90,7 @@ const MAX_HISTORY = 50
 // ========== 洪水填充擦除 ==========
 const isFloodFillEraseMode = ref(false)
 
-// ========== 颜色批量替换 ==========
-const colorReplaceState = ref({
-  isActive: false,
-  step: 'select-source', // 'select-source' | 'select-target'
-  sourceColor: null, // { hex, key }
-})
+
 
 // ========== 悬浮调色盘 ==========
 const floatingPalette = ref({
@@ -175,30 +174,26 @@ const downloadOptions = ref({
   showCellNumbers: true,
   gridLineColor: '#CCCCCC',
   includeStats: true,
+  exportCsv: false,
 })
 
 // ========== 初始化色板选择 ==========
 onMounted(() => {
   const allHexValues = fullBeadPalette.map(c => c.hex.toUpperCase())
-  const saved = localStorage.getItem('pixbeads_palette')
+  const saved = loadPaletteSelections()
   if (saved) {
-    try {
-      const parsed = JSON.parse(saved)
-      // 验证
-      const valid = {}
-      let hasValid = false
-      Object.entries(parsed).forEach(([key, value]) => {
-        if (/^#[0-9A-F]{6}$/i.test(key) && allHexValues.includes(key.toUpperCase())) {
-          valid[key.toUpperCase()] = value
-          hasValid = true
-        }
-      })
-      if (hasValid) {
-        customPaletteSelections.value = valid
-      } else {
-        initDefaultPalette(allHexValues)
+    // 验证
+    const valid = {}
+    let hasValid = false
+    Object.entries(saved).forEach(([key, value]) => {
+      if (/^#[0-9A-F]{6}$/i.test(key) && allHexValues.includes(key.toUpperCase())) {
+        valid[key.toUpperCase()] = value
+        hasValid = true
       }
-    } catch {
+    })
+    if (hasValid) {
+      customPaletteSelections.value = valid
+    } else {
       initDefaultPalette(allHexValues)
     }
   } else {
@@ -341,44 +336,68 @@ watch([granularity, similarityThreshold, pixelationMode, activeBeadPalette], () 
 })
 
 // ========== 手动编辑 ==========
-const selectedEditColor = ref(null)
-const isEraseMode = ref(false)
-const isManualColoringMode = ref(false)
+// 使用 composable 管理手动编辑状态
+const {
+  isManualColoringMode,
+  selectedColor,
+  isEraseMode,
+  colorReplaceState,
+  highlightColorKey,
+  enterManualMode,
+  exitManualMode: exitManualModeBase,
+  toggleEraseMode,
+  toggleColorReplaceMode,
+  selectColor,
+  selectSourceColorFromCanvas,
+  completeColorReplace,
+  setHighlight,
+  clearHighlight,
+} = useManualEditingState()
 
-function enterManualMode() {
-  isManualColoringMode.value = true
-  selectedEditColor.value = null
-  isEraseMode.value = false
-}
+// 别名：保持模板兼容性
+const selectedEditColor = selectedColor
 
+// 扩展退出手动编辑模式（额外清理 App.vue 专有状态）
 function exitManualMode() {
-  isManualColoringMode.value = false
-  selectedEditColor.value = null
-  isEraseMode.value = false
+  exitManualModeBase()
   isFloodFillEraseMode.value = false
-  colorReplaceState.value.isActive = false
-  colorReplaceState.value.step = 'select-source'
-  colorReplaceState.value.sourceColor = null
   isMagnifierActive.value = false
   magnifierSelectionArea.value = null
 }
 
-function toggleEraseMode() {
-  if (isEraseMode.value) {
-    isEraseMode.value = false
-  } else {
-    isEraseMode.value = true
-    selectedEditColor.value = null
-    isFloodFillEraseMode.value = false
-    colorReplaceState.value.isActive = false
-  }
+// 委托到 composable
+function selectEditColor(color) {
+  selectColor(color)
 }
 
-function selectEditColor(color) {
-  isEraseMode.value = false
-  isFloodFillEraseMode.value = false
-  colorReplaceState.value.isActive = false
-  selectedEditColor.value = color
+// 使用像素编辑操作 composable
+const {
+  performFloodFillErase,
+  performColorReplace,
+  performSinglePixelPaint,
+} = usePixelEditingOperations({
+  mappedPixelData,
+  gridDimensions,
+  colorCounts,
+  totalBeadCount,
+  onPixelDataChange: (newData) => { mappedPixelData.value = newData },
+  onColorCountsChange: (newCounts) => { colorCounts.value = newCounts },
+  onTotalCountChange: (newCount) => { totalBeadCount.value = newCount },
+})
+
+// 色板展开状态（用于 ColorPalette 组件）
+const showFullPalette = ref(false)
+
+// ColorPalette 颜色选择事件处理
+function handlePaletteColorSelect(colorData) {
+  selectEditColor(colorData)
+}
+
+// ColorPalette 颜色替换事件处理
+function handlePaletteColorReplace(sourceColor, targetColor) {
+  saveEditSnapshot()
+  performColorReplace(sourceColor, targetColor)
+  completeColorReplace()
 }
 
 function handleCanvasClick(e) {
@@ -386,19 +405,10 @@ function handleCanvasClick(e) {
   if (!isManualColoringMode.value) return
 
   const canvas = e.target
-  const rect = canvas.getBoundingClientRect()
-  const scaleX = canvas.width / rect.width
-  const scaleY = canvas.height / rect.height
-  const canvasX = (e.clientX - rect.left) * scaleX
-  const canvasY = (e.clientY - rect.top) * scaleY
+  const coords = clientToGridCoords(e.clientX, e.clientY, canvas, gridDimensions.value)
+  if (!coords) return
 
-  const { N, M } = gridDimensions.value
-  const cellW = canvas.width / N
-  const cellH = canvas.height / M
-  const col = Math.floor(canvasX / cellW)
-  const row = Math.floor(canvasY / cellH)
-
-  if (row < 0 || row >= M || col < 0 || col >= N) return
+  const { i: col, j: row } = coords
   const cell = mappedPixelData.value[row][col]
   if (!cell || cell.isExternal) return
 
@@ -416,24 +426,14 @@ function handleCanvasClick(e) {
 
   if (isEraseMode.value) {
     saveEditSnapshot()
-    const newData = mappedPixelData.value.map(r => r.map(c => ({ ...c })))
-    newData[row][col] = { key: TRANSPARENT_KEY, color: '#FFFFFF', isExternal: true }
-    mappedPixelData.value = newData
-    const stats = recalculateColorStats(newData)
-    colorCounts.value = stats.colorCounts
-    totalBeadCount.value = stats.totalCount
+    performSinglePixelPaint(row, col, { key: TRANSPARENT_KEY, color: '#FFFFFF', isExternal: true })
   } else if (selectedEditColor.value) {
     saveEditSnapshot()
-    const newData = mappedPixelData.value.map(r => r.map(c => ({ ...c })))
-    newData[row][col] = {
+    performSinglePixelPaint(row, col, {
       key: selectedEditColor.value.key,
       color: selectedEditColor.value.color,
       isExternal: false,
-    }
-    mappedPixelData.value = newData
-    const stats = recalculateColorStats(newData)
-    colorCounts.value = stats.colorCounts
-    totalBeadCount.value = stats.totalCount
+    })
   } else {
     // 吸管: 选中当前颜色
     const hex = cell.color.toUpperCase()
@@ -444,22 +444,14 @@ function handleCanvasClick(e) {
 function handleCanvasHover(e) {
   if (!mappedPixelData.value || !gridDimensions.value) return
   const canvas = e.target
-  const rect = canvas.getBoundingClientRect()
-  const scaleX = canvas.width / rect.width
-  const scaleY = canvas.height / rect.height
-  const canvasX = (e.clientX - rect.left) * scaleX
-  const canvasY = (e.clientY - rect.top) * scaleY
+  const coords = clientToGridCoords(e.clientX, e.clientY, canvas, gridDimensions.value)
 
-  const { N, M } = gridDimensions.value
-  const cellW = canvas.width / N
-  const cellH = canvas.height / M
-  const col = Math.floor(canvasX / cellW)
-  const row = Math.floor(canvasY / cellH)
-
-  if (row >= 0 && row < M && col >= 0 && col < N) {
+  if (coords) {
+    const { i: col, j: row } = coords
     const cell = mappedPixelData.value[row][col]
     if (cell && !cell.isExternal) {
       const displayKey = getColorKeyByHex(cell.color, selectedColorSystem.value)
+      const rect = canvas.getBoundingClientRect()
       tooltipData.value = {
         x: e.clientX - rect.left + 15,
         y: e.clientY - rect.top - 10,
@@ -554,11 +546,7 @@ function handleFloodFillErase(row, col) {
   // 保存编辑快照
   saveEditSnapshot()
 
-  const newData = floodFillErase(mappedPixelData.value, gridDimensions.value, row, col, cell.key)
-  mappedPixelData.value = newData
-  const stats = recalculateColorStats(newData)
-  colorCounts.value = stats.colorCounts
-  totalBeadCount.value = stats.totalCount
+  performFloodFillErase(row, col, cell.key)
 }
 
 function handleColorReplaceClick(row, col) {
@@ -588,13 +576,9 @@ function handleColorReplaceClick(row, col) {
     // 保存编辑快照
     saveEditSnapshot()
 
-    const { result, count } = replaceAllColor(mappedPixelData.value, sourceHex, targetKey, targetHex)
-    if (count > 0) {
-      mappedPixelData.value = result
-      const stats = recalculateColorStats(result)
-      colorCounts.value = stats.colorCounts
-      totalBeadCount.value = stats.totalCount
-    }
+    const sourceColor = { key: colorReplaceState.value.sourceColor.key, color: colorReplaceState.value.sourceColor.hex }
+    const targetColor = { key: targetKey, color: targetHex }
+    performColorReplace(sourceColor, targetColor)
     exitColorReplaceMode()
   }
 }
@@ -703,7 +687,7 @@ function toggleExcludeColor(hex) {
 
 // ========== 保存色板到 localStorage ==========
 watch(customPaletteSelections, (val) => {
-  localStorage.setItem('pixbeads_palette', JSON.stringify(val))
+  savePaletteSelections(val)
 }, { deep: true })
 
 // ========== 画布渲染 ==========
@@ -777,6 +761,12 @@ function handleDownloadGrid() {
     selectedColorSystem: selectedColorSystem.value,
     options: downloadOptions.value,
   })
+}
+
+// DownloadSettingsModal 触发下载
+function handleDownloadGridWithOptions(options) {
+  downloadOptions.value = options
+  handleDownloadGrid()
 }
 
 function handleDownloadStats() {
@@ -975,54 +965,30 @@ function handleExportCsv() {
             >
               {{ isManualColoringMode ? '退出编辑' : '手动编辑' }}
             </button>
-            <button
-              v-if="isManualColoringMode"
-              @click="toggleEraseMode"
-              :class="[
-                'px-3 py-1.5 text-xs rounded-lg border transition-colors',
-                isEraseMode
-                  ? 'bg-red-500 text-white border-red-500'
-                  : 'bg-white text-gray-600 border-gray-300 hover:border-red-300'
-              ]"
-            >
-              橡皮擦
-            </button>
-            <button
-              v-if="isManualColoringMode"
-              @click="isFloodFillEraseMode ? exitFloodFillEraseMode() : enterFloodFillEraseMode()"
-              :class="[
-                'px-3 py-1.5 text-xs rounded-lg border transition-colors',
-                isFloodFillEraseMode
-                  ? 'bg-orange-500 text-white border-orange-500'
-                  : 'bg-white text-gray-600 border-gray-300 hover:border-orange-300'
-              ]"
-            >
-              区域擦除
-            </button>
-            <button
-              v-if="isManualColoringMode"
-              @click="colorReplaceState.isActive ? exitColorReplaceMode() : enterColorReplaceMode()"
-              :class="[
-                'px-3 py-1.5 text-xs rounded-lg border transition-colors',
-                colorReplaceState.isActive
-                  ? 'bg-purple-500 text-white border-purple-500'
-                  : 'bg-white text-gray-600 border-gray-300 hover:border-purple-300'
-              ]"
-            >
-              批量替换
-            </button>
           </div>
-          <p v-if="isManualColoringMode && !selectedEditColor && !isEraseMode && !isFloodFillEraseMode && !colorReplaceState.isActive" class="text-xs text-gray-400">
-            点击画布吸取颜色，或从下方色板选择
-          </p>
-          <p v-if="isFloodFillEraseMode" class="text-xs text-orange-400">
-            点击画布擦除同色连通区域
-          </p>
-          <p v-if="colorReplaceState.isActive && colorReplaceState.step === 'select-source'" class="text-xs text-purple-400">
-            第一步：点击画布选择要替换的源颜色
-          </p>
-          <p v-if="colorReplaceState.isActive && colorReplaceState.step === 'select-target'" class="text-xs text-purple-400">
-            已选源色: <span class="font-mono" :style="{ color: colorReplaceState.sourceColor?.hex }">{{ colorReplaceState.sourceColor?.key }}</span>，点击选择目标颜色
+
+          <!-- 使用 ColorPalette 组件替代内联颜色列表和模式按钮 -->
+          <ColorPalette
+            v-if="isManualColoringMode && currentGridColors.length > 0"
+            :colors="currentGridColors"
+            :selected-color="selectedEditColor"
+            :transparent-key="TRANSPARENT_KEY"
+            :selected-color-system="selectedColorSystem"
+            :is-erase-mode="isEraseMode"
+            :full-palette-colors="activeBeadPalette"
+            :show-full-palette="showFullPalette"
+            :color-replace-state="colorReplaceState"
+            @color-select="handlePaletteColorSelect"
+            @erase-toggle="toggleEraseMode"
+            @highlight-color="setHighlight"
+            @toggle-full-palette="showFullPalette = !showFullPalette"
+            @color-replace-toggle="toggleColorReplaceMode"
+            @color-replace="handlePaletteColorReplace"
+          />
+
+          <!-- 无颜色时提示 -->
+          <p v-if="isManualColoringMode && currentGridColors.length === 0" class="text-xs text-gray-400">
+            当前图纸无可用颜色。
           </p>
         </div>
 
@@ -1234,60 +1200,14 @@ function handleExportCsv() {
       />
     </Teleport>
 
-    <!-- 下载弹窗 -->
-    <Teleport to="body">
-      <div
-        v-if="showDownloadModal"
-        class="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
-        @click.self="showDownloadModal = false"
-      >
-        <div class="bg-white rounded-2xl shadow-xl w-96 p-6 space-y-4">
-          <h3 class="text-lg font-semibold">下载设置</h3>
-
-          <label class="flex items-center gap-2 text-sm">
-            <input type="checkbox" v-model="downloadOptions.showGrid" class="rounded accent-indigo-500" />
-            显示网格线
-          </label>
-          <label class="flex items-center gap-2 text-sm">
-            <input type="checkbox" v-model="downloadOptions.showCoordinates" class="rounded accent-indigo-500" />
-            显示坐标
-          </label>
-          <label class="flex items-center gap-2 text-sm">
-            <input type="checkbox" v-model="downloadOptions.includeStats" class="rounded accent-indigo-500" />
-            包含颜色统计
-          </label>
-          <div>
-            <label class="text-xs text-gray-500">网格间隔</label>
-            <input
-              v-model.number="downloadOptions.gridInterval"
-              type="number" min="1" max="50"
-              class="w-full mt-1 text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-indigo-500 outline-none"
-            />
-          </div>
-
-          <div class="flex gap-2 pt-2">
-            <button
-              @click="handleDownloadGrid"
-              class="flex-1 px-4 py-2 bg-indigo-500 text-white text-sm rounded-lg hover:bg-indigo-600 transition-colors"
-            >
-              下载图纸
-            </button>
-            <button
-              @click="handleDownloadStats"
-              class="flex-1 px-4 py-2 bg-gray-100 text-gray-700 text-sm rounded-lg hover:bg-gray-200 transition-colors"
-            >
-              下载统计
-            </button>
-          </div>
-          <button
-            @click="handleExportCsv"
-            class="w-full px-4 py-2 bg-gray-100 text-gray-700 text-sm rounded-lg hover:bg-gray-200 transition-colors"
-          >
-            导出 CSV
-          </button>
-        </div>
-      </div>
-    </Teleport>
+    <!-- 下载弹窗（使用组件） -->
+    <DownloadSettingsModal
+      :is-open="showDownloadModal"
+      :options="downloadOptions"
+      @update:options="downloadOptions = $event"
+      @download-grid="handleDownloadGridWithOptions"
+      @close="showDownloadModal = false"
+    />
 
     <!-- 自定义色板编辑器弹窗 -->
     <Teleport to="body">
@@ -1333,6 +1253,9 @@ function handleExportCsv() {
         @close="showPreDownloadModal = false"
       />
     </Teleport>
+
+    <!-- PWA 安装提示 -->
+    <InstallPWA />
   </div>
 </template>
 
