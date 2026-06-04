@@ -50,6 +50,7 @@ export function downloadGridImage({
     showGrid = true,
     gridInterval = 10,
     showCoordinates = true,
+    showCellNumbers = true,
     gridLineColor = '#CCCCCC',
     includeStats = true,
   } = options
@@ -176,13 +177,15 @@ export function downloadGridImage({
       }
 
       // 色号文字
-      const displayKey = getColorKeyByHex(cell.color, selectedColorSystem)
-      if (displayKey && displayKey !== '?') {
-        ctx.fillStyle = getContrastColor(cell.color)
-        ctx.font = `${fontSize}px sans-serif`
-        ctx.textAlign = 'center'
-        ctx.textBaseline = 'middle'
-        ctx.fillText(displayKey, x + cellSize / 2, y + cellSize / 2)
+      if (showCellNumbers) {
+        const displayKey = getColorKeyByHex(cell.color, selectedColorSystem)
+        if (displayKey && displayKey !== '?') {
+          ctx.fillStyle = getContrastColor(cell.color)
+          ctx.font = `${fontSize}px sans-serif`
+          ctx.textAlign = 'center'
+          ctx.textBaseline = 'middle'
+          ctx.fillText(displayKey, x + cellSize / 2, y + cellSize / 2)
+        }
       }
     }
   }

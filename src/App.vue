@@ -887,6 +887,15 @@ function handleDownloadGrid() {
     selectedColorSystem: selectedColorSystem.value,
     options: downloadOptions.value,
   })
+
+  // 同时导出 CSV
+  if (downloadOptions.value.exportCsv) {
+    exportCsv({
+      mappedPixelData: mappedPixelData.value,
+      gridDimensions: gridDimensions.value,
+      selectedColorSystem: selectedColorSystem.value,
+    })
+  }
 }
 
 // DownloadSettingsModal 触发下载
