@@ -15,7 +15,7 @@ import {
   colorSystemOptions,
   sortColorsByHue,
 } from './utils/colorSystemUtils'
-import { downloadGridImage, downloadStatsImage, exportCsv } from './utils/downloader'
+import { downloadGridImage, downloadStatsImage, exportCsv, importCsvData } from './utils/downloader'
 import { useManualEditingState } from './composables/useManualEditingState.js'
 import { usePixelEditingOperations } from './composables/usePixelEditingOperations.js'
 import { clientToGridCoords } from './utils/canvasUtils.js'
@@ -341,12 +341,22 @@ function triggerFileInput() {
 function handleFileDrop(e) {
   e.preventDefault()
   const file = e.dataTransfer?.files?.[0]
-  if (file && file.type.startsWith('image/')) loadImage(file)
+  if (!file) return
+  if (file.name.toLowerCase().endsWith('.csv')) {
+    loadCsv(file)
+  } else if (file.type.startsWith('image/')) {
+    loadImage(file)
+  }
 }
 
 function handleFileChange(e) {
   const file = e.target?.files?.[0]
-  if (file) loadImage(file)
+  if (!file) return
+  if (file.name.toLowerCase().endsWith('.csv')) {
+    loadCsv(file)
+  } else {
+    loadImage(file)
+  }
 }
 
 function loadImage(file) {
@@ -362,6 +372,32 @@ function loadImage(file) {
     img.src = e.target.result
   }
   reader.readAsDataURL(file)
+}
+
+function loadCsv(file) {
+  importCsvData(file)
+    .then(({ mappedPixelData: data, gridDimensions: dims }) => {
+      mappedPixelData.value = data
+      gridDimensions.value = dims
+      originalImageSrc.value = null
+      originalImage.value = null
+      bgRemovalSnapshot.value = null
+
+      const stats = recalculateColorStats(data)
+      colorCounts.value = stats.colorCounts
+      totalBeadCount.value = stats.totalCount
+
+      editHistory.value = []
+      editHistoryIndex.value = -1
+      saveEditSnapshot()
+
+      granularity.value = dims.N
+      granularityInput.value = dims.N.toString()
+    })
+    .catch(error => {
+      console.error('CSV导入失败:', error)
+      alert(`CSV导入失败：${error.message}`)
+    })
 }
 
 // ========== 核心处理 ==========
@@ -958,11 +994,11 @@ function handleExportCsv() {
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 6v12m6-6H6" />
               </svg>
               <p class="text-sm text-gray-500">点击或拖放图片</p>
-              <p class="text-xs text-gray-400">支持 JPG / PNG</p>
+              <p class="text-xs text-gray-400">支持 JPG / PNG / CSV</p>
             </div>
             <img v-else :src="originalImageSrc" class="max-h-32 mx-auto rounded" alt="预览" />
           </div>
-          <input ref="fileInput" type="file" accept="image/*" class="hidden" @change="handleFileChange" />
+          <input ref="fileInput" type="file" accept="image/*,.csv" class="hidden" @change="handleFileChange" />
         </div>
 
         <!-- 参数控制 -->
@@ -1161,7 +1197,7 @@ function handleExportCsv() {
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
           </svg>
           <p class="text-gray-400 text-lg mb-1">拖放或点击上传图片</p>
-          <p class="text-gray-300 text-sm">支持 JPG / PNG 格式</p>
+          <p class="text-gray-300 text-sm">支持 JPG / PNG / CSV 格式</p>
         </div>
 
         <!-- 处理中 -->

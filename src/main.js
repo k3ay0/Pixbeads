@@ -1,14 +1,8 @@
-import { createApp, defineAsyncComponent } from "vue"
-import App from "./App.vue"
+import { createApp } from "vue"
+import Root from "./Root.vue"
+import router from "./router"
 import "./style.css"
 
-const app = createApp(App)
-
-// 简易路由：根据 path 判断是否挂载 FocusMode
-if (window.location.pathname === '/focus') {
-  const FocusMode = defineAsyncComponent(() => import('./views/FocusMode.vue'))
-  const focusApp = createApp(FocusMode)
-  focusApp.mount("#app")
-} else {
-  app.mount("#app")
-}
+const app = createApp(Root)
+app.use(router)
+app.mount("#app")

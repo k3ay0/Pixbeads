@@ -322,3 +322,92 @@ export function exportCsv({ mappedPixelData, gridDimensions, selectedColorSystem
   link.click()
   URL.revokeObjectURL(link.href)
 }
+
+/**
+ * 导入 CSV hex 数据
+ * @param {File} file CSV 文件
+ * @returns {Promise<{ mappedPixelData: Array, gridDimensions: { N: number; M: number } }>}
+ */
+export function importCsvData(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+
+    reader.onload = (e) => {
+      try {
+        const text = e.target?.result
+        if (!text) {
+          reject(new Error('无法读取文件内容'))
+          return
+        }
+
+        const lines = text.trim().split('\n')
+        const M = lines.length
+
+        if (M === 0) {
+          reject(new Error('CSV文件为空'))
+          return
+        }
+
+        const firstRowData = lines[0].split(',')
+        const N = firstRowData.length
+
+        if (N === 0) {
+          reject(new Error('CSV文件格式无效'))
+          return
+        }
+
+        const mappedPixelData = []
+
+        for (let row = 0; row < M; row++) {
+          const rowData = lines[row].split(',')
+          const mappedRow = []
+
+          if (rowData.length !== N) {
+            reject(new Error(`第${row + 1}行的列数不匹配，期望${N}列，实际${rowData.length}列`))
+            return
+          }
+
+          for (let col = 0; col < N; col++) {
+            const cellValue = rowData[col].trim()
+
+            if (cellValue === 'TRANSPARENT' || cellValue === '') {
+              mappedRow.push({
+                key: 'TRANSPARENT',
+                color: '#FFFFFF',
+                isExternal: true
+              })
+            } else {
+              const hexPattern = /^#[0-9A-Fa-f]{6}$/
+              if (!hexPattern.test(cellValue)) {
+                reject(new Error(`第${row + 1}行第${col + 1}列的颜色值无效：${cellValue}`))
+                return
+              }
+
+              mappedRow.push({
+                key: cellValue.toUpperCase(),
+                color: cellValue.toUpperCase(),
+                isExternal: false
+              })
+            }
+          }
+
+          mappedPixelData.push(mappedRow)
+        }
+
+        resolve({
+          mappedPixelData,
+          gridDimensions: { N, M }
+        })
+
+      } catch (error) {
+        reject(new Error(`解析CSV文件失败：${error}`))
+      }
+    }
+
+    reader.onerror = () => {
+      reject(new Error('读取文件失败'))
+    }
+
+    reader.readAsText(file, 'utf-8')
+  })
+}
