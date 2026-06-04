@@ -11,6 +11,13 @@ export const colorSystemOptions = [
 ]
 
 /**
+ * 获取所有可用的 hex 值
+ */
+export function getAllHexValues() {
+  return Object.keys(colorSystemMapping)
+}
+
+/**
  * 获取所有 MARD 色号到 hex 的映射
  */
 export function getMardToHexMapping() {
@@ -18,6 +25,17 @@ export function getMardToHexMapping() {
   Object.entries(colorSystemMapping).forEach(([hex, colorData]) => {
     const mardKey = colorData.MARD
     if (mardKey) mapping[mardKey] = hex
+  })
+  return mapping
+}
+
+/**
+ * 从 colorSystemMapping.json 加载完整的颜色映射数据
+ */
+export function loadFullColorMapping() {
+  const mapping = new Map()
+  Object.entries(colorSystemMapping).forEach(([baseKey, colorData]) => {
+    mapping.set(baseKey, colorData)
   })
   return mapping
 }
@@ -33,6 +51,30 @@ export function convertPaletteToColorSystem(palette, colorSystem) {
     }
     return color
   })
+}
+
+/**
+ * 获取指定色号系统的显示键 - 基于 hex 值的简化版本
+ * 处理特殊键（ERASE、?、空字符串）
+ */
+export function getDisplayColorKey(hexValue, colorSystem) {
+  if (hexValue === 'ERASE' || hexValue.length === 0 || hexValue === '?') {
+    return hexValue
+  }
+  const normalizedHex = hexValue.toUpperCase()
+  const colorMapping = colorSystemMapping[normalizedHex]
+  if (colorMapping && colorMapping[colorSystem]) {
+    return colorMapping[colorSystem]
+  }
+  return '?'
+}
+
+/**
+ * 验证颜色在指定系统中是否有效
+ */
+export function isValidColorInSystem(hexValue, colorSystem) {
+  const mapping = colorSystemMapping[hexValue]
+  return mapping && mapping[colorSystem] !== undefined
 }
 
 /**
