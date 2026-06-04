@@ -1,24 +1,18 @@
-// 像素化核心工具函数
-// Ported from perler-beads React project
+import type {
+  RgbColor,
+  PaletteColor,
+  MappedPixel,
+  GridDimensions,
+  ColorCounts,
+  ColorCount,
+} from '@/types'
+import {
+  TRANSPARENT_KEY,
+  transparentColorData,
+} from '@/types'
+import { PixelationMode } from '@/types'
 
-export const TRANSPARENT_KEY = 'ERASE'
-
-export const transparentColorData = {
-  key: TRANSPARENT_KEY,
-  color: '#FFFFFF',
-  isExternal: true,
-}
-
-// 像素化模式
-export const PixelationMode = {
-  Dominant: 'dominant', // 卡通模式（主色）
-  Average: 'average',   // 真实模式（平均色）
-}
-
-/**
- * Hex 转 RGB
- */
-export function hexToRgb(hex) {
+export function hexToRgb(hex: string): RgbColor | null {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
   return result
     ? {
@@ -29,20 +23,14 @@ export function hexToRgb(hex) {
     : null
 }
 
-/**
- * sRGB 通道转线性
- */
-function srgbChannelToLinear(channel) {
+function srgbChannelToLinear(channel: number): number {
   const normalized = channel / 255
   return normalized <= 0.04045
     ? normalized / 12.92
     : Math.pow((normalized + 0.055) / 1.055, 2.4)
 }
 
-/**
- * RGB 转 Oklab
- */
-function rgbToOklab(rgb) {
+function rgbToOklab(rgb: RgbColor): { l: number; a: number; b: number } {
   const r = srgbChannelToLinear(rgb.r)
   const g = srgbChannelToLinear(rgb.g)
   const b = srgbChannelToLinear(rgb.b)
@@ -62,10 +50,9 @@ function rgbToOklab(rgb) {
   }
 }
 
-// Oklab 缓存
-const oklabCache = new Map()
+const oklabCache: Map<string, { l: number; a: number; b: number }> = new Map()
 
-function getOklabColor(rgb) {
+function getOklabColor(rgb: RgbColor): { l: number; a: number; b: number } {
   const cacheKey = `${rgb.r},${rgb.g},${rgb.b}`
   const cached = oklabCache.get(cacheKey)
   if (cached) return cached
@@ -74,10 +61,7 @@ function getOklabColor(rgb) {
   return oklab
 }
 
-/**
- * 使用 Oklab 空间计算颜色距离（保持 0-100 阈值兼容）
- */
-export function colorDistance(rgb1, rgb2) {
+export function colorDistance(rgb1: RgbColor, rgb2: RgbColor): number {
   const oklab1 = getOklabColor(rgb1)
   const oklab2 = getOklabColor(rgb2)
   const dl = oklab1.l - oklab2.l
@@ -86,10 +70,7 @@ export function colorDistance(rgb1, rgb2) {
   return Math.sqrt(dl * dl + da * da + db * db) * 100
 }
 
-/**
- * 查找最接近的调色板颜色
- */
-export function findClosestPaletteColor(targetRgb, palette) {
+export function findClosestPaletteColor(targetRgb: RgbColor, palette: PaletteColor[]): PaletteColor {
   if (!palette || palette.length === 0) {
     return { key: 'ERR', hex: '#000000', rgb: { r: 0, g: 0, b: 0 } }
   }
@@ -106,16 +87,20 @@ export function findClosestPaletteColor(targetRgb, palette) {
   return closestColor
 }
 
-/**
- * 计算图像指定区域的代表色
- */
-function calculateCellRepresentativeColor(imageData, startX, startY, width, height, mode) {
+function calculateCellRepresentativeColor(
+  imageData: ImageData,
+  startX: number,
+  startY: number,
+  width: number,
+  height: number,
+  mode: PixelationMode
+): RgbColor | null {
   const data = imageData.data
   const imgWidth = imageData.width
   let rSum = 0, gSum = 0, bSum = 0
   let pixelCount = 0
-  const colorCountsInCell = {}
-  let dominantColorRgb = null
+  const colorCountsInCell: Record<string, number> = {}
+  let dominantColorRgb: RgbColor | null = null
   let maxCount = 0
 
   const endX = startX + width
@@ -158,17 +143,23 @@ function calculateCellRepresentativeColor(imageData, startX, startY, width, heig
   return dominantColorRgb
 }
 
-/**
- * 计算像素化网格数据
- */
-export function calculatePixelGrid(originalCtx, imgWidth, imgHeight, N, M, palette, mode, t1FallbackColor) {
-  const mappedData = Array(M).fill(null).map(() =>
-    Array(N).fill({ key: t1FallbackColor.key, color: t1FallbackColor.hex })
+export function calculatePixelGrid(
+  originalCtx: CanvasRenderingContext2D,
+  imgWidth: number,
+  imgHeight: number,
+  N: number,
+  M: number,
+  palette: PaletteColor[],
+  mode: PixelationMode,
+  t1FallbackColor: MappedPixel
+): MappedPixel[][] {
+  const mappedData: MappedPixel[][] = Array(M).fill(null).map(() =>
+    Array(N).fill({ key: t1FallbackColor.key, color: t1FallbackColor.color })
   )
   const cellWidthOriginal = imgWidth / N
   const cellHeightOriginal = imgHeight / M
 
-  let fullImageData = null
+  let fullImageData: ImageData | null = null
   try {
     fullImageData = originalCtx.getImageData(0, 0, imgWidth, imgHeight)
   } catch (e) {
@@ -203,18 +194,17 @@ export function calculatePixelGrid(originalCtx, imgWidth, imgHeight, N, M, palet
   return mappedData
 }
 
-/**
- * 全局频率排序颜色合并（移植自 perler-beads）
- * 按出现频率从高到低排序，高频颜色优先保留，低频相似颜色被合并
- */
-export function mergeSimilarRegions(mappedData, threshold, palette) {
+export function mergeSimilarRegions(
+  mappedData: MappedPixel[][],
+  threshold: number,
+  palette: PaletteColor[]
+): MappedPixel[][] {
   if (!mappedData || mappedData.length === 0) return mappedData
   const M = mappedData.length
   const N = mappedData[0].length
 
-  // 构建 key → RGB 和 key → 完整调色板条目的映射
-  const keyToRgbMap = new Map()
-  const keyToColorDataMap = new Map()
+  const keyToRgbMap = new Map<string, RgbColor>()
+  const keyToColorDataMap = new Map<string, PaletteColor>()
   if (palette) {
     palette.forEach(p => {
       keyToRgbMap.set(p.key, p.rgb)
@@ -222,28 +212,23 @@ export function mergeSimilarRegions(mappedData, threshold, palette) {
     })
   }
 
-  // 统计各 key 的出现频率
-  const initialColorCounts = {}
+  const initialColorCounts: Record<string, number> = {}
   mappedData.flat().forEach(cell => {
     if (cell && cell.key && !cell.isExternal && cell.key !== TRANSPARENT_KEY) {
       initialColorCounts[cell.key] = (initialColorCounts[cell.key] || 0) + 1
     }
   })
 
-  // 按频率降序排序
   const colorsByFrequency = Object.entries(initialColorCounts)
     .sort((a, b) => b[1] - a[1])
     .map(entry => entry[0])
 
   if (colorsByFrequency.length === 0) return mappedData.map(row => row.map(cell => ({ ...cell })))
 
-  // 复制数据准备合并
-  const result = mappedData.map(row => row.map(cell => ({ ...cell, isExternal: cell.isExternal ?? false })))
+  const result: MappedPixel[][] = mappedData.map(row => row.map(cell => ({ ...cell, isExternal: cell.isExternal ?? false })))
 
-  // 已被合并的颜色集合
-  const replacedColors = new Set()
+  const replacedColors = new Set<string>()
 
-  // 对每个颜色按频率从高到低处理
   for (let i = 0; i < colorsByFrequency.length; i++) {
     const currentKey = colorsByFrequency[i]
     if (replacedColors.has(currentKey)) continue
@@ -251,7 +236,6 @@ export function mergeSimilarRegions(mappedData, threshold, palette) {
     const currentRgb = keyToRgbMap.get(currentKey)
     if (!currentRgb) continue
 
-    // 检查剩余的低频颜色
     for (let j = i + 1; j < colorsByFrequency.length; j++) {
       const lowerFreqKey = colorsByFrequency[j]
       if (replacedColors.has(lowerFreqKey)) continue
@@ -264,7 +248,6 @@ export function mergeSimilarRegions(mappedData, threshold, palette) {
       if (dist < threshold) {
         replacedColors.add(lowerFreqKey)
 
-        // 替换所有使用低频颜色的单元格
         for (let r = 0; r < M; r++) {
           for (let c = 0; c < N; c++) {
             if (result[r][c].key === lowerFreqKey) {
@@ -286,19 +269,15 @@ export function mergeSimilarRegions(mappedData, threshold, palette) {
   return result
 }
 
-/**
- * 背景移除 - 从边界洪水填充
- */
-export function removeBackground(mappedData, backgroundKeys) {
+export function removeBackground(mappedData: MappedPixel[][], backgroundKeys: string[]): MappedPixel[][] {
   if (!mappedData || mappedData.length === 0) return mappedData
   const M = mappedData.length
   const N = mappedData[0].length
-  const result = mappedData.map(row => row.map(cell => ({ ...cell })))
-  const visited = Array(M).fill(null).map(() => Array(N).fill(false))
+  const result: MappedPixel[][] = mappedData.map(row => row.map(cell => ({ ...cell })))
+  const visited: boolean[][] = Array(M).fill(null).map(() => Array(N).fill(false))
 
-  const stack = []
+  const stack: { r: number; c: number }[] = []
 
-  // 从所有边界单元格开始
   for (let i = 0; i < N; i++) {
     stack.push({ r: 0, c: i }, { r: M - 1, c: i })
   }
@@ -307,7 +286,7 @@ export function removeBackground(mappedData, backgroundKeys) {
   }
 
   while (stack.length > 0) {
-    const { r, c } = stack.pop()
+    const { r, c } = stack.pop()!
     if (r < 0 || r >= M || c < 0 || c >= N) continue
     if (visited[r][c]) continue
 
@@ -330,11 +309,13 @@ export function removeBackground(mappedData, backgroundKeys) {
   return result
 }
 
-/**
- * 颜色替换
- */
-export function replaceAllColor(mappedData, sourceHex, targetKey, targetColor) {
-  const result = mappedData.map(row => row.map(cell => ({ ...cell })))
+export function replaceAllColor(
+  mappedData: MappedPixel[][],
+  sourceHex: string,
+  targetKey: string,
+  targetColor: string
+): { result: MappedPixel[][]; count: number } {
+  const result: MappedPixel[][] = mappedData.map(row => row.map(cell => ({ ...cell })))
   const M = result.length
   const N = result[0].length
   let count = 0
@@ -350,11 +331,13 @@ export function replaceAllColor(mappedData, sourceHex, targetKey, targetColor) {
   return { result, count }
 }
 
-/**
- * 单像素上色
- */
-export function paintPixel(mappedData, row, col, newColor) {
-  const result = mappedData.map(r => r.map(c => ({ ...c })))
+export function paintPixel(
+  mappedData: MappedPixel[][],
+  row: number,
+  col: number,
+  newColor: MappedPixel
+): { result: MappedPixel[][]; changed: boolean } {
+  const result: MappedPixel[][] = mappedData.map(r => r.map(c => ({ ...c })))
   const old = result[row]?.[col]
   if (!old) return { result: mappedData, changed: false }
   const changed = old.key !== newColor.key || old.isExternal !== newColor.isExternal
@@ -362,17 +345,20 @@ export function paintPixel(mappedData, row, col, newColor) {
   return { result, changed }
 }
 
-/**
- * 洪水填充擦除
- */
-export function floodFillErase(mappedData, gridDimensions, startRow, startCol, targetKey) {
+export function floodFillErase(
+  mappedData: MappedPixel[][],
+  gridDimensions: GridDimensions,
+  startRow: number,
+  startCol: number,
+  targetKey: string
+): MappedPixel[][] {
   const { N, M } = gridDimensions
-  const result = mappedData.map(row => row.map(cell => ({ ...cell })))
-  const visited = Array(M).fill(null).map(() => Array(N).fill(false))
-  const stack = [{ row: startRow, col: startCol }]
+  const result: MappedPixel[][] = mappedData.map(row => row.map(cell => ({ ...cell })))
+  const visited: boolean[][] = Array(M).fill(null).map(() => Array(N).fill(false))
+  const stack: { row: number; col: number }[] = [{ row: startRow, col: startCol }]
 
   while (stack.length > 0) {
-    const { row, col } = stack.pop()
+    const { row, col } = stack.pop()!
     if (row < 0 || row >= M || col < 0 || col >= N || visited[row][col]) continue
     const cell = result[row][col]
     if (!cell || cell.isExternal || cell.key !== targetKey) continue
@@ -386,11 +372,10 @@ export function floodFillErase(mappedData, gridDimensions, startRow, startCol, t
   return result
 }
 
-/**
- * 重新计算颜色统计
- */
-export function recalculateColorStats(mappedData) {
-  const colorCounts = {}
+export function recalculateColorStats(
+  mappedData: MappedPixel[][]
+): { colorCounts: ColorCounts; totalCount: number } {
+  const colorCounts: ColorCounts = {}
   let totalCount = 0
   mappedData.flat().forEach(cell => {
     if (cell && !cell.isExternal && cell.key !== TRANSPARENT_KEY) {

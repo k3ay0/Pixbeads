@@ -3,15 +3,17 @@
  * Ported from perler-beads React project
  */
 
+import type { GridDimensions, Point } from '@/types'
+
 /**
  * 将鼠标/触摸坐标转换为画布内的格子坐标
- * @param {number} clientX 客户端X坐标
- * @param {number} clientY 客户端Y坐标
- * @param {HTMLCanvasElement} canvas 画布元素
- * @param {{ N: number; M: number }} gridDimensions 网格尺寸
- * @returns {{ i: number; j: number } | null} 格子坐标或 null（如果超出范围）
  */
-export function clientToGridCoords(clientX, clientY, canvas, gridDimensions) {
+export function clientToGridCoords(
+  clientX: number,
+  clientY: number,
+  canvas: HTMLCanvasElement,
+  gridDimensions: GridDimensions
+): { i: number; j: number } | null {
   const rect = canvas.getBoundingClientRect()
   const scaleX = canvas.width / rect.width
   const scaleY = canvas.height / rect.height
@@ -35,12 +37,12 @@ export function clientToGridCoords(clientX, clientY, canvas, gridDimensions) {
 
 /**
  * 检查触摸是否被认为是移动而不是点击
- * @param {{ x: number; y: number }} startPos 开始位置
- * @param {{ x: number; y: number }} currentPos 当前位置
- * @param {number} [threshold=10] 移动阈值（像素）
- * @returns {boolean} 是否是移动
  */
-export function isTouchMove(startPos, currentPos, threshold = 10) {
+export function isTouchMove(
+  startPos: Point,
+  currentPos: Point,
+  threshold: number = 10
+): boolean {
   const dx = Math.abs(currentPos.x - startPos.x)
   const dy = Math.abs(currentPos.y - startPos.y)
   return dx > threshold || dy > threshold

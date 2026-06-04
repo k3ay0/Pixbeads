@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 import { exportCsv } from '../utils/downloader'
 
 const props = defineProps({

@@ -1,5 +1,8 @@
 // 色号系统工具函数
-import colorSystemMapping from '../data/colorSystemMapping.json'
+import type { PaletteColor, ColorSystem, ColorSystemMappingEntry } from '@/types'
+import colorSystemMappingJson from '../data/colorSystemMapping.json'
+
+const colorSystemMapping = colorSystemMappingJson as unknown as Record<string, ColorSystemMappingEntry>
 
 // 色号系统选项
 export const colorSystemOptions = [
@@ -13,15 +16,15 @@ export const colorSystemOptions = [
 /**
  * 获取所有可用的 hex 值
  */
-export function getAllHexValues() {
+export function getAllHexValues(): string[] {
   return Object.keys(colorSystemMapping)
 }
 
 /**
  * 获取所有 MARD 色号到 hex 的映射
  */
-export function getMardToHexMapping() {
-  const mapping = {}
+export function getMardToHexMapping(): Record<string, string> {
+  const mapping: Record<string, string> = {}
   Object.entries(colorSystemMapping).forEach(([hex, colorData]) => {
     const mardKey = colorData.MARD
     if (mardKey) mapping[mardKey] = hex
@@ -32,8 +35,8 @@ export function getMardToHexMapping() {
 /**
  * 从 colorSystemMapping.json 加载完整的颜色映射数据
  */
-export function loadFullColorMapping() {
-  const mapping = new Map()
+export function loadFullColorMapping(): Map<string, ColorSystemMappingEntry> {
+  const mapping = new Map<string, ColorSystemMappingEntry>()
   Object.entries(colorSystemMapping).forEach(([baseKey, colorData]) => {
     mapping.set(baseKey, colorData)
   })
@@ -43,7 +46,7 @@ export function loadFullColorMapping() {
 /**
  * 将色板转换到指定色号系统
  */
-export function convertPaletteToColorSystem(palette, colorSystem) {
+export function convertPaletteToColorSystem(palette: PaletteColor[], colorSystem: ColorSystem): PaletteColor[] {
   return palette.map(color => {
     const mapping = colorSystemMapping[color.hex]
     if (mapping && mapping[colorSystem]) {
@@ -57,7 +60,7 @@ export function convertPaletteToColorSystem(palette, colorSystem) {
  * 获取指定色号系统的显示键 - 基于 hex 值的简化版本
  * 处理特殊键（ERASE、?、空字符串）
  */
-export function getDisplayColorKey(hexValue, colorSystem) {
+export function getDisplayColorKey(hexValue: string, colorSystem: ColorSystem): string {
   if (hexValue === 'ERASE' || hexValue.length === 0 || hexValue === '?') {
     return hexValue
   }
@@ -72,7 +75,7 @@ export function getDisplayColorKey(hexValue, colorSystem) {
 /**
  * 验证颜色在指定系统中是否有效
  */
-export function isValidColorInSystem(hexValue, colorSystem) {
+export function isValidColorInSystem(hexValue: string, colorSystem: ColorSystem): boolean {
   const mapping = colorSystemMapping[hexValue]
   return mapping && mapping[colorSystem] !== undefined
 }
@@ -80,7 +83,7 @@ export function isValidColorInSystem(hexValue, colorSystem) {
 /**
  * 通过 hex 值获取指定色号系统的色号
  */
-export function getColorKeyByHex(hexValue, colorSystem) {
+export function getColorKeyByHex(hexValue: string, colorSystem: ColorSystem): string {
   const normalizedHex = hexValue.toUpperCase()
   const mapping = colorSystemMapping[normalizedHex]
   if (mapping && mapping[colorSystem]) return mapping[colorSystem]
@@ -90,7 +93,7 @@ export function getColorKeyByHex(hexValue, colorSystem) {
 /**
  * 将色号键转换到 hex 值
  */
-export function convertColorKeyToHex(displayKey, colorSystem) {
+export function convertColorKeyToHex(displayKey: string, colorSystem: ColorSystem): string {
   if (displayKey.startsWith('#') && displayKey.length === 7) {
     return displayKey.toUpperCase()
   }
@@ -103,7 +106,7 @@ export function convertColorKeyToHex(displayKey, colorSystem) {
 /**
  * 将 hex 颜色转换为 HSL
  */
-function hexToHsl(hex) {
+function hexToHsl(hex: string): { h: number; s: number; l: number } {
   const cleanHex = hex.replace('#', '')
   const r = parseInt(cleanHex.substring(0, 2), 16) / 255
   const g = parseInt(cleanHex.substring(2, 4), 16) / 255
@@ -130,7 +133,7 @@ function hexToHsl(hex) {
 /**
  * 按色相排序颜色
  */
-export function sortColorsByHue(colors) {
+export function sortColorsByHue<T extends { color: string }>(colors: T[]): T[] {
   return colors.slice().sort((a, b) => {
     const hslA = hexToHsl(a.color)
     const hslB = hexToHsl(b.color)

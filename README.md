@@ -163,5 +163,5 @@ Pixbeads/
 
 
 ## 许可证
-
-GAGP V3
+本项目基于[perler-beads](https://github.com/Zippland/perler-beads)
+[AGPL-3.0](./LICENSE)

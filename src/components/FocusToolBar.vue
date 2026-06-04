@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 const props = defineProps({
   isPaused: { type: Boolean, default: true },
   elapsedTime: { type: String, default: '0:00' },

@@ -3,7 +3,8 @@
  * Ported from perler-beads React project
  * 使用 Vue 3 Composition API 重写
  */
-import { computed } from 'vue'
+import type { Ref } from 'vue'
+import type { MappedPixel, GridDimensions, ColorCounts } from '@/types'
 import {
   floodFillErase,
   replaceColor,
@@ -12,16 +13,25 @@ import {
   TRANSPARENT_KEY,
 } from '../utils/pixelEditingUtils.js'
 
+interface PixelEditingOperationsParams {
+  mappedPixelData: Ref<(MappedPixel | null)[][] | null>
+  gridDimensions: Ref<GridDimensions | null>
+  colorCounts: Ref<ColorCounts | null>
+  totalBeadCount: Ref<number>
+  onPixelDataChange: (newPixelData: (MappedPixel | null)[][]) => void
+  onColorCountsChange: (newColorCounts: ColorCounts) => void
+  onTotalCountChange: (newTotalCount: number) => void
+}
+
+interface PixelEditingOperationsReturn {
+  performFloodFillErase: (startRow: number, startCol: number, targetKey: string) => void
+  performColorReplace: (sourceColor: { key: string; color: string }, targetColor: { key: string; color: string }) => number
+  performSinglePixelPaint: (row: number, col: number, newColor: MappedPixel) => void
+}
+
 /**
  * 像素编辑操作 composable
- * @param {Object} params
- * @param {import('vue').Ref<Array<Array|null>>|null} params.mappedPixelData 像素数据的 ref
- * @param {import('vue').Ref<{ N: number; M: number }|null>} params.gridDimensions 网格尺寸的 ref
- * @param {import('vue').Ref<Object|null>} params.colorCounts 颜色统计的 ref
- * @param {import('vue').Ref<number>} params.totalBeadCount 总珠子数的 ref
- * @param {Function} params.onPixelDataChange 像素数据变更回调
- * @param {Function} params.onColorCountsChange 颜色统计变更回调
- * @param {Function} params.onTotalCountChange 总数变更回调
+ * @param params 配置参数
  */
 export function usePixelEditingOperations({
   mappedPixelData,
@@ -31,14 +41,14 @@ export function usePixelEditingOperations({
   onPixelDataChange,
   onColorCountsChange,
   onTotalCountChange,
-}) {
+}: PixelEditingOperationsParams): PixelEditingOperationsReturn {
   /**
    * 执行洪水填充擦除
-   * @param {number} startRow 起始行
-   * @param {number} startCol 起始列
-   * @param {string} targetKey 目标颜色键
+   * @param startRow 起始行
+   * @param startCol 起始列
+   * @param targetKey 目标颜色键
    */
-  function performFloodFillErase(startRow, startCol, targetKey) {
+  function performFloodFillErase(startRow: number, startCol: number, targetKey: string): void {
     const data = mappedPixelData.value
     const dims = gridDimensions.value
     if (!data || !dims) return
@@ -55,11 +65,14 @@ export function usePixelEditingOperations({
 
   /**
    * 执行颜色替换
-   * @param {{ key: string; color: string }} sourceColor 源颜色
-   * @param {{ key: string; color: string }} targetColor 目标颜色
-   * @returns {number} 替换数量
+   * @param sourceColor 源颜色
+   * @param targetColor 目标颜色
+   * @returns 替换数量
    */
-  function performColorReplace(sourceColor, targetColor) {
+  function performColorReplace(
+    sourceColor: { key: string; color: string },
+    targetColor: { key: string; color: string }
+  ): number {
     const data = mappedPixelData.value
     const dims = gridDimensions.value
     if (!data || !dims) return 0
@@ -85,11 +98,11 @@ export function usePixelEditingOperations({
 
   /**
    * 执行单像素上色
-   * @param {number} row 行
-   * @param {number} col 列
-   * @param {Object} newColor 新颜色数据（MappedPixel 格式）
+   * @param row 行
+   * @param col 列
+   * @param newColor 新颜色数据（MappedPixel 格式）
    */
-  function performSinglePixelPaint(row, col, newColor) {
+  function performSinglePixelPaint(row: number, col: number, newColor: MappedPixel): void {
     const data = mappedPixelData.value
     const counts = colorCounts.value
     if (!data || !counts) return
@@ -101,7 +114,7 @@ export function usePixelEditingOperations({
     onPixelDataChange(newPixelData)
 
     // 更新颜色统计（增量更新，避免全量重算）
-    const newColorCounts = { ...counts }
+    const newColorCounts: ColorCounts = { ...counts }
     let newTotalCount = totalBeadCount.value
 
     // 处理之前颜色的减少（使用 hex 值）

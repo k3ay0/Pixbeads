@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
 export const gridLineColorOptions = [
   { name: '深灰色', value: '#555555' },
   { name: '红色', value: '#FF0000' },
@@ -186,7 +186,7 @@ export const gridLineColorOptions = [
   </Teleport>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, watch } from 'vue'
 
 const props = defineProps({

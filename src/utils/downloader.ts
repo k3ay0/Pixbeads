@@ -1,14 +1,15 @@
 // 下载导出工具函数
 import { getColorKeyByHex } from './colorSystemUtils'
-import { TRANSPARENT_KEY } from './pixelation'
+import type { MappedPixel, GridDimensions, ColorCounts, ColorSystem, GridDownloadOptions } from '@/types'
+import { TRANSPARENT_KEY } from '@/types'
 
 /**
  * 获取对比色（黑/白）
  */
-function getContrastColor(hex) {
+function getContrastColor(hex: string): string {
   // 支持简写 hex（#abc → #aabbcc）
   const shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i
-  const formattedHex = hex.replace(shorthandRegex, (m, r, g, b) => r + r + g + g + b + b)
+  const formattedHex = hex.replace(shorthandRegex, (_m, r, g, b) => r + r + g + g + b + b)
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(formattedHex)
   if (!result) return '#000000'
   const r = parseInt(result[1], 16)
@@ -21,7 +22,7 @@ function getContrastColor(hex) {
 /**
  * 排序色号键
  */
-function sortColorKeys(a, b) {
+function sortColorKeys(a: string, b: string): number {
   const regex = /^([A-Z]+)(\d+)$/
   const matchA = a.match(regex)
   const matchB = b.match(regex)
@@ -42,7 +43,14 @@ export function downloadGridImage({
   totalBeadCount,
   selectedColorSystem,
   options = {}
-}) {
+}: {
+  mappedPixelData: MappedPixel[][] | null
+  gridDimensions: GridDimensions | null
+  colorCounts: ColorCounts | null
+  totalBeadCount: number
+  selectedColorSystem: ColorSystem
+  options?: Partial<GridDownloadOptions>
+}): void {
   if (!mappedPixelData || !gridDimensions) return
 
   const { N, M } = gridDimensions
@@ -264,7 +272,15 @@ export function downloadGridImage({
 /**
  * 下载颜色统计图
  */
-export function downloadStatsImage({ colorCounts, totalBeadCount, selectedColorSystem }) {
+export function downloadStatsImage({
+  colorCounts,
+  totalBeadCount,
+  selectedColorSystem
+}: {
+  colorCounts: ColorCounts | null
+  totalBeadCount: number
+  selectedColorSystem: ColorSystem
+}): void {
   if (!colorCounts) return
 
   const sortedKeys = Object.keys(colorCounts).sort(sortColorKeys)
@@ -321,13 +337,21 @@ export function downloadStatsImage({ colorCounts, totalBeadCount, selectedColorS
 /**
  * 导出 CSV
  */
-export function exportCsv({ mappedPixelData, gridDimensions, selectedColorSystem }) {
+export function exportCsv({
+  mappedPixelData,
+  gridDimensions,
+  selectedColorSystem
+}: {
+  mappedPixelData: MappedPixel[][] | null
+  gridDimensions: GridDimensions | null
+  selectedColorSystem: ColorSystem
+}): void {
   if (!mappedPixelData || !gridDimensions) return
   const { N, M } = gridDimensions
-  const csvLines = []
+  const csvLines: string[] = []
 
   for (let row = 0; row < M; row++) {
-    const rowData = []
+    const rowData: string[] = []
     for (let col = 0; col < N; col++) {
       const cell = mappedPixelData[row][col]
       if (cell && !cell.isExternal) {
@@ -349,14 +373,14 @@ export function exportCsv({ mappedPixelData, gridDimensions, selectedColorSystem
 
 /**
  * 导入 CSV hex 数据
- * @param {File} file CSV 文件
- * @returns {Promise<{ mappedPixelData: Array, gridDimensions: { N: number; M: number } }>}
+ * @param file CSV 文件
+ * @returns Promise containing mapped pixel data and grid dimensions
  */
-export function importCsvData(file) {
+export function importCsvData(file: File): Promise<{ mappedPixelData: MappedPixel[][]; gridDimensions: GridDimensions }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
 
-    reader.onload = (e) => {
+    reader.onload = (e: ProgressEvent<FileReader>) => {
       try {
         const text = e.target?.result
         if (!text) {
@@ -364,7 +388,7 @@ export function importCsvData(file) {
           return
         }
 
-        const lines = text.trim().split('\n')
+        const lines = (text as string).trim().split('\n')
         const M = lines.length
 
         if (M === 0) {
@@ -380,11 +404,11 @@ export function importCsvData(file) {
           return
         }
 
-        const mappedPixelData = []
+        const mappedPixelData: MappedPixel[][] = []
 
         for (let row = 0; row < M; row++) {
           const rowData = lines[row].split(',')
-          const mappedRow = []
+          const mappedRow: MappedPixel[] = []
 
           if (rowData.length !== N) {
             reject(new Error(`第${row + 1}行的列数不匹配，期望${N}列，实际${rowData.length}列`))

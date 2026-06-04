@@ -1,10 +1,10 @@
-// 连通区域工具函数（从 React TypeScript 版移植）
+import type { MappedPixel, GridPoint } from '@/types'
 
 /**
  * 洪水填充获取连通区域
  * 使用栈实现非递归洪水填充
  */
-export function getConnectedRegion(mappedPixelData, startRow, startCol, targetColor) {
+export function getConnectedRegion(mappedPixelData: MappedPixel[][], startRow: number, startCol: number, targetColor: string): GridPoint[] {
   if (!mappedPixelData || !mappedPixelData[startRow] || !mappedPixelData[startRow][startCol]) {
     return []
   }
@@ -12,12 +12,12 @@ export function getConnectedRegion(mappedPixelData, startRow, startCol, targetCo
   const M = mappedPixelData.length
   const N = mappedPixelData[0].length
   const visited = Array(M).fill(null).map(() => Array(N).fill(false))
-  const region = []
+  const region: GridPoint[] = []
 
-  const stack = [{ row: startRow, col: startCol }]
+  const stack: GridPoint[] = [{ row: startRow, col: startCol }]
 
   while (stack.length > 0) {
-    const { row, col } = stack.pop()
+    const { row, col } = stack.pop()!
 
     if (row < 0 || row >= M || col < 0 || col >= N || visited[row][col]) {
       continue
@@ -46,7 +46,7 @@ export function getConnectedRegion(mappedPixelData, startRow, startCol, targetCo
 /**
  * 获取所有同颜色的连通区域
  */
-export function getAllConnectedRegions(mappedPixelData, targetColor) {
+export function getAllConnectedRegions(mappedPixelData: MappedPixel[][], targetColor: string): GridPoint[][] {
   if (!mappedPixelData || mappedPixelData.length === 0) {
     return []
   }
@@ -54,7 +54,7 @@ export function getAllConnectedRegions(mappedPixelData, targetColor) {
   const M = mappedPixelData.length
   const N = mappedPixelData[0].length
   const visited = Array(M).fill(null).map(() => Array(N).fill(false))
-  const regions = []
+  const regions: GridPoint[][] = []
 
   for (let row = 0; row < M; row++) {
     for (let col = 0; col < N; col++) {
@@ -81,21 +81,21 @@ export function getAllConnectedRegions(mappedPixelData, targetColor) {
 /**
  * 检查区域是否完全已完成
  */
-export function isRegionCompleted(region, completedCells) {
+export function isRegionCompleted(region: GridPoint[], completedCells: Set<string>): boolean {
   return region.every(({ row, col }) => completedCells.has(`${row},${col}`))
 }
 
 /**
  * 检查区域是否部分已完成
  */
-export function isRegionPartiallyCompleted(region, completedCells) {
+export function isRegionPartiallyCompleted(region: GridPoint[], completedCells: Set<string>): boolean {
   return region.some(({ row, col }) => completedCells.has(`${row},${col}`))
 }
 
 /**
  * 获取区域的中心点（用于定位和显示）
  */
-export function getRegionCenter(region) {
+export function getRegionCenter(region: GridPoint[]): GridPoint {
   if (region.length === 0) {
     return { row: 0, col: 0 }
   }
@@ -112,7 +112,7 @@ export function getRegionCenter(region) {
 /**
  * 根据距离排序区域（用于最近优先的引导模式）
  */
-export function sortRegionsByDistance(regions, referencePoint) {
+export function sortRegionsByDistance(regions: GridPoint[][], referencePoint: GridPoint): GridPoint[][] {
   return [...regions].sort((a, b) => {
     const centerA = getRegionCenter(a)
     const centerB = getRegionCenter(b)
@@ -127,6 +127,6 @@ export function sortRegionsByDistance(regions, referencePoint) {
 /**
  * 根据大小排序区域（用于最大优先的引导模式）
  */
-export function sortRegionsBySize(regions) {
+export function sortRegionsBySize(regions: GridPoint[][]): GridPoint[][] {
   return [...regions].sort((a, b) => b.length - a.length)
 }

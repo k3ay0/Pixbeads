@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 const props = defineProps({
   guidanceMode: { type: String, default: 'nearest' },
   gridSectionInterval: { type: Number, default: 10 },

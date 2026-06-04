@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, defineAsyncComponent, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import {
@@ -6,8 +6,6 @@ import {
   calculatePixelGrid,
   mergeSimilarRegions,
   recalculateColorStats,
-  TRANSPARENT_KEY,
-  PixelationMode,
 } from './utils/pixelation'
 import {
   getMardToHexMapping,
@@ -16,13 +14,25 @@ import {
   sortColorsByHue,
 } from './utils/colorSystemUtils'
 import { downloadGridImage, downloadStatsImage, exportCsv, importCsvData } from './utils/downloader'
-import { useManualEditingState } from './composables/useManualEditingState.js'
-import { usePixelEditingOperations } from './composables/usePixelEditingOperations.js'
-import { clientToGridCoords } from './utils/canvasUtils.js'
-import { loadPaletteSelections, savePaletteSelections, presetToSelections } from './utils/localStorageUtils.js'
+import { useManualEditingState } from './composables/useManualEditingState'
+import { usePixelEditingOperations } from './composables/usePixelEditingOperations'
+import { clientToGridCoords } from './utils/canvasUtils'
+import { loadPaletteSelections, savePaletteSelections, presetToSelections } from './utils/localStorageUtils'
 import DownloadSettingsModal from './components/DownloadSettingsModal.vue'
 import ColorPalette from './components/ColorPalette.vue'
 import InstallPWA from './components/InstallPWA.vue'
+import type {
+  PaletteColor,
+  MappedPixel,
+  GridDimensions,
+  ColorCounts,
+  GridDownloadOptions,
+  ColorSystem,
+} from './types'
+import {
+  TRANSPARENT_KEY,
+  PixelationMode,
+} from './types'
 
 // ========== 安全异步组件导入 ==========
 const MagnifierTool = defineAsyncComponent(() =>
@@ -45,57 +55,57 @@ const router = useRouter()
 
 // ========== 调色板初始化 ==========
 const mardToHexMapping = getMardToHexMapping()
-const fullBeadPalette = Object.entries(mardToHexMapping)
+const fullBeadPalette: PaletteColor[] = Object.entries(mardToHexMapping)
   .map(([mardKey, hex]) => {
     const rgb = hexToRgb(hex)
     if (!rgb) return null
     return { key: hex, hex, rgb }
   })
-  .filter(Boolean)
+  .filter((c): c is PaletteColor => c !== null)
 
 // ========== 响应式状态 ==========
-const originalImageSrc = ref(null)
-const originalImage = ref(null)
+const originalImageSrc = ref<string | null>(null)
+const originalImage = ref<HTMLImageElement | null>(null)
 
 // 控制参数
 const granularity = ref(50)
 const granularityInput = ref('50')
 const similarityThreshold = ref(30)
 const similarityThresholdInput = ref('30')
-const pixelationMode = ref(PixelationMode.Dominant)
-const selectedColorSystem = ref('MARD')
+const pixelationMode = ref<PixelationMode>(PixelationMode.Dominant)
+const selectedColorSystem = ref<ColorSystem>('MARD')
 
 // 像素数据
-const mappedPixelData = ref(null)
-const gridDimensions = ref(null)
-const colorCounts = ref(null)
+const mappedPixelData = ref<MappedPixel[][] | null>(null)
+const gridDimensions = ref<GridDimensions | null>(null)
+const colorCounts = ref<ColorCounts | null>(null)
 const totalBeadCount = ref(0)
 
 // 色板选择
-const customPaletteSelections = ref({})
-const excludedColorKeys = ref(new Set())
+const customPaletteSelections = ref<Record<string, boolean>>({})
+const excludedColorKeys = ref<Set<string>>(new Set())
 
 // UI 状态
-const activeBeadPalette = ref([])
+const activeBeadPalette = ref<PaletteColor[]>([])
 const isProcessing = ref(false)
 const showDownloadModal = ref(false)
-const tooltipData = ref(null)
-const toastMessage = ref(null)
+const tooltipData = ref<{ x: number; y: number; key: string; color: string; row: number; col: number } | null>(null)
+const toastMessage = ref<string | null>(null)
 
-const previewCanvas = ref(null)
+const previewCanvas = ref<HTMLCanvasElement | null>(null)
 
-function showToast(msg) {
+function showToast(msg: string) {
   toastMessage.value = msg
   setTimeout(() => { toastMessage.value = null }, 2000)
 }
 
 // ========== 撤销/重做 ==========
-const editHistory = ref([])
+const editHistory = ref<MappedPixel[][][]>([])
 const editHistoryIndex = ref(-1)
 const MAX_HISTORY = 50
 
 // ========== 一键去背景 ==========
-const bgRemovalSnapshot = ref(null)
+const bgRemovalSnapshot = ref<{ mappedPixelData: MappedPixel[][]; colorCounts: ColorCounts; totalBeadCount: number } | null>(null)
 
 function handleAutoRemoveBackground() {
   if (!mappedPixelData.value || !gridDimensions.value) return
@@ -266,7 +276,7 @@ const showDonationModal = ref(false)
 const showPreDownloadModal = ref(false)
 
 // 下载选项
-const downloadOptions = ref({
+const downloadOptions = ref<GridDownloadOptions>({
   showGrid: true,
   gridInterval: 10,
   showCoordinates: true,

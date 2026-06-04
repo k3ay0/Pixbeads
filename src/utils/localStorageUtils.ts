@@ -3,17 +3,14 @@
  * Ported from perler-beads React project
  */
 
+import type { PaletteColor, PaletteSelections } from '@/types'
+
 const STORAGE_KEY = 'pixbeads_palette'
 
 /**
- * @typedef {Object<string, boolean>} PaletteSelections
- */
-
-/**
  * 保存自定义色板选择状态到 localStorage
- * @param {PaletteSelections} selections 选择状态对象
  */
-export function savePaletteSelections(selections) {
+export function savePaletteSelections(selections: PaletteSelections): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(selections))
   } catch (error) {
@@ -23,13 +20,12 @@ export function savePaletteSelections(selections) {
 
 /**
  * 从 localStorage 加载自定义色板选择状态
- * @returns {PaletteSelections | null} 选择状态对象或 null
  */
-export function loadPaletteSelections() {
+export function loadPaletteSelections(): PaletteSelections | null {
   try {
     const stored = localStorage.getItem(STORAGE_KEY)
     if (stored) {
-      return JSON.parse(stored)
+      return JSON.parse(stored) as PaletteSelections
     }
   } catch (error) {
     console.error('无法从本地存储加载色板选择:', error)
@@ -40,13 +36,10 @@ export function loadPaletteSelections() {
 
 /**
  * 将预设色板转换为选择状态对象（基于 hex 值）
- * @param {string[]} allHexValues 所有可选的 hex 值
- * @param {string[]} presetHexValues 预设的 hex 值
- * @returns {PaletteSelections} 选择状态对象
  */
-export function presetToSelections(allHexValues, presetHexValues) {
+export function presetToSelections(allHexValues: string[], presetHexValues: string[]): PaletteSelections {
   const presetSet = new Set(presetHexValues.map(hex => hex.toUpperCase()))
-  const selections = {}
+  const selections: PaletteSelections = {}
 
   allHexValues.forEach(hex => {
     const normalizedHex = hex.toUpperCase()
@@ -58,14 +51,11 @@ export function presetToSelections(allHexValues, presetHexValues) {
 
 /**
  * 根据 MARD 色号预设生成基于 hex 值的选择状态（用于兼容旧预设）
- * @param {Array<{ key: string; hex: string }>} allBeadPalette 所有珠子调色板
- * @param {string[]} presetKeys 预设的 MARD 色号
- * @returns {PaletteSelections} 选择状态对象
  */
-export function presetKeysToHexSelections(allBeadPalette, presetKeys) {
+export function presetKeysToHexSelections(allBeadPalette: PaletteColor[], presetKeys: string[]): PaletteSelections {
   const presetKeySet = new Set(presetKeys)
-  const selections = {}
-  const processedHexValues = new Set()
+  const selections: PaletteSelections = {}
+  const processedHexValues = new Set<string>()
 
   console.log(
     `presetKeysToHexSelections: 输入调色板大小 ${allBeadPalette.length}, 预设键数量 ${presetKeys.length}`

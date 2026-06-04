@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import {
   getConnectedRegion,
@@ -9,6 +9,7 @@ import {
   sortRegionsBySize,
 } from '../utils/floodFillUtils'
 import { getColorKeyByHex } from '../utils/colorSystemUtils'
+import type { MappedPixel, GridDimensions } from '../types'
 import FocusCanvas from '../components/FocusCanvas.vue'
 import ColorStatusBar from '../components/ColorStatusBar.vue'
 import ProgressBar from '../components/ProgressBar.vue'
