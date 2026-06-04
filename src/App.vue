@@ -21,6 +21,7 @@ import { loadPaletteSelections, savePaletteSelections, presetToSelections } from
 import DownloadSettingsModal from './components/DownloadSettingsModal.vue'
 import ColorPalette from './components/ColorPalette.vue'
 import InstallPWA from './components/InstallPWA.vue'
+import ImageCropper from './components/ImageCropper.vue'
 import type {
   PaletteColor,
   MappedPixel,
@@ -70,10 +71,16 @@ const originalImage = ref<HTMLImageElement | null>(null)
 // 控制参数
 const granularity = ref(50)
 const granularityInput = ref('50')
+const granularityY = ref(0)
+const granularityYInput = ref('0')
 const similarityThreshold = ref(30)
 const similarityThresholdInput = ref('30')
 const pixelationMode = ref<PixelationMode>(PixelationMode.Dominant)
 const selectedColorSystem = ref<ColorSystem>('MARD')
+
+// 裁剪相关
+const showCropper = ref(false)
+const croppedImageCanvas = ref<HTMLCanvasElement | null>(null)
 
 // 像素数据
 const mappedPixelData = ref<MappedPixel[][] | null>(null)
@@ -345,6 +352,7 @@ const currentGridColors = computed(() => {
 
 // ========== 输入同步 ==========
 watch(granularity, v => { granularityInput.value = v.toString() })
+watch(granularityY, v => { granularityYInput.value = v.toString() })
 watch(similarityThreshold, v => { similarityThresholdInput.value = v.toString() })
 
 // ========== 图片上传 ==========
@@ -375,19 +383,43 @@ function handleFileChange(e) {
   }
 }
 
-function loadImage(file) {
+function loadImage(file: File) {
   const reader = new FileReader()
   reader.onload = (e) => {
-    originalImageSrc.value = e.target.result
+    originalImageSrc.value = e.target?.result as string
     bgRemovalSnapshot.value = null
+    croppedImageCanvas.value = null
+    granularityY.value = 0
+    granularityYInput.value = '0'
     const img = new Image()
     img.onload = () => {
       originalImage.value = img
-      processImage()
+      // 显示裁剪界面
+      showCropper.value = true
     }
-    img.src = e.target.result
+    img.src = e.target?.result as string
   }
   reader.readAsDataURL(file)
+}
+
+// ========== 裁剪回调 ==========
+function handleCropConfirm(canvas: HTMLCanvasElement) {
+  croppedImageCanvas.value = canvas
+  showCropper.value = false
+  // 设置高度粒度为裁剪区域的等比例默认值
+  const aspectRatio = canvas.height / canvas.width
+  const defaultY = Math.max(1, Math.round(granularity.value * aspectRatio))
+  granularityY.value = defaultY
+  granularityYInput.value = defaultY.toString()
+  processImage()
+}
+
+function handleCropSkip() {
+  croppedImageCanvas.value = null
+  showCropper.value = false
+  granularityY.value = 0
+  granularityYInput.value = '0'
+  processImage()
 }
 
 function loadCsv(file) {
@@ -418,23 +450,44 @@ function loadCsv(file) {
 
 // ========== 核心处理 ==========
 function processImage() {
-  if (!originalImage.value) return
+  if (!originalImage.value && !croppedImageCanvas.value) return
   isProcessing.value = true
 
   // 使用 setTimeout 让 UI 更新
   setTimeout(() => {
     try {
-      const img = originalImage.value
       const N = granularity.value
-      const aspectRatio = img.height / img.width
-      const M = Math.max(1, Math.round(N * aspectRatio))
+      let sourceCanvas: HTMLCanvasElement
+      let imgWidth: number
+      let imgHeight: number
 
-      // 创建临时 canvas
-      const canvas = document.createElement('canvas')
-      canvas.width = img.width
-      canvas.height = img.height
-      const ctx = canvas.getContext('2d')
-      ctx.drawImage(img, 0, 0)
+      if (croppedImageCanvas.value) {
+        // 使用裁剪后的 canvas
+        sourceCanvas = croppedImageCanvas.value
+        imgWidth = sourceCanvas.width
+        imgHeight = sourceCanvas.height
+      } else {
+        // 使用原图
+        const img = originalImage.value!
+        imgWidth = img.width
+        imgHeight = img.height
+        sourceCanvas = document.createElement('canvas')
+        sourceCanvas.width = imgWidth
+        sourceCanvas.height = imgHeight
+        const ctx = sourceCanvas.getContext('2d')!
+        ctx.drawImage(img, 0, 0)
+      }
+
+      // 计算 M：裁剪模式下使用独立值，否则根据比例自动计算
+      let M: number
+      if (croppedImageCanvas.value && granularityY.value > 0) {
+        M = granularityY.value
+      } else {
+        const aspectRatio = imgHeight / imgWidth
+        M = Math.max(1, Math.round(N * aspectRatio))
+      }
+
+      const ctx = sourceCanvas.getContext('2d')!
 
       // 像素化 — 传入原始 MARD 调色板（hex key），不进行色号系统转换
       // 回退颜色：T1 key → 任意白色 hex → 第一个调色板颜色
@@ -442,7 +495,7 @@ function processImage() {
         || activeBeadPalette.value.find(p => p.hex.toUpperCase() === '#FFFFFF')
         || activeBeadPalette.value[0]
         || { key: '?', hex: '#000000', rgb: { r: 0, g: 0, b: 0 } }
-      let result = calculatePixelGrid(ctx, img.width, img.height, N, M, activeBeadPalette.value, pixelationMode.value, fallbackColor)
+      let result = calculatePixelGrid(ctx, imgWidth, imgHeight, N, M, activeBeadPalette.value, pixelationMode.value, fallbackColor)
 
       // 区域合并 — 传入调色板用于 key→RGB 查找
       if (similarityThreshold.value > 0) {
@@ -471,9 +524,9 @@ function processImage() {
 }
 
 // 重新处理
-watch([granularity, similarityThreshold, pixelationMode, activeBeadPalette], () => {
+watch([granularity, granularityY, similarityThreshold, pixelationMode, activeBeadPalette], () => {
   bgRemovalSnapshot.value = null
-  if (originalImage.value) processImage()
+  if (originalImage.value || croppedImageCanvas.value) processImage()
 })
 
 // ========== 手动编辑 ==========
@@ -1040,17 +1093,50 @@ function handleExportCsv() {
         <div class="bg-white rounded-xl border border-gray-200 p-4 space-y-4">
           <h3 class="text-sm font-medium text-gray-700">参数设置</h3>
 
-          <!-- 粒度 -->
+          <!-- 宽度粒度 -->
           <div>
             <label class="text-xs text-gray-500 mb-1 block">
-              粒度 (横向格子数)
-              <span class="float-right font-mono text-gray-700">{{ granularity }}</span>
+              宽度 (横向格子数)
             </label>
-            <input
-              v-model.number="granularity"
-              type="range" min="10" max="200" step="1"
-              class="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-            />
+            <div class="flex items-center gap-2">
+              <input
+                v-model.number="granularity"
+                type="range" min="10" max="300" step="1"
+                class="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+              />
+              <input
+                v-model="granularityInput"
+                @blur="granularity = Math.max(10, Math.min(300, parseInt(granularityInput) || 50))"
+                @keyup.enter="granularity = Math.max(10, Math.min(300, parseInt(granularityInput) || 50))"
+                type="text"
+                class="w-14 px-1.5 py-0.5 text-xs font-mono text-center border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+            </div>
+          </div>
+
+          <!-- 高度粒度 -->
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">
+              高度 (纵向格子数)
+              <span v-if="!croppedImageCanvas" class="text-gray-400 font-normal ml-1">裁剪后可调</span>
+            </label>
+            <div class="flex items-center gap-2">
+              <input
+                v-model.number="granularityY"
+                type="range" min="10" max="300" step="1"
+                :disabled="!croppedImageCanvas"
+                class="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-500 disabled:opacity-40"
+              />
+              <input
+                v-model="granularityYInput"
+                :disabled="!croppedImageCanvas"
+                @blur="granularityY = Math.max(10, Math.min(300, parseInt(granularityYInput) || 0))"
+                @keyup.enter="granularityY = Math.max(10, Math.min(300, parseInt(granularityYInput) || 0))"
+                type="text"
+                :placeholder="granularityY > 0 ? granularityY.toString() : '自动'"
+                class="w-14 px-1.5 py-0.5 text-xs font-mono text-center border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-40"
+              />
+            </div>
           </div>
 
           <!-- 相似度阈值 -->
@@ -1537,6 +1623,14 @@ function handleExportCsv() {
       :selected-color-system="selectedColorSystem"
       @proceed="handlePreDownloadConfirm"
       @close="showPreDownloadModal = false"
+    />
+
+    <!-- 裁剪工具 -->
+    <ImageCropper
+      v-if="showCropper && originalImageSrc"
+      :image-src="originalImageSrc"
+      @confirm="handleCropConfirm"
+      @skip="handleCropSkip"
     />
 
     <!-- PWA 安装提示 -->
