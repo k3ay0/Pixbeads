@@ -375,7 +375,7 @@ function processImage() {
       const img = originalImage.value
       const N = granularity.value
       const aspectRatio = img.height / img.width
-      const M = Math.round(N * aspectRatio)
+      const M = Math.max(1, Math.round(N * aspectRatio))
 
       // 创建临时 canvas
       const canvas = document.createElement('canvas')
@@ -385,7 +385,11 @@ function processImage() {
       ctx.drawImage(img, 0, 0)
 
       // 像素化 — 传入原始 MARD 调色板（hex key），不进行色号系统转换
-      const fallbackColor = activeBeadPalette.value[0] || { key: '?', hex: '#000000', rgb: { r: 0, g: 0, b: 0 } }
+      // 回退颜色：T1 key → 任意白色 hex → 第一个调色板颜色
+      const fallbackColor = activeBeadPalette.value.find(p => p.key === 'T1')
+        || activeBeadPalette.value.find(p => p.hex.toUpperCase() === '#FFFFFF')
+        || activeBeadPalette.value[0]
+        || { key: '?', hex: '#000000', rgb: { r: 0, g: 0, b: 0 } }
       let result = calculatePixelGrid(ctx, img.width, img.height, N, M, activeBeadPalette.value, pixelationMode.value, fallbackColor)
 
       // 区域合并 — 传入调色板用于 key→RGB 查找
