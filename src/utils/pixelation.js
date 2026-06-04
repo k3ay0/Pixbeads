@@ -204,71 +204,85 @@ export function calculatePixelGrid(originalCtx, imgWidth, imgHeight, N, M, palet
 }
 
 /**
- * BFS 区域颜色合并
+ * 全局频率排序颜色合并（移植自 perler-beads）
+ * 按出现频率从高到低排序，高频颜色优先保留，低频相似颜色被合并
  */
-export function mergeSimilarRegions(mappedData, threshold) {
+export function mergeSimilarRegions(mappedData, threshold, palette) {
   if (!mappedData || mappedData.length === 0) return mappedData
   const M = mappedData.length
   const N = mappedData[0].length
-  const visited = Array(M).fill(null).map(() => Array(N).fill(false))
-  const result = mappedData.map(row => row.map(cell => ({ ...cell })))
 
-  for (let j = 0; j < M; j++) {
-    for (let i = 0; i < N; i++) {
-      if (visited[j][i]) continue
-      if (!result[j][i] || result[j][i].isExternal) continue
+  // 构建 key → RGB 和 key → 完整调色板条目的映射
+  const keyToRgbMap = new Map()
+  const keyToColorDataMap = new Map()
+  if (palette) {
+    palette.forEach(p => {
+      keyToRgbMap.set(p.key, p.rgb)
+      keyToColorDataMap.set(p.key, p)
+    })
+  }
 
-      // BFS 找连通区域
-      const region = []
-      const queue = [{ r: j, c: i }]
-      visited[j][i] = true
-      const baseColor = hexToRgb(result[j][i].color)
-      if (!baseColor) continue
+  // 统计各 key 的出现频率
+  const initialColorCounts = {}
+  mappedData.flat().forEach(cell => {
+    if (cell && cell.key && !cell.isExternal && cell.key !== TRANSPARENT_KEY) {
+      initialColorCounts[cell.key] = (initialColorCounts[cell.key] || 0) + 1
+    }
+  })
 
-      while (queue.length > 0) {
-        const { r, c } = queue.shift()
-        region.push({ r, c })
+  // 按频率降序排序
+  const colorsByFrequency = Object.entries(initialColorCounts)
+    .sort((a, b) => b[1] - a[1])
+    .map(entry => entry[0])
 
-        const neighbors = [
-          { r: r - 1, c }, { r: r + 1, c },
-          { r, c: c - 1 }, { r, c: c + 1 }
-        ]
-        for (const { r: nr, c: nc } of neighbors) {
-          if (nr < 0 || nr >= M || nc < 0 || nc >= N) continue
-          if (visited[nr][nc]) continue
-          if (!result[nr][nc] || result[nr][nc].isExternal) continue
+  if (colorsByFrequency.length === 0) return mappedData.map(row => row.map(cell => ({ ...cell })))
 
-          const neighborRgb = hexToRgb(result[nr][nc].color)
-          if (!neighborRgb) continue
+  // 复制数据准备合并
+  const result = mappedData.map(row => row.map(cell => ({ ...cell, isExternal: cell.isExternal ?? false })))
 
-          if (colorDistance(baseColor, neighborRgb) < threshold) {
-            visited[nr][nc] = true
-            queue.push({ r: nr, c: nc })
+  // 已被合并的颜色集合
+  const replacedColors = new Set()
+
+  // 对每个颜色按频率从高到低处理
+  for (let i = 0; i < colorsByFrequency.length; i++) {
+    const currentKey = colorsByFrequency[i]
+    if (replacedColors.has(currentKey)) continue
+
+    const currentRgb = keyToRgbMap.get(currentKey)
+    if (!currentRgb) continue
+
+    // 检查剩余的低频颜色
+    for (let j = i + 1; j < colorsByFrequency.length; j++) {
+      const lowerFreqKey = colorsByFrequency[j]
+      if (replacedColors.has(lowerFreqKey)) continue
+
+      const lowerFreqRgb = keyToRgbMap.get(lowerFreqKey)
+      if (!lowerFreqRgb) continue
+
+      const dist = colorDistance(currentRgb, lowerFreqRgb)
+
+      if (dist < threshold) {
+        replacedColors.add(lowerFreqKey)
+
+        // 替换所有使用低频颜色的单元格
+        for (let r = 0; r < M; r++) {
+          for (let c = 0; c < N; c++) {
+            if (result[r][c].key === lowerFreqKey) {
+              const colorData = keyToColorDataMap.get(currentKey)
+              if (colorData) {
+                result[r][c] = {
+                  key: currentKey,
+                  color: colorData.hex,
+                  isExternal: false
+                }
+              }
+            }
           }
         }
       }
-
-      // 统计区域内出现最多的颜色
-      if (region.length <= 1) continue
-      const colorCountMap = {}
-      for (const { r, c } of region) {
-        const hex = result[r][c].color.toUpperCase()
-        colorCountMap[hex] = (colorCountMap[hex] || 0) + 1
-      }
-      let maxCount = 0
-      let dominantHex = result[j][i].color.toUpperCase()
-      for (const [hex, count] of Object.entries(colorCountMap)) {
-        if (count > maxCount) {
-          maxCount = count
-          dominantHex = hex
-        }
-      }
-      // 统一区域颜色
-      for (const { r, c } of region) {
-        result[r][c].color = dominantHex
-      }
     }
   }
+
   return result
 }
 
