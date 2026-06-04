@@ -1273,6 +1273,14 @@ function handleExportCsv() {
           <p class="text-gray-300 text-sm">支持 JPG / PNG / CSV 格式</p>
         </div>
 
+        <!-- 提示框 -->
+        <div
+          v-if="!originalImageSrc"
+          class="mt-4 p-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl text-xs text-blue-700"
+        >
+          💡 建议将图片主体边缘对齐画布边界，减少后期手动去除背景的工作量。
+        </div>
+
         <!-- 处理中 -->
         <div v-else-if="isProcessing" class="bg-white rounded-xl border border-gray-200 h-[600px] flex items-center justify-center">
           <div class="text-center">
