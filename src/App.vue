@@ -1,11 +1,14 @@
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import {
   hexToRgb,
   calculatePixelGrid,
   mergeSimilarRegions,
   removeBackground,
   recalculateColorStats,
+  floodFillErase,
+  replaceAllColor,
+  paintPixel,
   TRANSPARENT_KEY,
   PixelationMode,
 } from './utils/pixelation'
@@ -57,6 +60,31 @@ const showDownloadModal = ref(false)
 const tooltipData = ref(null)
 const highlightColorKey = ref(null)
 const previewCanvas = ref(null)
+
+// ========== 撤销/重做 ==========
+const editHistory = ref([])
+const editHistoryIndex = ref(-1)
+const MAX_HISTORY = 50
+
+// ========== 洪水填充擦除 ==========
+const isFloodFillEraseMode = ref(false)
+
+// ========== 颜色批量替换 ==========
+const colorReplaceState = ref({
+  isActive: false,
+  step: 'select-source', // 'select-source' | 'select-target'
+  sourceColor: null, // { hex, key }
+})
+
+// ========== 悬浮调色盘 ==========
+const floatingPalette = ref({
+  x: 20,
+  y: 200,
+  isDragging: false,
+  dragOffsetX: 0,
+  dragOffsetY: 0,
+  collapsed: false,
+})
 
 // 下载选项
 const downloadOptions = ref({
@@ -213,6 +241,11 @@ function processImage() {
       const stats = recalculateColorStats(result)
       colorCounts.value = stats.colorCounts
       totalBeadCount.value = stats.totalCount
+
+      // 初始化编辑历史
+      editHistory.value = []
+      editHistoryIndex.value = -1
+      saveEditSnapshot()
     } catch (err) {
       console.error('处理失败:', err)
     } finally {
@@ -241,6 +274,10 @@ function exitManualMode() {
   isManualColoringMode.value = false
   selectedEditColor.value = null
   isEraseMode.value = false
+  isFloodFillEraseMode.value = false
+  colorReplaceState.value.isActive = false
+  colorReplaceState.value.step = 'select-source'
+  colorReplaceState.value.sourceColor = null
 }
 
 function toggleEraseMode() {
@@ -249,11 +286,15 @@ function toggleEraseMode() {
   } else {
     isEraseMode.value = true
     selectedEditColor.value = null
+    isFloodFillEraseMode.value = false
+    colorReplaceState.value.isActive = false
   }
 }
 
 function selectEditColor(color) {
   isEraseMode.value = false
+  isFloodFillEraseMode.value = false
+  colorReplaceState.value.isActive = false
   selectedEditColor.value = color
 }
 
@@ -278,7 +319,20 @@ function handleCanvasClick(e) {
   const cell = mappedPixelData.value[row][col]
   if (!cell || cell.isExternal) return
 
+  // 洪水填充擦除模式
+  if (isFloodFillEraseMode.value) {
+    handleFloodFillErase(row, col)
+    return
+  }
+
+  // 颜色批量替换模式
+  if (colorReplaceState.value.isActive) {
+    handleColorReplaceClick(row, col)
+    return
+  }
+
   if (isEraseMode.value) {
+    saveEditSnapshot()
     const newData = mappedPixelData.value.map(r => r.map(c => ({ ...c })))
     newData[row][col] = { key: TRANSPARENT_KEY, color: '#FFFFFF', isExternal: true }
     mappedPixelData.value = newData
@@ -286,6 +340,7 @@ function handleCanvasClick(e) {
     colorCounts.value = stats.colorCounts
     totalBeadCount.value = stats.totalCount
   } else if (selectedEditColor.value) {
+    saveEditSnapshot()
     const newData = mappedPixelData.value.map(r => r.map(c => ({ ...c })))
     newData[row][col] = {
       key: selectedEditColor.value.key,
@@ -338,6 +393,192 @@ function handleCanvasHover(e) {
 
 function handleCanvasLeave() {
   tooltipData.value = null
+}
+
+// ========== 撤销/重做 ==========
+function saveEditSnapshot() {
+  // 截断当前位置之后的历史（如果有）
+  if (editHistoryIndex.value < editHistory.value.length - 1) {
+    editHistory.value = editHistory.value.slice(0, editHistoryIndex.value + 1)
+  }
+  // 保存当前快照
+  const snapshot = mappedPixelData.value.map(r => r.map(c => ({ ...c })))
+  editHistory.value.push(snapshot)
+  // 限制最大步数
+  if (editHistory.value.length > MAX_HISTORY) {
+    editHistory.value.shift()
+  }
+  editHistoryIndex.value = editHistory.value.length - 1
+}
+
+function undoEdit() {
+  if (editHistoryIndex.value < 0) return
+  const snapshot = editHistory.value[editHistoryIndex.value]
+  mappedPixelData.value = snapshot.map(r => r.map(c => ({ ...c })))
+  editHistoryIndex.value--
+  const stats = recalculateColorStats(mappedPixelData.value)
+  colorCounts.value = stats.colorCounts
+  totalBeadCount.value = stats.totalCount
+}
+
+function redoEdit() {
+  if (editHistoryIndex.value >= editHistory.value.length - 1) return
+  editHistoryIndex.value++
+  const snapshot = editHistory.value[editHistoryIndex.value]
+  mappedPixelData.value = snapshot.map(r => r.map(c => ({ ...c })))
+  const stats = recalculateColorStats(mappedPixelData.value)
+  colorCounts.value = stats.colorCounts
+  totalBeadCount.value = stats.totalCount
+}
+
+// ========== 洪水填充擦除模式 ==========
+function enterFloodFillEraseMode() {
+  isFloodFillEraseMode.value = true
+  // 退出其他互斥模式
+  isEraseMode.value = false
+  selectedEditColor.value = null
+  colorReplaceState.value.isActive = false
+  colorReplaceState.value.step = 'select-source'
+  colorReplaceState.value.sourceColor = null
+}
+
+function exitFloodFillEraseMode() {
+  isFloodFillEraseMode.value = false
+}
+
+// ========== 颜色批量替换模式 ==========
+function enterColorReplaceMode() {
+  colorReplaceState.value.isActive = true
+  colorReplaceState.value.step = 'select-source'
+  colorReplaceState.value.sourceColor = null
+  // 退出其他互斥模式
+  isEraseMode.value = false
+  isFloodFillEraseMode.value = false
+  selectedEditColor.value = null
+}
+
+function exitColorReplaceMode() {
+  colorReplaceState.value.isActive = false
+  colorReplaceState.value.step = 'select-source'
+  colorReplaceState.value.sourceColor = null
+}
+
+function handleFloodFillErase(row, col) {
+  if (!mappedPixelData.value || !gridDimensions.value) return
+  const cell = mappedPixelData.value[row]?.[col]
+  if (!cell || cell.isExternal) return
+
+  // 保存编辑快照
+  saveEditSnapshot()
+
+  const newData = floodFillErase(mappedPixelData.value, gridDimensions.value, row, col, cell.key)
+  mappedPixelData.value = newData
+  const stats = recalculateColorStats(newData)
+  colorCounts.value = stats.colorCounts
+  totalBeadCount.value = stats.totalCount
+}
+
+function handleColorReplaceClick(row, col) {
+  if (!mappedPixelData.value || !gridDimensions.value) return
+  const cell = mappedPixelData.value[row]?.[col]
+  if (!cell || cell.isExternal) return
+
+  if (colorReplaceState.value.step === 'select-source') {
+    // 第一步：选择源颜色
+    colorReplaceState.value.sourceColor = {
+      hex: cell.color.toUpperCase(),
+      key: getColorKeyByHex(cell.color.toUpperCase(), selectedColorSystem.value),
+    }
+    colorReplaceState.value.step = 'select-target'
+  } else if (colorReplaceState.value.step === 'select-target') {
+    // 第二步：选择目标颜色并执行替换
+    const targetHex = cell.color.toUpperCase()
+    const targetKey = getColorKeyByHex(targetHex, selectedColorSystem.value)
+    const sourceHex = colorReplaceState.value.sourceColor.hex
+
+    if (sourceHex === targetHex) {
+      // 源色和目标色相同，不替换
+      exitColorReplaceMode()
+      return
+    }
+
+    // 保存编辑快照
+    saveEditSnapshot()
+
+    const { result, count } = replaceAllColor(mappedPixelData.value, sourceHex, targetKey, targetHex)
+    if (count > 0) {
+      mappedPixelData.value = result
+      const stats = recalculateColorStats(result)
+      colorCounts.value = stats.colorCounts
+      totalBeadCount.value = stats.totalCount
+    }
+    exitColorReplaceMode()
+  }
+}
+
+// ========== 专心模式 ==========
+function enterFocusMode() {
+  if (!mappedPixelData.value) return
+  localStorage.setItem('pixbeads_focus_data', JSON.stringify(mappedPixelData.value))
+  localStorage.setItem('pixbeads_focus_dims', JSON.stringify(gridDimensions.value))
+  localStorage.setItem('pixbeads_focus_colorSystem', selectedColorSystem.value)
+  window.location.href = '/focus'
+}
+
+// ========== 悬浮调色盘拖拽 ==========
+function onPaletteHeaderMouseDown(e) {
+  e.preventDefault()
+  floatingPalette.value.isDragging = true
+  floatingPalette.value.dragOffsetX = e.clientX - floatingPalette.value.x
+  floatingPalette.value.dragOffsetY = e.clientY - floatingPalette.value.y
+  document.addEventListener('mousemove', onPaletteMouseMove)
+  document.addEventListener('mouseup', onPaletteMouseUp)
+}
+
+function onPaletteMouseMove(e) {
+  if (!floatingPalette.value.isDragging) return
+  floatingPalette.value.x = e.clientX - floatingPalette.value.dragOffsetX
+  floatingPalette.value.y = e.clientY - floatingPalette.value.dragOffsetY
+}
+
+function onPaletteMouseUp() {
+  floatingPalette.value.isDragging = false
+  document.removeEventListener('mousemove', onPaletteMouseMove)
+  document.removeEventListener('mouseup', onPaletteMouseUp)
+}
+
+function togglePaletteCollapse() {
+  floatingPalette.value.collapsed = !floatingPalette.value.collapsed
+}
+
+// ========== 键盘快捷键 ==========
+onMounted(() => {
+  window.addEventListener('keydown', handleKeyDown)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeyDown)
+})
+
+function handleKeyDown(e) {
+  // Ctrl+Z 撤销
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+    e.preventDefault()
+    undoEdit()
+  }
+  // Ctrl+Shift+Z 或 Ctrl+Y 重做
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+    e.preventDefault()
+    redoEdit()
+  }
+  // Escape 退出当前模式
+  if (e.key === 'Escape') {
+    if (colorReplaceState.value.isActive) {
+      exitColorReplaceMode()
+    } else if (isFloodFillEraseMode.value) {
+      exitFloodFillEraseMode()
+    }
+  }
 }
 
 // ========== 色号系统切换 ==========
@@ -475,6 +716,15 @@ function handleExportCsv() {
               {{ sys.name }}
             </option>
           </select>
+          <!-- 专心模式按钮 -->
+          <button
+            v-if="mappedPixelData"
+            @click="enterFocusMode"
+            class="px-4 py-1.5 bg-emerald-500 text-white text-sm rounded-lg hover:bg-emerald-600 transition-colors"
+            title="保存当前图纸并进入专心模式"
+          >
+            专心模式
+          </button>
           <!-- 下载按钮 -->
           <button
             v-if="mappedPixelData"
@@ -574,7 +824,7 @@ function handleExportCsv() {
         <!-- 编辑工具 -->
         <div v-if="mappedPixelData" class="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
           <h3 class="text-sm font-medium text-gray-700">编辑工具</h3>
-          <div class="flex gap-2">
+          <div class="flex gap-2 flex-wrap">
             <button
               @click="isManualColoringMode ? exitManualMode() : enterManualMode()"
               :class="[
@@ -598,9 +848,42 @@ function handleExportCsv() {
             >
               橡皮擦
             </button>
+            <button
+              v-if="isManualColoringMode"
+              @click="isFloodFillEraseMode ? exitFloodFillEraseMode() : enterFloodFillEraseMode()"
+              :class="[
+                'px-3 py-1.5 text-xs rounded-lg border transition-colors',
+                isFloodFillEraseMode
+                  ? 'bg-orange-500 text-white border-orange-500'
+                  : 'bg-white text-gray-600 border-gray-300 hover:border-orange-300'
+              ]"
+            >
+              区域擦除
+            </button>
+            <button
+              v-if="isManualColoringMode"
+              @click="colorReplaceState.isActive ? exitColorReplaceMode() : enterColorReplaceMode()"
+              :class="[
+                'px-3 py-1.5 text-xs rounded-lg border transition-colors',
+                colorReplaceState.isActive
+                  ? 'bg-purple-500 text-white border-purple-500'
+                  : 'bg-white text-gray-600 border-gray-300 hover:border-purple-300'
+              ]"
+            >
+              批量替换
+            </button>
           </div>
-          <p v-if="isManualColoringMode && !selectedEditColor && !isEraseMode" class="text-xs text-gray-400">
+          <p v-if="isManualColoringMode && !selectedEditColor && !isEraseMode && !isFloodFillEraseMode && !colorReplaceState.isActive" class="text-xs text-gray-400">
             点击画布吸取颜色，或从下方色板选择
+          </p>
+          <p v-if="isFloodFillEraseMode" class="text-xs text-orange-400">
+            点击画布擦除同色连通区域
+          </p>
+          <p v-if="colorReplaceState.isActive && colorReplaceState.step === 'select-source'" class="text-xs text-purple-400">
+            第一步：点击画布选择要替换的源颜色
+          </p>
+          <p v-if="colorReplaceState.isActive && colorReplaceState.step === 'select-target'" class="text-xs text-purple-400">
+            已选源色: <span class="font-mono" :style="{ color: colorReplaceState.sourceColor?.hex }">{{ colorReplaceState.sourceColor?.key }}</span>，点击选择目标颜色
           </p>
         </div>
 
@@ -671,7 +954,7 @@ function handleExportCsv() {
             width="800"
             height="600"
             class="w-full h-auto block"
-            :style="{ imageRendering: 'pixelated', cursor: isManualColoringMode ? 'crosshair' : 'default' }"
+            :style="{ imageRendering: 'pixelated', cursor: isManualColoringMode ? (isFloodFillEraseMode ? 'cell' : colorReplaceState.isActive ? 'copy' : isEraseMode ? 'crosshair' : 'crosshair') : 'default' }"
             @click="handleCanvasClick"
             @mousemove="handleCanvasHover"
             @mouseleave="handleCanvasLeave"
@@ -692,6 +975,99 @@ function handleExportCsv() {
         </div>
       </main>
     </div>
+
+    <!-- 悬浮调色盘 -->
+    <Teleport to="body">
+      <div
+        v-if="mappedPixelData"
+        class="fixed z-40 select-none"
+        :style="{ left: floatingPalette.x + 'px', top: floatingPalette.y + 'px' }"
+      >
+        <div class="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden" :class="{ 'w-12': floatingPalette.collapsed, 'w-64': !floatingPalette.collapsed }">
+          <!-- 拖拽头 -->
+          <div
+            class="bg-gradient-to-r from-indigo-500 to-purple-500 px-3 py-2 flex items-center justify-between cursor-move"
+            @mousedown="onPaletteHeaderMouseDown"
+          >
+            <span class="text-white text-xs font-medium" v-if="!floatingPalette.collapsed">调色盘</span>
+            <button
+              @click.stop="togglePaletteCollapse"
+              class="text-white/80 hover:text-white text-xs ml-1"
+              :title="floatingPalette.collapsed ? '展开' : '收起'"
+            >
+              {{ floatingPalette.collapsed ? '◀' : '▶' }}
+            </button>
+          </div>
+
+          <!-- 工具按钮 -->
+          <div v-if="!floatingPalette.collapsed" class="p-2 border-b border-gray-100">
+            <div class="flex gap-1 flex-wrap">
+              <!-- 撤销 -->
+              <button
+                @click="undoEdit"
+                :disabled="editHistoryIndex < 0"
+                class="px-2 py-1 text-xs rounded bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                title="撤销 (Ctrl+Z)"
+              >↩ 撤销</button>
+              <!-- 重做 -->
+              <button
+                @click="redoEdit"
+                :disabled="editHistoryIndex >= editHistory.length - 1"
+                class="px-2 py-1 text-xs rounded bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                title="重做 (Ctrl+Shift+Z)"
+              >↪ 重做</button>
+              <!-- 橡皮擦 -->
+              <button
+                @click="isManualColoringMode && toggleEraseMode()"
+                :class="[
+                  'px-2 py-1 text-xs rounded transition-colors',
+                  isEraseMode ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                ]"
+                title="橡皮擦"
+              >🧹 橡皮</button>
+              <!-- 区域擦除 -->
+              <button
+                @click="isManualColoringMode && (isFloodFillEraseMode ? exitFloodFillEraseMode() : enterFloodFillEraseMode())"
+                :class="[
+                  'px-2 py-1 text-xs rounded transition-colors',
+                  isFloodFillEraseMode ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                ]"
+                title="洪水填充擦除"
+              >🪣 区域</button>
+              <!-- 批量替换 -->
+              <button
+                @click="isManualColoringMode && (colorReplaceState.isActive ? exitColorReplaceMode() : enterColorReplaceMode())"
+                :class="[
+                  'px-2 py-1 text-xs rounded transition-colors',
+                  colorReplaceState.isActive ? 'bg-purple-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                ]"
+                title="颜色批量替换"
+              >🔄 替换</button>
+            </div>
+          </div>
+
+          <!-- 颜色网格 -->
+          <div v-if="!floatingPalette.collapsed" class="p-2 max-h-48 overflow-y-auto">
+            <div v-if="currentGridColors.length === 0" class="text-xs text-gray-400 text-center py-2">暂无颜色</div>
+            <div class="grid grid-cols-8 gap-1">
+              <button
+                v-for="color in currentGridColors"
+                :key="color.color"
+                @click="isManualColoringMode && selectEditColor(color)"
+                class="w-6 h-6 rounded border border-gray-200 hover:scale-125 transition-transform relative group"
+                :style="{ backgroundColor: color.color }"
+                :title="color.key"
+                :class="{ 'ring-2 ring-indigo-500 ring-offset-1': selectedEditColor?.color === color.color }"
+              >
+                <span class="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[9px] text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none bg-white px-1 rounded shadow">
+                  {{ color.key }}
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- 下载弹窗 -->
     <Teleport to="body">
@@ -756,4 +1132,10 @@ function handleExportCsv() {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #9CA3AF; }
+
+/* 悬浮调色盘拖拽时禁止选中 */
+.palette-dragging * {
+  user-select: none;
+  -webkit-user-select: none;
+}
 </style>
