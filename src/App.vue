@@ -1,34 +1,34 @@
-<script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, defineAsyncComponent, nextTick, toRaw } from 'vue'
-import {
-  hexToRgb,
-  recalculateColorStats,
-} from './utils/pixelation'
-import {
-  getMardToHexMapping,
-  getColorKeyByHex,
-  colorSystemOptions,
-  sortColorsByHue,
-} from './utils/colorSystemUtils'
-import { downloadGridImage, downloadStatsImage, exportCsv, importCsvData, exportPbds, importPbds } from './utils/downloader'
-import type { PbdsImportResult } from './utils/downloader'
-import { processImageInWorker } from './utils/workerManager'
-import type { ProcessProgress } from './utils/workerManager'
-import { useManualEditingState } from './composables/useManualEditingState'
-import { usePixelEditingOperations } from './composables/usePixelEditingOperations'
-import { clientToGridCoords, calculateCenterOffset, calculateInterval, calculateVisibleColumns, calculateVisibleRows } from './utils/canvasUtils'
+﻿<script setup lang="ts">
+import { ref, computed, watch, onMounted, onUnmounted, defineAsyncComponent, nextTick } from 'vue'
+import { storeToRefs } from 'pinia'
+
+// Stores
+import { useBeadStore } from './stores/beadStore'
+import { usePaletteStore } from './stores/paletteStore'
+import { useCanvasStore } from './stores/canvasStore'
+import { useEditorStore } from './stores/editorStore'
+import { useUiStore } from './stores/uiStore'
+import { useFocusStore } from './stores/focusStore'
+
+// Composables
+import { useImageProcessing } from './composables/useImageProcessing'
+import { useFileIO } from './composables/useFileIO'
+import { usePixelEditing } from './composables/usePixelEditing'
+import { useBackgroundRemoval } from './composables/useBackgroundRemoval'
+import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts'
+import { useCanvasTransform } from './composables/useCanvasTransform'
+import { useFocusModeLogic } from './composables/useFocusModeLogic'
+
+// Utils
+import { getColorKeyByHex, colorSystemOptions, sortColorsByHue } from './utils/colorSystemUtils'
+import { clientToGridCoords, calculateVisibleColumns, calculateVisibleRows } from './utils/canvasUtils'
 import { CELL_SIZE, AXIS_WIDTH, AXIS_HEIGHT, MIN_ZOOM, MAX_ZOOM } from './constants/canvasConstants'
 import { MODES } from './constants/modeConstants'
 import type { AppMode } from './constants/modeConstants'
-import { loadPaletteSelections, savePaletteSelections, presetToSelections } from './utils/localStorageUtils'
-import {
-  getConnectedRegion,
-  getAllConnectedRegions,
-  isRegionCompleted,
-  getRegionCenter,
-  sortRegionsByDistance,
-  sortRegionsBySize,
-} from './utils/floodFillUtils'
+import { TRANSPARENT_KEY } from './types'
+import type { PbdsImportResult } from './utils/downloader'
+
+// Components
 import DownloadSettingsModal from './components/DownloadSettingsModal.vue'
 import ImportConvertDialog from './components/ImportConvertDialog.vue'
 import ColorPalette from './components/ColorPalette.vue'
@@ -39,20 +39,8 @@ import ColorStatusBar from './components/ColorStatusBar.vue'
 import ProgressBar from './components/ProgressBar.vue'
 import FocusToolBar from './components/FocusToolBar.vue'
 import FocusColorPanel from './components/FocusColorPanel.vue'
-import type {
-  PaletteColor,
-  MappedPixel,
-  GridDimensions,
-  ColorCounts,
-  GridDownloadOptions,
-  ColorSystem,
-} from './types'
-import {
-  TRANSPARENT_KEY,
-  PixelationMode,
-} from './types'
 
-// ========== 安全异步组件导入 ==========
+// Async components
 const MagnifierTool = defineAsyncComponent(() =>
   import('./components/MagnifierTool.vue').catch(() => ({ render: () => null }))
 )
@@ -66,339 +54,111 @@ const CustomPaletteEditor = defineAsyncComponent(() =>
   import('./components/CustomPaletteEditor.vue').catch(() => ({ render: () => null }))
 )
 
-// ========== 模式系统 ==========
-const activeMode = ref<AppMode>('optimize')
+// ========== Stores ==========
+const beadStore = useBeadStore()
+const paletteStore = usePaletteStore()
+const canvasStore = useCanvasStore()
+const editorStore = useEditorStore()
+const uiStore = useUiStore()
+const focusStore = useFocusStore()
+
+// ========== Composables ==========
+const { processImage } = useImageProcessing()
+const fileIO = useFileIO()
+const pixelEditing = usePixelEditing()
+const bgRemoval = useBackgroundRemoval()
+useKeyboardShortcuts()
+const canvasTransform = useCanvasTransform()
+const focusLogic = useFocusModeLogic()
+
+// ========== 从 Store 映射状态 ==========
+const {
+  originalImageSrc, showCropper, mappedPixelData, gridDimensions,
+  colorCounts, totalBeadCount, granularity, granularityInput,
+  granularityY, granularityYInput, lockAspectRatio,
+  similarityThreshold, similarityThresholdInput, pixelationMode,
+  isProcessing, processingProgress, croppedImageCanvas,
+} = storeToRefs(beadStore)
+
+const {
+  selectedColorSystem, customPaletteSelections, excludedColorKeys,
+  activeBeadPalette, showPaletteEditor, showExcludedColors, fullBeadPalette,
+} = storeToRefs(paletteStore)
+
+const {
+  canvasZoom, canvasTranslate, isDragging, tooltipData,
+  previewCanvas, canvasContainer,
+} = storeToRefs(canvasStore)
+
+const {
+  isManualColoringMode, selectedEditColor, isEraseMode,
+  colorReplaceState, highlightColorKey, showFullPalette,
+  isFloodFillEraseMode, bgRemovalSnapshot, isMagnifierActive,
+  magnifierSelectionArea, floatingPalette,
+} = storeToRefs(editorStore)
+
+const {
+  activeMode, showImportMenu, showExportMenu, showDownloadModal,
+  showSettingsPanel, showDonationModal, showImportDialog,
+  toastMessage, downloadOptions,
+} = storeToRefs(uiStore)
+
+const {
+  currentColor, selectedCell, canvasScale, canvasOffset,
+  completedCells, colorProgress, recommendedRegion, recommendedCell,
+  guidanceMode, showColorPanel, isPaused, totalElapsedTime,
+  availableColors, gridSectionInterval, showSectionLines, sectionLineColor,
+  elapsedTime, progressPercentage, guidanceModeLabel, currentColorInfo,
+} = storeToRefs(focusStore)
+
+// ========== 本地状态 ==========
 const modes = MODES
-
-// ========== 调色板初始化 ==========
-const mardToHexMapping = getMardToHexMapping()
-const fullBeadPalette: PaletteColor[] = Object.entries(mardToHexMapping)
-  .map(([mardKey, hex]) => {
-    const rgb = hexToRgb(hex)
-    if (!rgb) return null
-    return { key: hex, hex, rgb }
-  })
-  .filter((c): c is PaletteColor => c !== null)
-
-// ========== 响应式状态 ==========
-const originalImageSrc = ref<string | null>(null)
-const originalImage = ref<HTMLImageElement | null>(null)
-
-// 控制参数
-const granularity = ref(50)
-const granularityInput = ref('50')
-const granularityY = ref(0)
-const granularityYInput = ref('0')
-const lockAspectRatio = ref(false)
-const similarityThreshold = ref(30)
-const similarityThresholdInput = ref('30')
-const pixelationMode = ref<PixelationMode>(PixelationMode.Dominant)
-const selectedColorSystem = ref<ColorSystem>('MARD')
-
-// 裁剪相关
-const showCropper = ref(false)
-const croppedImageCanvas = ref<HTMLCanvasElement | null>(null)
-
-// 像素数据
-const mappedPixelData = ref<MappedPixel[][] | null>(null)
-const gridDimensions = ref<GridDimensions | null>(null)
-const colorCounts = ref<ColorCounts | null>(null)
-const totalBeadCount = ref(0)
-
-// 色板选择
-const customPaletteSelections = ref<Record<string, boolean>>({})
-const excludedColorKeys = ref<Set<string>>(new Set())
-
-// UI 状态
-const activeBeadPalette = ref<PaletteColor[]>([])
-const isProcessing = ref(false)
-const processingProgress = ref<ProcessProgress | null>(null)
-const showDownloadModal = ref(false)
-const tooltipData = ref<{ x: number; y: number; key: string; color: string; row: number; col: number } | null>(null)
-const toastMessage = ref<string | null>(null)
-
-// 导入相关状态
-const showImportMenu = ref(false)
-const pbdsFileInput = ref<HTMLInputElement | null>(null)
-const showImportDialog = ref(false)
 const pendingPbdsData = ref<PbdsImportResult | null>(null)
+const fileInput = ref<HTMLInputElement | null>(null)
+const pbdsFileInput = ref<HTMLInputElement | null>(null)
 
-// 导出相关状态
-const showExportMenu = ref(false)
+// ========== 函数定义 ==========
+function triggerFileInput() { uiStore.closeAllMenus(); fileInput.value?.click() }
+function triggerPbdsInput() { uiStore.closeAllMenus(); pbdsFileInput.value?.click() }
 
-// Canvas 缩放和拖动状态
-const canvasZoom = ref(1)
-const canvasTranslate = ref({ x: 0, y: 0 })
-const isDragging = ref(false)
-const dragStart = ref({ x: 0, y: 0 })
-
-const previewCanvas = ref<HTMLCanvasElement | null>(null)
-const canvasContainer = ref<HTMLDivElement | null>(null)
-
-function showToast(msg: string) {
-  toastMessage.value = msg
-  setTimeout(() => { toastMessage.value = null }, 2000)
+function handleFileDrop(e: DragEvent) {
+  e.preventDefault()
+  const file = e.dataTransfer?.files?.[0]
+  if (!file) return
+  if (file.name.toLowerCase().endsWith('.pbds')) loadPbds(file)
+  else if (file.type.startsWith('image/')) fileIO.loadImage(file)
 }
 
-// ========== 拼豆模式状态 ==========
-const currentColor = ref('')
-const selectedCell = ref<{ row: number; col: number } | null>(null)
-const canvasScale = ref(1)
-const canvasOffset = ref({ x: 0, y: 0 })
-const completedCells = ref<Set<string>>(new Set())
-const colorProgress = ref<Record<string, { completed: number; total: number }>>({})
-const recommendedRegion = ref<Array<{ row: number; col: number }> | null>(null)
-const recommendedCell = ref<{ row: number; col: number } | null>(null)
-const guidanceMode = ref<'nearest' | 'largest' | 'edge-first'>('nearest')
-const showColorPanel = ref(false)
-const isPaused = ref(true)
-const totalElapsedTime = ref(0)
-const lastResumeTime = ref(Date.now())
-let timerInterval: ReturnType<typeof setInterval> | null = null
-const gridSectionInterval = ref(10)
-const showSectionLines = ref(true)
-const sectionLineColor = ref('#007acc')
-const availableColors = ref<Array<{ color: string; name: string; total: number; completed: number }>>([])
-
-// ========== 撤销/重做 ==========
-const editHistory = ref<MappedPixel[][][]>([])
-const editHistoryIndex = ref(-1)
-const MAX_HISTORY = 50
-
-// ========== 一键去背景 ==========
-const bgRemovalSnapshot = ref<{ mappedPixelData: MappedPixel[][]; colorCounts: ColorCounts; totalBeadCount: number } | null>(null)
-
-function handleAutoRemoveBackground() {
-  if (!mappedPixelData.value || !gridDimensions.value) return
-
-  // 保存快照用于单步撤回
-  bgRemovalSnapshot.value = {
-    mappedPixelData: mappedPixelData.value.map(r => r.map(c => ({ ...c }))),
-    colorCounts: colorCounts.value ? { ...colorCounts.value } : {},
-    totalBeadCount: totalBeadCount.value,
-  }
-  // 去背景会大幅改变数据，清空编辑撤回历史
-  editHistory.value = []
-  editHistoryIndex.value = -1
-
-  const { N, M } = gridDimensions.value
-  const borderCounts = new Map()
-
-  const countBorderCell = (row, col) => {
-    const cell = mappedPixelData.value[row]?.[col]
-    if (!cell || cell.isExternal || cell.key === TRANSPARENT_KEY) return
-    const key = cell.key
-    borderCounts.set(key, (borderCounts.get(key) || 0) + 1)
-  }
-
-  for (let col = 0; col < N; col++) {
-    countBorderCell(0, col)
-    if (M > 1) countBorderCell(M - 1, col)
-  }
-  for (let row = 1; row < M - 1; row++) {
-    countBorderCell(row, 0)
-    if (N > 1) countBorderCell(row, N - 1)
-  }
-
-  if (borderCounts.size === 0) return
-
-  let targetKey = ''
-  let maxCount = -1
-  borderCounts.forEach((count, key) => {
-    if (count > maxCount) {
-      maxCount = count
-      targetKey = key
-    }
-  })
-
-  const newPixelData = mappedPixelData.value.map(r => r.map(c => ({ ...c })))
-  const visited = Array(M).fill(null).map(() => Array(N).fill(false))
-  const stack = []
-
-  const pushIfTarget = (row, col) => {
-    if (row < 0 || row >= M || col < 0 || col >= N || visited[row][col]) return
-    const cell = newPixelData[row][col]
-    if (!cell || cell.isExternal || cell.key !== targetKey) return
-    visited[row][col] = true
-    stack.push({ row, col })
-  }
-
-  for (let col = 0; col < N; col++) {
-    pushIfTarget(0, col)
-    if (M > 1) pushIfTarget(M - 1, col)
-  }
-  for (let row = 1; row < M - 1; row++) {
-    pushIfTarget(row, 0)
-    if (N > 1) pushIfTarget(row, N - 1)
-  }
-
-  if (stack.length === 0) return
-
-  while (stack.length > 0) {
-    const { row, col } = stack.pop()
-    newPixelData[row][col] = { key: TRANSPARENT_KEY, color: '#FFFFFF', isExternal: true }
-    pushIfTarget(row - 1, col)
-    pushIfTarget(row + 1, col)
-    pushIfTarget(row, col - 1)
-    pushIfTarget(row, col + 1)
-  }
-
-  mappedPixelData.value = newPixelData
-  const stats = recalculateColorStats(newPixelData)
-  colorCounts.value = stats.colorCounts
-  totalBeadCount.value = stats.totalCount
+function handleFileChange(e: Event) {
+  const file = (e.target as HTMLInputElement)?.files?.[0]
+  if (file) fileIO.loadImage(file)
 }
 
-function handleUndoBgRemoval() {
-  if (!bgRemovalSnapshot.value) return
-  mappedPixelData.value = bgRemovalSnapshot.value.mappedPixelData
-  colorCounts.value = bgRemovalSnapshot.value.colorCounts
-  totalBeadCount.value = bgRemovalSnapshot.value.totalBeadCount
-  bgRemovalSnapshot.value = null
+async function handlePbdsFileChange(e: Event) {
+  const file = (e.target as HTMLInputElement)?.files?.[0]
+  if (!file) return
+  const result = await fileIO.loadPbds(file)
+  if (result) { pendingPbdsData.value = result; uiStore.showImportDialog = true }
 }
 
-// ========== 洪水填充擦除 ==========
-const isFloodFillEraseMode = ref(false)
+function handleImportConfirmFromDialog(data: any) { fileIO.handleImportConfirm(data); pendingPbdsData.value = null }
+function handleImportCancel() { uiStore.showImportDialog = false; pendingPbdsData.value = null }
+function handleCropConfirm(canvas: HTMLCanvasElement) { fileIO.handleCropConfirm(canvas); processImage() }
+function handleCropSkip() { fileIO.handleCropSkip(); processImage() }
+function handleGlobalClick(e: MouseEvent) { if (!(e.target as HTMLElement).closest('.relative')) uiStore.closeAllMenus() }
+function handlePaletteEditorSave(s: Record<string, boolean>) { paletteStore.updateSelections(s); uiStore.showPaletteEditor = false }
+function handlePaletteEditorClose() { uiStore.showPaletteEditor = false }
+function handlePaletteColorSelect(c: any) { pixelEditing.selectEditColor(c) }
+function handlePaletteColorReplace(s: any, t: any) { editorStore.saveSnapshot(beadStore.mappedPixelData || []); pixelEditing.performColorReplace(s, t); editorStore.resetColorReplaceState() }
 
-
-
-// ========== 悬浮调色盘 ==========
-const floatingPalette = ref({
-  x: 20,
-  y: 200,
-  isDragging: false,
-  dragOffsetX: 0,
-  dragOffsetY: 0,
-  collapsed: false,
-})
-
-// ========== 放大镜工具 ==========
-const isMagnifierActive = ref(false)
-const magnifierSelectionArea = ref(null) // { x1, y1, x2, y2 } in grid coords
-
-function toggleMagnifier() {
-  if (isMagnifierActive.value) {
-    exitMagnifierMode()
-  } else {
-    isMagnifierActive.value = true
-    magnifierSelectionArea.value = null
-    // 退出其他互斥编辑模式
-    isEraseMode.value = false
-    isFloodFillEraseMode.value = false
-    colorReplaceState.value.isActive = false
-    selectedEditColor.value = null
-  }
+function switchMode(mode: AppMode) {
+  if (activeMode.value === 'edit') editorStore.exitManualMode()
+  if (activeMode.value === 'focus') focusStore.stopTimer()
+  uiStore.switchMode(mode)
+  if (mode === 'focus') focusLogic.initFocusMode()
 }
 
-function exitMagnifierMode() {
-  isMagnifierActive.value = false
-  magnifierSelectionArea.value = null
-}
-
-function handleMagnifierSelection(area) {
-  magnifierSelectionArea.value = area
-}
-
-function handleMagnifierPixelEdit({ row, col, color }) {
-  if (!mappedPixelData.value || !gridDimensions.value) return
-  saveEditSnapshot()
-  const newData = mappedPixelData.value.map(r => r.map(c => ({ ...c })))
-  if (color === null) {
-    // 擦除像素
-    newData[row][col] = { key: TRANSPARENT_KEY, color: '#FFFFFF', isExternal: true }
-  } else {
-    newData[row][col] = {
-      key: color.key,
-      color: color.color,
-      isExternal: false,
-    }
-  }
-  mappedPixelData.value = newData
-  const stats = recalculateColorStats(newData)
-  colorCounts.value = stats.colorCounts
-  totalBeadCount.value = stats.totalCount
-}
-
-// ========== 自定义色板编辑器 ==========
-const showPaletteEditor = ref(false)
-
-function handlePaletteEditorSave(selections) {
-  customPaletteSelections.value = selections
-  showPaletteEditor.value = false
-}
-
-// ========== 设置面板 ==========
-const showSettingsPanel = ref(false)
-
-// ========== 打赏弹窗 ==========
-const showDonationModal = ref(false)
-
-// 下载选项
-const downloadOptions = ref<GridDownloadOptions>({
-  showGrid: true,
-  gridInterval: 10,
-  showCoordinates: true,
-  showCellNumbers: true,
-  gridLineColor: '#CCCCCC',
-  includeStats: true,
-  exportPbds: false,
-})
-
-// ========== 初始化色板选择 ==========
-onMounted(() => {
-  const allHexValues = fullBeadPalette.map(c => c.hex.toUpperCase())
-  const saved = loadPaletteSelections()
-  if (saved) {
-    // 验证
-    const valid = {}
-    let hasValid = false
-    Object.entries(saved).forEach(([key, value]) => {
-      if (/^#[0-9A-F]{6}$/i.test(key) && allHexValues.includes(key.toUpperCase())) {
-        valid[key.toUpperCase()] = value
-        hasValid = true
-      }
-    })
-    if (hasValid) {
-      customPaletteSelections.value = valid
-    } else {
-      initDefaultPalette(allHexValues)
-    }
-  } else {
-    initDefaultPalette(allHexValues)
-  }
-
-  // 全局点击关闭导入菜单
-  document.addEventListener('click', handleGlobalClick)
-})
-
-onUnmounted(() => {
-  document.removeEventListener('click', handleGlobalClick)
-})
-
-function handleGlobalClick(e: MouseEvent) {
-  const target = e.target as HTMLElement
-  if (!target.closest('.relative')) {
-    showImportMenu.value = false
-    showExportMenu.value = false
-  }
-}
-
-function initDefaultPalette(allHexValues) {
-  const selections = {}
-  allHexValues.forEach(hex => { selections[hex.toUpperCase()] = true })
-  customPaletteSelections.value = selections
-}
-
-// ========== 活跃调色板 ==========
-watch([customPaletteSelections, excludedColorKeys], () => {
-  const palette = fullBeadPalette.filter(color => {
-    const hex = color.hex.toUpperCase()
-    return customPaletteSelections.value[hex] && !excludedColorKeys.value.has(hex)
-  })
-  activeBeadPalette.value = palette
-}, { immediate: true })
-
-// ========== 网格颜色列表 ==========
+// 计算属性
 const currentGridColors = computed(() => {
   if (!mappedPixelData.value) return []
   const map = new Map()
@@ -408,1025 +168,95 @@ const currentGridColors = computed(() => {
       if (!map.has(hex)) map.set(hex, { key: cell.key, color: cell.color })
     }
   })
-  return sortColorsByHue(
-    Array.from(map.values()).map(c => ({
-      key: getColorKeyByHex(c.color, selectedColorSystem.value),
-      color: c.color,
-    }))
-  )
+  return sortColorsByHue(Array.from(map.values()).map(c => ({ key: getColorKeyByHex(c.color, selectedColorSystem.value), color: c.color })))
 })
 
-// ========== 输入同步 ==========
-watch(granularity, v => {
-  granularityInput.value = v.toString()
-  // 锁定比例时自动计算高度
-  if (lockAspectRatio.value) {
-    const src = croppedImageCanvas.value || originalImage.value
-    if (src) {
-      const aspectRatio = ('height' in src ? src.height : (src as HTMLCanvasElement).height) / ('width' in src ? src.width : (src as HTMLCanvasElement).width)
-      const newY = Math.max(1, Math.round(v * aspectRatio))
-      granularityY.value = newY
-      granularityYInput.value = newY.toString()
-    }
-  }
-})
-watch(granularityY, v => { granularityYInput.value = v.toString() })
-watch(similarityThreshold, v => { similarityThresholdInput.value = v.toString() })
-
-// ========== 图片上传 ==========
-const fileInput = ref(null)
-
-function triggerFileInput() {
-  showImportMenu.value = false
-  fileInput.value?.click()
-}
-
-function triggerPbdsInput() {
-  showImportMenu.value = false
-  pbdsFileInput.value?.click()
-}
-
-function handleFileDrop(e) {
-  e.preventDefault()
-  const file = e.dataTransfer?.files?.[0]
-  if (!file) return
-  if (file.name.toLowerCase().endsWith('.pbds')) {
-    loadPbds(file)
-  } else if (file.type.startsWith('image/')) {
-    loadImage(file)
-  }
-}
-
-function handleFileChange(e) {
-  const file = e.target?.files?.[0]
-  if (!file) return
-  loadImage(file)
-}
-
-function handlePbdsFileChange(e) {
-  const file = e.target?.files?.[0]
-  if (!file) return
-  loadPbds(file)
-}
-
-async function loadPbds(file: File) {
-  try {
-    const result = await importPbds(file)
-    pendingPbdsData.value = result
-    showImportDialog.value = true
-  } catch (error) {
-    console.error('PBDS导入失败:', error)
-    alert(`PBDS导入失败：${error}`)
-  }
-}
-
-function handleImportConfirm(data: { mappedPixelData: MappedPixel[][]; gridDimensions: GridDimensions; colorSystem: ColorSystem }) {
-  mappedPixelData.value = data.mappedPixelData
-  gridDimensions.value = data.gridDimensions
-  selectedColorSystem.value = data.colorSystem
-  originalImageSrc.value = null
-  originalImage.value = null
-  bgRemovalSnapshot.value = null
-
-  const stats = recalculateColorStats(data.mappedPixelData)
-  colorCounts.value = stats.colorCounts
-  totalBeadCount.value = stats.totalCount
-
-  editHistory.value = []
-  editHistoryIndex.value = -1
-  saveEditSnapshot()
-
-  granularity.value = data.gridDimensions.N
-  granularityInput.value = data.gridDimensions.N.toString()
-
-  showImportDialog.value = false
-  pendingPbdsData.value = null
-  showToast('导入成功')
-
-  // 居中显示
-  nextTick(() => {
-    const container = canvasContainer.value
-    const canvas = previewCanvas.value
-    if (container && canvas) {
-      canvasTranslate.value = calculateCenterOffset(
-        container.clientWidth,
-        container.clientHeight,
-        canvas.width,
-        canvas.height
-      )
-    }
-  })
-}
-
-function handleImportCancel() {
-  showImportDialog.value = false
-  pendingPbdsData.value = null
-}
-
-function loadImage(file: File) {
-  const reader = new FileReader()
-  reader.onload = (e) => {
-    originalImageSrc.value = e.target?.result as string
-    bgRemovalSnapshot.value = null
-    croppedImageCanvas.value = null
-    granularityY.value = 0
-    granularityYInput.value = '0'
-    const img = new Image()
-    img.onload = () => {
-      originalImage.value = img
-      // 显示裁剪界面
-      showCropper.value = true
-    }
-    img.src = e.target?.result as string
-  }
-  reader.readAsDataURL(file)
-}
-
-// ========== 裁剪回调 ==========
-function handleCropConfirm(canvas: HTMLCanvasElement) {
-  croppedImageCanvas.value = canvas
-  showCropper.value = false
-  // 设置高度粒度为裁剪区域的等比例默认值
-  const aspectRatio = canvas.height / canvas.width
-  const defaultY = Math.max(1, Math.round(granularity.value * aspectRatio))
-  granularityY.value = defaultY
-  granularityYInput.value = defaultY.toString()
-  processImage()
-}
-
-function handleCropSkip() {
-  croppedImageCanvas.value = null
-  showCropper.value = false
-  granularityY.value = 0
-  granularityYInput.value = '0'
-  processImage()
-}
-
-// ========== 核心处理 ==========
-async function processImage() {
-  if (!originalImage.value && !croppedImageCanvas.value) return
-  isProcessing.value = true
-  processingProgress.value = null
-
-  try {
-    const N = granularity.value
-    let sourceCanvas: HTMLCanvasElement
-    let imgWidth: number
-    let imgHeight: number
-
-    if (croppedImageCanvas.value) {
-      // 使用裁剪后的 canvas
-      sourceCanvas = croppedImageCanvas.value
-      imgWidth = sourceCanvas.width
-      imgHeight = sourceCanvas.height
-    } else {
-      // 使用原图
-      const img = originalImage.value!
-      imgWidth = img.width
-      imgHeight = img.height
-      sourceCanvas = document.createElement('canvas')
-      sourceCanvas.width = imgWidth
-      sourceCanvas.height = imgHeight
-      const ctx = sourceCanvas.getContext('2d')!
-      ctx.drawImage(img, 0, 0)
-    }
-
-    // 计算 M：裁剪模式下使用独立值，否则根据比例自动计算
-    let M: number
-    if (croppedImageCanvas.value && granularityY.value > 0) {
-      M = granularityY.value
-    } else {
-      const aspectRatio = imgHeight / imgWidth
-      M = Math.max(1, Math.round(N * aspectRatio))
-    }
-
-    const ctx = sourceCanvas.getContext('2d')!
-    const imageData = ctx.getImageData(0, 0, imgWidth, imgHeight)
-
-    // 像素化 — 传入原始 MARD 调色板（hex key），不进行色号系统转换
-    // 回退颜色：T1 key → 任意白色 hex → 第一个调色板颜色
-    const palette = toRaw(activeBeadPalette.value)
-    const fallbackColor = palette.find(p => p.key === 'T1')
-      || palette.find(p => p.hex.toUpperCase() === '#FFFFFF')
-      || palette[0]
-      || { key: '?', hex: '#000000', rgb: { r: 0, g: 0, b: 0 } }
-
-    // 在 Worker 中处理
-    const result = await processImageInWorker(
-      {
-        imageData,
-        imgWidth,
-        imgHeight,
-        N,
-        M,
-        palette,
-        mode: pixelationMode.value,
-        threshold: similarityThreshold.value,
-        fallbackColor: toRaw(fallbackColor)
-      },
-      (progress) => {
-        processingProgress.value = progress
-      }
-    )
-
-    // 更新状态
-    mappedPixelData.value = result
-    gridDimensions.value = { N, M }
-
-    // 统计
-    const stats = recalculateColorStats(result)
-    colorCounts.value = stats.colorCounts
-    totalBeadCount.value = stats.totalCount
-
-    // 初始化编辑历史
-    editHistory.value = []
-    editHistoryIndex.value = -1
-    saveEditSnapshot()
-
-    // 居中显示
-    nextTick(() => {
-      const container = canvasContainer.value
-      const canvas = previewCanvas.value
-      if (container && canvas) {
-        canvasTranslate.value = calculateCenterOffset(
-          container.clientWidth,
-          container.clientHeight,
-          canvas.width,
-          canvas.height
-        )
-      }
-    })
-  } catch (err) {
-    if (err instanceof Error && err.message === 'Processing cancelled') {
-      console.log('处理已取消')
-    } else {
-      console.error('处理失败:', err)
-    }
-  } finally {
-    isProcessing.value = false
-    processingProgress.value = null
-  }
-}
-
-// 重新处理
-watch([granularity, granularityY, similarityThreshold, pixelationMode, activeBeadPalette], () => {
-  bgRemovalSnapshot.value = null
-  if (originalImage.value || croppedImageCanvas.value) processImage()
-})
-
-// ========== 手动编辑 ==========
-// 使用 composable 管理手动编辑状态
-const {
-  isManualColoringMode,
-  selectedColor,
-  isEraseMode,
-  colorReplaceState,
-  highlightColorKey,
-  enterManualMode,
-  exitManualMode: exitManualModeBase,
-  toggleEraseMode,
-  toggleColorReplaceMode,
-  selectColor,
-  selectSourceColorFromCanvas,
-  completeColorReplace,
-  setHighlight,
-  clearHighlight,
-} = useManualEditingState()
-
-// 别名：保持模板兼容性
-const selectedEditColor = selectedColor
-
-// 扩展退出手动编辑模式（额外清理 App.vue 专有状态）
-function exitManualMode() {
-  exitManualModeBase()
-  isFloodFillEraseMode.value = false
-  isMagnifierActive.value = false
-  magnifierSelectionArea.value = null
-}
-
-// 委托到 composable
-function selectEditColor(color) {
-  selectColor(color)
-}
-
-// 使用像素编辑操作 composable
-const {
-  performFloodFillErase,
-  performColorReplace,
-  performSinglePixelPaint,
-} = usePixelEditingOperations({
-  mappedPixelData,
-  gridDimensions,
-  colorCounts,
-  totalBeadCount,
-  onPixelDataChange: (newData) => { mappedPixelData.value = newData },
-  onColorCountsChange: (newCounts) => { colorCounts.value = newCounts },
-  onTotalCountChange: (newCount) => { totalBeadCount.value = newCount },
-})
-
-// 色板展开状态（用于 ColorPalette 组件）
-const showFullPalette = ref(false)
-
-// ColorPalette 颜色选择事件处理
-function handlePaletteColorSelect(colorData) {
-  selectEditColor(colorData)
-}
-
-// ColorPalette 颜色替换事件处理
-function handlePaletteColorReplace(sourceColor, targetColor) {
-  saveEditSnapshot()
-  performColorReplace(sourceColor, targetColor)
-  completeColorReplace()
-}
-
-function handleCanvasClick(e) {
-  if (!mappedPixelData.value || !gridDimensions.value) return
-  if (!isManualColoringMode.value) return
-  if (isDragging.value) return
-
-  const canvas = e.target
-  const coords = clientToGridCoords(e.clientX, e.clientY, canvas, gridDimensions.value)
-  if (!coords) return
-
-  const { i: col, j: row } = coords
-  const cell = mappedPixelData.value[row][col]
-  if (!cell || cell.isExternal) return
-
-  // 洪水填充擦除模式
-  if (isFloodFillEraseMode.value) {
-    handleFloodFillErase(row, col)
-    return
-  }
-
-  // 颜色批量替换模式
-  if (colorReplaceState.value.isActive) {
-    handleColorReplaceClick(row, col)
-    return
-  }
-
-  if (isEraseMode.value) {
-    saveEditSnapshot()
-    performSinglePixelPaint(row, col, { key: TRANSPARENT_KEY, color: '#FFFFFF', isExternal: true })
-  } else if (selectedEditColor.value) {
-    saveEditSnapshot()
-    performSinglePixelPaint(row, col, {
-      key: selectedEditColor.value.key,
-      color: selectedEditColor.value.color,
-      isExternal: false,
-    })
-  } else {
-    // 吸管: 选中当前颜色
-    const hex = cell.color.toUpperCase()
-    selectedEditColor.value = { key: getColorKeyByHex(hex, selectedColorSystem.value), color: cell.color }
-  }
-}
-
-function handleCanvasHover(e) {
-  if (!mappedPixelData.value || !gridDimensions.value) return
-  if (isDragging.value) return
-  const canvas = e.target
-  const coords = clientToGridCoords(e.clientX, e.clientY, canvas, gridDimensions.value)
-
-  if (coords) {
-    const { i: col, j: row } = coords
-    const cell = mappedPixelData.value[row][col]
-    if (cell && !cell.isExternal) {
-      const displayKey = getColorKeyByHex(cell.color, selectedColorSystem.value)
-      const rect = canvas.getBoundingClientRect()
-      tooltipData.value = {
-        x: e.clientX - rect.left + 15,
-        y: e.clientY - rect.top - 10,
-        key: displayKey,
-        color: cell.color,
-        row: row + 1,
-        col: col + 1,
-      }
-      return
-    }
-  }
-  tooltipData.value = null
-}
-
-function handleCanvasLeave() {
-  tooltipData.value = null
-}
-
-// ========== 撤销/重做 ==========
-function saveEditSnapshot() {
-  // 截断当前位置之后的历史（如果有）
-  if (editHistoryIndex.value < editHistory.value.length - 1) {
-    editHistory.value = editHistory.value.slice(0, editHistoryIndex.value + 1)
-  }
-  // 保存当前快照
-  const snapshot = mappedPixelData.value.map(r => r.map(c => ({ ...c })))
-  editHistory.value.push(snapshot)
-  // 限制最大步数
-  if (editHistory.value.length > MAX_HISTORY) {
-    editHistory.value.shift()
-  }
-  editHistoryIndex.value = editHistory.value.length - 1
-}
-
-function undoEdit() {
-  if (editHistoryIndex.value < 0) return
-  const snapshot = editHistory.value[editHistoryIndex.value]
-  mappedPixelData.value = snapshot.map(r => r.map(c => ({ ...c })))
-  editHistoryIndex.value--
-  const stats = recalculateColorStats(mappedPixelData.value)
-  colorCounts.value = stats.colorCounts
-  totalBeadCount.value = stats.totalCount
-  showToast('已撤回上一步')
-}
-
-function redoEdit() {
-  if (editHistoryIndex.value >= editHistory.value.length - 1) return
-  editHistoryIndex.value++
-  const snapshot = editHistory.value[editHistoryIndex.value]
-  mappedPixelData.value = snapshot.map(r => r.map(c => ({ ...c })))
-  const stats = recalculateColorStats(mappedPixelData.value)
-  colorCounts.value = stats.colorCounts
-  totalBeadCount.value = stats.totalCount
-  showToast('已重做上一步')
-}
-
-// ========== 洪水填充擦除模式 ==========
-function enterFloodFillEraseMode() {
-  isFloodFillEraseMode.value = true
-  // 退出其他互斥模式
-  isEraseMode.value = false
-  selectedEditColor.value = null
-  colorReplaceState.value.isActive = false
-  colorReplaceState.value.step = 'select-source'
-  colorReplaceState.value.sourceColor = null
-}
-
-function exitFloodFillEraseMode() {
-  isFloodFillEraseMode.value = false
-}
-
-// ========== 颜色批量替换模式 ==========
-function enterColorReplaceMode() {
-  colorReplaceState.value.isActive = true
-  colorReplaceState.value.step = 'select-source'
-  colorReplaceState.value.sourceColor = null
-  // 退出其他互斥模式
-  isEraseMode.value = false
-  isFloodFillEraseMode.value = false
-  selectedEditColor.value = null
-}
-
-function exitColorReplaceMode() {
-  colorReplaceState.value.isActive = false
-  colorReplaceState.value.step = 'select-source'
-  colorReplaceState.value.sourceColor = null
-}
-
-function handleFloodFillErase(row, col) {
-  if (!mappedPixelData.value || !gridDimensions.value) return
-  const cell = mappedPixelData.value[row]?.[col]
-  if (!cell || cell.isExternal) return
-
-  // 保存编辑快照
-  saveEditSnapshot()
-
-  performFloodFillErase(row, col, cell.key)
-}
-
-function handleColorReplaceClick(row, col) {
-  if (!mappedPixelData.value || !gridDimensions.value) return
-  const cell = mappedPixelData.value[row]?.[col]
-  if (!cell || cell.isExternal) return
-
-  if (colorReplaceState.value.step === 'select-source') {
-    // 第一步：选择源颜色
-    colorReplaceState.value.sourceColor = {
-      hex: cell.color.toUpperCase(),
-      key: getColorKeyByHex(cell.color.toUpperCase(), selectedColorSystem.value),
-    }
-    colorReplaceState.value.step = 'select-target'
-  } else if (colorReplaceState.value.step === 'select-target') {
-    // 第二步：选择目标颜色并执行替换
-    const targetHex = cell.color.toUpperCase()
-    const targetKey = getColorKeyByHex(targetHex, selectedColorSystem.value)
-    const sourceHex = colorReplaceState.value.sourceColor.hex
-
-    if (sourceHex === targetHex) {
-      // 源色和目标色相同，不替换
-      exitColorReplaceMode()
-      return
-    }
-
-    // 保存编辑快照
-    saveEditSnapshot()
-
-    const sourceColor = { key: colorReplaceState.value.sourceColor.key, color: colorReplaceState.value.sourceColor.hex }
-    const targetColor = { key: targetKey, color: targetHex }
-    performColorReplace(sourceColor, targetColor)
-    exitColorReplaceMode()
-  }
-}
-
-// ========== 色板编辑器关闭 ==========
-function handlePaletteEditorClose() {
-  showPaletteEditor.value = false
-}
-
-// ========== 悬浮调色盘拖拽 ==========
-function onPaletteHeaderMouseDown(e) {
-  e.preventDefault()
-  floatingPalette.value.isDragging = true
-  floatingPalette.value.dragOffsetX = e.clientX - floatingPalette.value.x
-  floatingPalette.value.dragOffsetY = e.clientY - floatingPalette.value.y
-  document.addEventListener('mousemove', onPaletteMouseMove)
-  document.addEventListener('mouseup', onPaletteMouseUp)
-}
-
-function onPaletteMouseMove(e) {
-  if (!floatingPalette.value.isDragging) return
-  floatingPalette.value.x = e.clientX - floatingPalette.value.dragOffsetX
-  floatingPalette.value.y = e.clientY - floatingPalette.value.dragOffsetY
-}
-
-function onPaletteMouseUp() {
-  floatingPalette.value.isDragging = false
-  document.removeEventListener('mousemove', onPaletteMouseMove)
-  document.removeEventListener('mouseup', onPaletteMouseUp)
-}
-
-function togglePaletteCollapse() {
-  floatingPalette.value.collapsed = !floatingPalette.value.collapsed
-}
-
-// ========== 键盘快捷键 ==========
-onMounted(() => {
-  window.addEventListener('keydown', handleKeyDown)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('keydown', handleKeyDown)
-})
-
-function handleKeyDown(e) {
-  // Ctrl+Z 撤销
-  if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
-    e.preventDefault()
-    undoEdit()
-  }
-  // Ctrl+Shift+Z 或 Ctrl+Y 重做
-  if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
-    e.preventDefault()
-    redoEdit()
-  }
-  // Escape 退出当前模式
-  if (e.key === 'Escape') {
-    if (colorReplaceState.value.isActive) {
-      exitColorReplaceMode()
-    } else if (isFloodFillEraseMode.value) {
-      exitFloodFillEraseMode()
-    } else if (isMagnifierActive.value) {
-      exitMagnifierMode()
-    }
-  }
-}
-
-// ========== 色号系统切换 ==========
-watch(selectedColorSystem, () => {
-  if (originalImage.value) processImage()
-})
-
-// ========== 拼豆模式逻辑 ==========
-function initFocusMode() {
-  if (!mappedPixelData.value || !colorCounts.value) return
-  const colors = Object.entries(colorCounts.value).map(([, data]) => ({
-    color: data.color,
-    name: getColorKeyByHex(data.color, selectedColorSystem.value),
-    total: data.count,
-    completed: 0,
-  }))
-  availableColors.value = colors
-  if (colors.length > 0) {
-    currentColor.value = colors[0].color
-    const progress: Record<string, { completed: number; total: number }> = {}
-    colors.forEach(c => { progress[c.color] = { completed: 0, total: c.total } })
-    colorProgress.value = progress
-  }
-  completedCells.value = new Set()
-  selectedCell.value = null
-  canvasScale.value = 1
-  canvasOffset.value = { x: 0, y: 0 }
-  startTimer()
-}
-
-function startTimer() {
-  stopTimer()
-  isPaused.value = false
-  lastResumeTime.value = Date.now()
-  totalElapsedTime.value = 0
-  timerInterval = setInterval(() => {
-    if (!isPaused.value) {
-      const now = Date.now()
-      const elapsed = Math.floor((now - lastResumeTime.value) / 1000)
-      if (elapsed > 0) {
-        totalElapsedTime.value += elapsed
-        lastResumeTime.value = now
-      }
-    }
-  }, 1000)
-}
-
-function stopTimer() {
-  if (timerInterval) {
-    clearInterval(timerInterval)
-    timerInterval = null
-  }
-}
-
-function handlePauseToggle() {
-  if (isPaused.value) {
-    isPaused.value = false
-    lastResumeTime.value = Date.now()
-  } else {
-    const now = Date.now()
-    totalElapsedTime.value += Math.floor((now - lastResumeTime.value) / 1000)
-    isPaused.value = true
-  }
-}
-
-function formatTime(seconds: number): string {
-  const hours = Math.floor(seconds / 3600)
-  const minutes = Math.floor((seconds % 3600) / 60)
-  const secs = seconds % 60
-  if (hours > 0) return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
-  return `${minutes}:${secs.toString().padStart(2, '0')}`
-}
-
-const calculateRecommendedRegion = computed(() => {
-  if (!mappedPixelData.value || !currentColor.value) return { region: null, cell: null }
-  const allRegions = getAllConnectedRegions(mappedPixelData.value, currentColor.value)
-  const incomplete = allRegions.filter(r => !isRegionCompleted(r, completedCells.value))
-  if (incomplete.length === 0) return { region: null, cell: null }
-  let selected: Array<{ row: number; col: number }>
-  switch (guidanceMode.value) {
-    case 'nearest': {
-      const ref = selectedCell.value ?? { row: Math.floor(mappedPixelData.value.length / 2), col: Math.floor(mappedPixelData.value[0].length / 2) }
-      selected = sortRegionsByDistance(incomplete, ref)[0]
-      break
-    }
-    case 'largest':
-      selected = sortRegionsBySize(incomplete)[0]
-      break
-    case 'edge-first': {
-      const M = mappedPixelData.value.length
-      const N = mappedPixelData.value[0].length
-      const edge = incomplete.filter(r => r.some(c => c.row === 0 || c.row === M - 1 || c.col === 0 || c.col === N - 1))
-      selected = edge.length > 0 ? edge[0] : incomplete[0]
-      break
-    }
-    default:
-      selected = incomplete[0]
-  }
-  return { region: selected, cell: getRegionCenter(selected) }
-})
-
-watch(calculateRecommendedRegion, val => {
-  recommendedRegion.value = val.region
-  recommendedCell.value = val.cell
-})
-
-const currentColorInfo = computed(() => availableColors.value.find(c => c.color === currentColor.value))
-const progressPercentage = computed(() => currentColorInfo.value ? Math.round((currentColorInfo.value.completed / currentColorInfo.value.total) * 100) : 0)
-const elapsedTime = computed(() => formatTime(totalElapsedTime.value))
-const guidanceModeLabel = computed(() => ({ nearest: '最近优先', largest: '最大优先', 'edge-first': '边缘优先' }[guidanceMode.value] || guidanceMode.value))
-
-function cycleGuidanceMode() {
-  const modes = ['nearest', 'largest', 'edge-first'] as const
-  guidanceMode.value = modes[(modes.indexOf(guidanceMode.value) + 1) % modes.length]
-}
-
-function handleCellClick(row: number, col: number) {
-  if (!mappedPixelData.value) return
-  const cellColor = mappedPixelData.value[row][col].color
-  if (cellColor !== currentColor.value) return
-  const region = getConnectedRegion(mappedPixelData.value, row, col, currentColor.value)
-  if (region.length === 0) return
-  const newSet = new Set(completedCells.value)
-  const done = isRegionCompleted(region, completedCells.value)
-  region.forEach(({ row: r, col: c }) => {
-    const key = `${r},${c}`
-    done ? newSet.delete(key) : newSet.add(key)
-  })
-  const newProgress = { ...colorProgress.value }
-  if (newProgress[currentColor.value]) {
-    newProgress[currentColor.value] = {
-      ...newProgress[currentColor.value],
-      completed: Array.from(newSet).filter(k => {
-        const [r, c] = k.split(',').map(Number)
-        return mappedPixelData.value![r]?.[c]?.color === currentColor.value
-      }).length,
-    }
-  }
-  completedCells.value = newSet
-  selectedCell.value = { row, col }
-  colorProgress.value = newProgress
-  availableColors.value = availableColors.value.map(c =>
-    c.color === currentColor.value ? { ...c, completed: newProgress[currentColor.value]?.completed || 0 } : c
-  )
-  if (newProgress[currentColor.value]?.completed >= newProgress[currentColor.value]?.total) {
-    switchToNextIncompleteColor()
-  }
-}
-
-function switchToNextIncompleteColor() {
-  const idx = availableColors.value.findIndex(c => c.color === currentColor.value)
-  if (idx === -1) return
-  for (let i = 1; i <= availableColors.value.length; i++) {
-    const next = availableColors.value[(idx + i) % availableColors.value.length]
-    if (next.completed < next.total) {
-      currentColor.value = next.color
-      return
-    }
-  }
-}
-
-function handleFocusColorChange(color: string) {
-  currentColor.value = color
-  showColorPanel.value = false
-}
-
-function handleLocateRecommended() {
-  if (!recommendedCell.value || !gridDimensions.value) return
-  const { row, col } = recommendedCell.value
-  const cellSize = Math.max(15, Math.min(40, 300 / Math.max(gridDimensions.value.N, gridDimensions.value.M)))
-  const cx = (col + 0.5) * cellSize
-  const cy = (row + 0.5) * cellSize
-  canvasOffset.value = { x: gridDimensions.value.N * cellSize / 2 - cx, y: gridDimensions.value.M * cellSize / 2 - cy }
-}
-
-// ========== 模式切换 ==========
-function switchMode(mode: AppMode) {
-  if (activeMode.value === 'edit') exitManualMode()
-  if (activeMode.value === 'focus') stopTimer()
-  activeMode.value = mode
-  if (mode === 'focus') initFocusMode()
-}
-
-onUnmounted(() => { stopTimer() })
-
-// ========== 颜色排除 ==========
-const showExcludedColors = ref(false)
-
-function toggleExcludeColor(hex) {
-  const newSet = new Set(excludedColorKeys.value)
-  if (newSet.has(hex)) {
-    newSet.delete(hex)
-  } else {
-    newSet.add(hex)
-  }
-  excludedColorKeys.value = newSet
-}
-
-function restoreAllExcludedColors() {
-  const count = excludedColorKeys.value.size
-  excludedColorKeys.value = new Set()
-  showExcludedColors.value = false
-  if (count > 0) showToast(`已恢复 ${count} 种颜色`)
-}
-
-// ========== 保存色板到 localStorage ==========
-watch(customPaletteSelections, (val) => {
-  savePaletteSelections(val)
-}, { deep: true })
-
-// ========== 可见行列计算 ==========
 const visibleColumns = computed(() => {
   if (!gridDimensions.value || !canvasContainer.value) return []
-  return calculateVisibleColumns(
-    gridDimensions.value.N,
-    canvasContainer.value.clientWidth,
-    canvasTranslate.value.x,
-    canvasZoom.value
-  )
+  return calculateVisibleColumns(gridDimensions.value.N, canvasContainer.value.clientWidth, canvasTranslate.value.x, canvasZoom.value)
 })
 
 const visibleRows = computed(() => {
   if (!gridDimensions.value || !canvasContainer.value) return []
-  return calculateVisibleRows(
-    gridDimensions.value.M,
-    canvasContainer.value.clientHeight,
-    canvasTranslate.value.y,
-    canvasZoom.value
-  )
+  return calculateVisibleRows(gridDimensions.value.M, canvasContainer.value.clientHeight, canvasTranslate.value.y, canvasZoom.value)
 })
 
-// ========== Canvas 缩放和拖动控制 ==========
-function handleCanvasWheel(e: WheelEvent) {
-  e.preventDefault()
-  
-  const container = canvasContainer.value
-  if (!container) return
-  
-  const containerRect = container.getBoundingClientRect()
-  
-  // 鼠标相对于 canvas 区域的位置（减去坐标轴偏移）
-  const mouseInCanvasAreaX = e.clientX - containerRect.left - AXIS_WIDTH
-  const mouseInCanvasAreaY = e.clientY - containerRect.top - AXIS_HEIGHT
-  
-  // 鼠标指向的 canvas 坐标
-  const canvasPointX = (mouseInCanvasAreaX - canvasTranslate.value.x) / canvasZoom.value
-  const canvasPointY = (mouseInCanvasAreaY - canvasTranslate.value.y) / canvasZoom.value
-  
-  const oldZoom = canvasZoom.value
-  const delta = e.deltaY > 0 ? -0.1 : 0.1
-  const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, oldZoom + delta))
-  
-  // 缩放后保持鼠标指向的 canvas 坐标不变
-  canvasTranslate.value = {
-    x: mouseInCanvasAreaX - canvasPointX * newZoom,
-    y: mouseInCanvasAreaY - canvasPointY * newZoom
+// Canvas 交互
+function handleCanvasClick(e: MouseEvent) {
+  if (!mappedPixelData.value || !gridDimensions.value || !isManualColoringMode.value || isDragging.value) return
+  const canvas = e.target as HTMLCanvasElement
+  const coords = clientToGridCoords(e.clientX, e.clientY, canvas, gridDimensions.value)
+  if (!coords) return
+  const { i: col, j: row } = coords
+  const cell = mappedPixelData.value[row][col]
+  if (!cell || cell.isExternal) return
+  if (isFloodFillEraseMode.value) { pixelEditing.handleFloodFillErase(row, col); return }
+  if (colorReplaceState.value.isActive) { pixelEditing.handleColorReplaceClick(row, col); return }
+  if (isEraseMode.value) { editorStore.saveSnapshot(mappedPixelData.value); pixelEditing.performSinglePixelPaint(row, col, { key: TRANSPARENT_KEY, color: '#FFFFFF', isExternal: true }) }
+  else if (selectedEditColor.value) { editorStore.saveSnapshot(mappedPixelData.value); pixelEditing.performSinglePixelPaint(row, col, { key: selectedEditColor.value.key, color: selectedEditColor.value.color, isExternal: false }) }
+  else { const hex = cell.color.toUpperCase(); pixelEditing.selectEditColor({ key: getColorKeyByHex(hex, selectedColorSystem.value), color: cell.color }) }
+}
+
+function handleCanvasHover(e: MouseEvent) {
+  if (!mappedPixelData.value || !gridDimensions.value || isDragging.value) return
+  const canvas = e.target as HTMLCanvasElement
+  const coords = clientToGridCoords(e.clientX, e.clientY, canvas, gridDimensions.value)
+  if (coords) {
+    const { i: col, j: row } = coords
+    const cell = mappedPixelData.value[row][col]
+    if (cell && !cell.isExternal) {
+      const rect = canvas.getBoundingClientRect()
+      canvasStore.setTooltip({ x: e.clientX - rect.left + 15, y: e.clientY - rect.top - 10, key: getColorKeyByHex(cell.color, selectedColorSystem.value), color: cell.color, row: row + 1, col: col + 1 })
+      return
+    }
   }
-  
-  canvasZoom.value = newZoom
+  canvasStore.clearTooltip()
 }
 
-function handleCanvasDragStart(e: MouseEvent) {
-  // 编辑模式下需要按住 Shift 键才能拖动
-  if (activeMode.value === 'edit' && !e.shiftKey) return
-  if (activeMode.value === 'focus') return
-  
-  const container = canvasContainer.value
-  if (!container) return
-  
-  const containerRect = container.getBoundingClientRect()
-  
-  // 记录拖动起始点（相对于 canvas 区域的位置）
-  isDragging.value = true
-  dragStart.value = { 
-    x: e.clientX - containerRect.left - AXIS_WIDTH - canvasTranslate.value.x, 
-    y: e.clientY - containerRect.top - AXIS_HEIGHT - canvasTranslate.value.y 
-  }
-}
-
-function handleCanvasDragMove(e: MouseEvent) {
-  if (!isDragging.value) return
-  
-  const container = canvasContainer.value
-  if (!container) return
-  
-  const containerRect = container.getBoundingClientRect()
-  
-  // 当前鼠标位置（相对于 canvas 区域）
-  const mouseX = e.clientX - containerRect.left - AXIS_WIDTH
-  const mouseY = e.clientY - containerRect.top - AXIS_HEIGHT
-  
-  // 更新平移：鼠标位置 - 拖动偏移
-  canvasTranslate.value = {
-    x: mouseX - dragStart.value.x,
-    y: mouseY - dragStart.value.y
-  }
-}
-
-function handleCanvasDragEnd() {
-  isDragging.value = false
-}
-
-function resetCanvasView() {
-  canvasZoom.value = 1
-  const container = canvasContainer.value
-  const canvas = previewCanvas.value
-  if (container && canvas) {
-    canvasTranslate.value = calculateCenterOffset(
-      container.clientWidth,
-      container.clientHeight,
-      canvas.width,
-      canvas.height
-    )
-  } else {
-    canvasTranslate.value = { x: 0, y: 0 }
-  }
-}
-
-// ========== 画布渲染 ==========
+// 画布渲染
 function renderCanvas() {
   const canvas = previewCanvas.value
   if (!canvas || !mappedPixelData.value || !gridDimensions.value) return
-
   const { N, M } = gridDimensions.value
-  canvas.width = N * CELL_SIZE
-  canvas.height = M * CELL_SIZE
-  const ctx = canvas.getContext('2d')
-  ctx.imageSmoothingEnabled = false
-
-  // 清空画布（透明背景）
+  canvas.width = N * CELL_SIZE; canvas.height = M * CELL_SIZE
+  const ctx = canvas.getContext('2d'); ctx.imageSmoothingEnabled = false
   ctx.clearRect(0, 0, canvas.width, canvas.height)
-
-  let extCount = 0
-  let colorCount = 0
-  let sampleColors = []
-
-  for (let j = 0; j < M; j++) {
-    for (let i = 0; i < N; i++) {
-      const cell = mappedPixelData.value[j]?.[i]
-      if (!cell) continue
-
-      const x = i * CELL_SIZE
-      const y = j * CELL_SIZE
-
-      if (cell.isExternal) {
-        // 外部区域透明，显示 CSS 背景
-        ctx.clearRect(x, y, CELL_SIZE, CELL_SIZE)
-        extCount++
-        continue  // 跳过网格线绘制
-      } else {
-        ctx.fillStyle = cell.color
-        colorCount++
-        if (sampleColors.length < 3) sampleColors.push(cell.color)
-      }
-      ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE)
-
-      // 网格线
-      ctx.strokeStyle = 'rgba(0,0,0,0.08)'
-      ctx.lineWidth = 0.5
-      ctx.strokeRect(x, y, CELL_SIZE, CELL_SIZE)
-    }
+  for (let j = 0; j < M; j++) for (let i = 0; i < N; i++) {
+    const cell = mappedPixelData.value[j]?.[i]; if (!cell) continue
+    const x = i * CELL_SIZE, y = j * CELL_SIZE
+    if (cell.isExternal) { ctx.clearRect(x, y, CELL_SIZE, CELL_SIZE); continue }
+    ctx.fillStyle = cell.color; ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE)
+    ctx.strokeStyle = 'rgba(0,0,0,0.08)'; ctx.lineWidth = 0.5; ctx.strokeRect(x, y, CELL_SIZE, CELL_SIZE)
   }
-
-  // 高亮当前颜色
   if (highlightColorKey.value) {
     ctx.fillStyle = 'rgba(255, 255, 0, 0.3)'
-    for (let j = 0; j < M; j++) {
-      for (let i = 0; i < N; i++) {
-        const cell = mappedPixelData.value[j]?.[i]
-        if (cell && !cell.isExternal && cell.color.toUpperCase() === highlightColorKey.value.toUpperCase()) {
-          ctx.fillRect(i * CELL_SIZE, j * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-        }
-      }
+    for (let j = 0; j < M; j++) for (let i = 0; i < N; i++) {
+      const cell = mappedPixelData.value[j]?.[i]
+      if (cell && !cell.isExternal && cell.color.toUpperCase() === highlightColorKey.value.toUpperCase())
+        ctx.fillRect(i * CELL_SIZE, j * CELL_SIZE, CELL_SIZE, CELL_SIZE)
     }
   }
 }
 
-watch([mappedPixelData, highlightColorKey], () => {
-  renderCanvas()
-}, { flush: 'post' })
+// Watch
+watch([mappedPixelData, highlightColorKey], () => renderCanvas(), { flush: 'post' })
+watch(isProcessing, () => { if (!isProcessing.value) renderCanvas() })
+watch(originalImageSrc, () => { if (!originalImageSrc.value) renderCanvas() })
+watch(granularity, v => { beadStore.granularityInput = v.toString(); if (lockAspectRatio.value) { const src = croppedImageCanvas.value || beadStore.originalImage; if (src) { const r = ('height' in src ? src.height : (src as HTMLCanvasElement).height) / ('width' in src ? src.width : (src as HTMLCanvasElement).width); beadStore.updateGranularityY(Math.max(1, Math.round(v * r))) } } })
+watch(granularityY, v => { beadStore.granularityYInput = v.toString() })
+watch(similarityThreshold, v => { beadStore.similarityThresholdInput = v.toString() })
+watch([granularity, granularityY, similarityThreshold, pixelationMode, activeBeadPalette], () => { editorStore.clearBgRemovalSnapshot(); if (beadStore.originalImage || croppedImageCanvas.value) processImage() })
+watch(selectedColorSystem, () => { if (beadStore.originalImage) processImage() })
+watch(customPaletteSelections, () => paletteStore.saveSelections(), { deep: true })
 
-watch(isProcessing, () => {
-  if (!isProcessing.value) {
-    // 处理完成后，canvas 元素才挂载到 DOM，需要重新渲染
-    renderCanvas()
-  }
-})
+// Lifecycle
+onMounted(() => { paletteStore.initPalette(); document.addEventListener('click', handleGlobalClick) })
+onUnmounted(() => { document.removeEventListener('click', handleGlobalClick); focusStore.stopTimer() })
 
-watch(originalImageSrc, () => {
-  if (!originalImageSrc.value) renderCanvas()
-})
-
-// ========== 下载 ==========
-function handleDownloadGrid() {
-  downloadGridImage({
-    mappedPixelData: mappedPixelData.value,
-    gridDimensions: gridDimensions.value,
-    colorCounts: colorCounts.value,
-    totalBeadCount: totalBeadCount.value,
-    selectedColorSystem: selectedColorSystem.value,
-    options: downloadOptions.value,
-  })
-
-  // 同时导出 .pbds
-  if (downloadOptions.value.exportPbds) {
-    handleExportPbds()
-  }
-}
-
-// DownloadSettingsModal 触发下载
-function handleDownloadGridWithOptions(options) {
-  downloadOptions.value = options
-  handleDownloadGrid()
-}
-
-function handleDownloadImage() {
-  showExportMenu.value = false
-  showDownloadModal.value = true
-}
-
-function handleDownloadStats() {
-  showExportMenu.value = false
-  downloadStatsImage({
-    colorCounts: colorCounts.value,
-    totalBeadCount: totalBeadCount.value,
-    selectedColorSystem: selectedColorSystem.value,
-  })
-}
-
-async function handleExportPbds() {
-  showExportMenu.value = false
-  await exportPbds({
-    mappedPixelData: mappedPixelData.value,
-    gridDimensions: gridDimensions.value,
-    colorCounts: colorCounts.value,
-    totalBeadCount: totalBeadCount.value,
-    selectedColorSystem: selectedColorSystem.value,
-  })
-  showToast('导出成功')
-}
+// 其他函数
+function handleDownloadGridWithOptions(o: any) { uiStore.updateDownloadOptions(o); fileIO.handleDownloadGrid() }
+function handleMagnifierSelection(a: any) { editorStore.magnifierSelectionArea = a }
+function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdit(d) }
 </script>
 
 <template>
