@@ -8,11 +8,11 @@ const emit = defineEmits(['colorSelect', 'locate', 'pause'])
 </script>
 
 <template>
-  <div class="h-15 bg-white border-t border-gray-200 px-4 py-2 flex items-center justify-around">
+  <div class="h-15 bg-white border-t border-black/10 px-4 py-2 flex items-center justify-around">
     <!-- 颜色选择 -->
     <button
       @click="emit('colorSelect')"
-      class="flex flex-col items-center space-y-1 text-gray-600 hover:text-blue-600 transition-colors"
+      class="flex flex-col items-center space-y-1 text-black/60 hover:text-blue-600 transition-colors"
     >
       <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
         <path
@@ -27,7 +27,7 @@ const emit = defineEmits(['colorSelect', 'locate', 'pause'])
     <!-- 定位 -->
     <button
       @click="emit('locate')"
-      class="flex flex-col items-center space-y-1 text-gray-600 hover:text-green-600 transition-colors"
+      class="flex flex-col items-center space-y-1 text-black/60 hover:text-green-600 transition-colors"
     >
       <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path

@@ -1225,43 +1225,43 @@ function handleExportCsv() {
   />
 
   <!-- 主布局 -->
-  <div class="h-screen flex flex-col bg-gray-50 overflow-hidden">
+  <div class="h-screen flex flex-col bg-white overflow-hidden font-sans">
     <!-- Header -->
-    <header class="h-12 bg-white border-b border-gray-200/70 sticky top-0 z-40">
+    <header class="h-12 bg-white border-b border-black/10 sticky top-0 z-40">
       <div class="mx-auto w-full h-full px-2 sm:px-4 flex items-center gap-2 sm:gap-3">
         <!-- Logo -->
         <div class="flex items-center gap-2 flex-shrink-0">
-          <div class="grid grid-cols-2 gap-0.5 p-1.5 rounded-md bg-gray-100 border border-gray-200/60">
+          <div class="grid grid-cols-2 gap-0.5 p-1.5 rounded-md bg-black/[0.04] border border-black/[0.06]">
             <span class="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
             <span class="w-1.5 h-1.5 rounded-full bg-pink-400"></span>
             <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
             <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
           </div>
-          <span class="hidden md:inline text-sm font-semibold text-gray-800">PIXBEADS</span>
+          <span class="hidden md:inline text-sm font-semibold text-black">PIXBEADS</span>
         </div>
 
         <!-- Mode tabs -->
         <div class="flex-1 min-w-0 flex justify-center">
-          <div class="inline-flex items-center gap-0.5 p-0.5 rounded-lg bg-gray-200/60 border border-gray-300/40">
+          <div class="inline-flex items-center gap-0.5 p-0.5 rounded-lg bg-black/[0.04] border border-black/[0.08]">
             <button
               @click="switchMode('optimize')"
-              :class="['px-2 sm:px-3 h-8 text-xs rounded-md font-medium transition-colors min-w-[44px]',
-                activeMode === 'optimize' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700']"
+              :class="['px-2 sm:px-3 h-8 text-xs rounded-full font-medium transition-colors min-w-[44px]',
+                activeMode === 'optimize' ? 'bg-black text-white shadow-none' : 'text-black/45 hover:text-black']"
             >优化</button>
             <button
               @click="switchMode('edit')"
-              :class="['px-2 sm:px-3 h-8 text-xs rounded-md font-medium transition-colors min-w-[44px]',
-                activeMode === 'edit' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700']"
+              :class="['px-2 sm:px-3 h-8 text-xs rounded-full font-medium transition-colors min-w-[44px]',
+                activeMode === 'edit' ? 'bg-black text-white shadow-none' : 'text-black/45 hover:text-black']"
             >编辑</button>
             <button
               @click="switchMode('preview')"
-              :class="['px-2 sm:px-3 h-8 text-xs rounded-md font-medium transition-colors min-w-[44px]',
-                activeMode === 'preview' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700']"
+              :class="['px-2 sm:px-3 h-8 text-xs rounded-full font-medium transition-colors min-w-[44px]',
+                activeMode === 'preview' ? 'bg-black text-white shadow-none' : 'text-black/45 hover:text-black']"
             >预览</button>
             <button
               @click="switchMode('focus')"
-              :class="['px-2 sm:px-3 h-8 text-xs rounded-md font-medium transition-colors min-w-[44px]',
-                activeMode === 'focus' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700']"
+              :class="['px-2 sm:px-3 h-8 text-xs rounded-full font-medium transition-colors min-w-[44px]',
+                activeMode === 'focus' ? 'bg-black text-white shadow-none' : 'text-black/45 hover:text-black']"
             >专心</button>
           </div>
         </div>
@@ -1272,29 +1272,29 @@ function handleExportCsv() {
           <div class="hidden md:flex items-center gap-1.5 ml-1">
             <button
               @click="showPaletteEditor = true"
-              class="min-h-[44px] flex flex-col items-start leading-tight px-2 py-1 rounded-lg border border-gray-300 bg-gray-50 text-gray-700 hover:bg-gray-100 transition-colors"
+              class="min-h-[44px] flex flex-col items-start leading-tight px-2 py-1 rounded-lg border border-black/10 bg-white text-black hover:bg-black/[0.04] transition-colors"
               title="色板设置"
             >
-              <span class="text-[10px] text-gray-500">{{ selectedColorSystem }}</span>
+              <span class="text-[10px] text-black/45">{{ selectedColorSystem }}</span>
               <span class="text-[11px] font-semibold">{{ Object.keys(customPaletteSelections).filter(k => customPaletteSelections[k]).length }}</span>
             </button>
           </div>
           <!-- Import button -->
           <button
             @click="triggerFileInput"
-            class="min-h-[44px] px-3 text-xs rounded-lg border border-gray-200 bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors"
+            class="min-h-[44px] px-3 text-xs rounded-full border border-black/10 bg-black/[0.04] text-black/60 hover:bg-black/10 transition-colors"
           >导入</button>
           <!-- Download button -->
           <button
             v-if="mappedPixelData"
             @click="showDownloadModal = true"
-            class="min-h-[44px] px-3 text-xs rounded-lg border border-gray-200 bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors"
+            class="min-h-[44px] px-3 text-xs rounded-full border border-black/10 bg-black/[0.04] text-black/60 hover:bg-black/10 transition-colors"
           >下载</button>
           <!-- Settings button -->
           <button
             v-if="mappedPixelData"
             @click="showSettingsPanel = true"
-            class="min-h-[44px] min-w-[44px] flex items-center justify-center text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            class="min-h-[44px] min-w-[44px] flex items-center justify-center text-black/45 hover:text-black hover:bg-black/[0.04] rounded-lg transition-colors"
             title="高级设置"
           >
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1306,7 +1306,7 @@ function handleExportCsv() {
           <div class="md:hidden relative">
             <button
               @click="triggerFileInput"
-              class="min-h-[44px] min-w-[44px] flex items-center justify-center text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
+              class="min-h-[44px] min-w-[44px] flex items-center justify-center text-black/60 rounded-lg hover:bg-black/[0.04] transition-colors"
             >
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v12m6-6H6" /></svg>
             </button>
@@ -1333,24 +1333,24 @@ function handleExportCsv() {
               @click="triggerFileInput"
               @dragover.prevent
               @drop="handleFileDrop"
-              class="flex-1 flex flex-col items-center justify-center cursor-pointer border-2 border-dashed border-gray-300 rounded-xl hover:border-indigo-400 hover:bg-indigo-50/30 transition-colors"
+              class="flex-1 flex flex-col items-center justify-center cursor-pointer border-2 border-dashed border-black/10 rounded-xl hover:border-black/25 hover:bg-black/[0.03]/30 transition-colors"
             >
-              <div class="grid grid-cols-2 gap-1 p-3 rounded-xl bg-gray-100 border border-gray-200/60 mb-6">
+              <div class="grid grid-cols-2 gap-1 p-3 rounded-xl bg-black/[0.04] border border-black/[0.06] mb-6">
                 <span class="w-6 h-6 rounded-full bg-blue-400"></span>
                 <span class="w-6 h-6 rounded-full bg-pink-400"></span>
                 <span class="w-6 h-6 rounded-full bg-amber-400"></span>
                 <span class="w-6 h-6 rounded-full bg-emerald-400"></span>
               </div>
-              <p class="text-gray-400 text-lg mb-1">拖放或点击上传图片</p>
-              <p class="text-gray-300 text-sm">支持 JPG / PNG / CSV 格式</p>
-              <p class="text-gray-300 text-xs mt-3">建议将图片主体边缘对齐画布边界，减少后期去背景工作量</p>
+              <p class="text-black/35 text-lg mb-1">拖放或点击上传图片</p>
+              <p class="text-black/25 text-sm">支持 JPG / PNG / CSV 格式</p>
+              <p class="text-black/25 text-xs mt-3">建议将图片主体边缘对齐画布边界，减少后期去背景工作量</p>
             </div>
 
             <!-- Processing -->
             <div v-else-if="isProcessing" class="flex-1 flex items-center justify-center">
               <div class="text-center">
-                <div class="w-12 h-12 border-4 border-indigo-200 border-t-indigo-500 rounded-full animate-spin mx-auto mb-4"></div>
-                <p class="text-gray-500">处理中...</p>
+                <div class="w-12 h-12 border-4 border-black/10 border-t-black rounded-full animate-spin mx-auto mb-4"></div>
+                <p class="text-black/45">处理中...</p>
               </div>
             </div>
 
@@ -1359,7 +1359,7 @@ function handleExportCsv() {
               <!-- Large grid hint -->
               <div
                 v-if="gridDimensions && gridDimensions.N > 100"
-                class="px-4 py-2 bg-blue-50 border-b border-blue-200 text-xs text-blue-700 text-center rounded-t-xl"
+                class="px-4 py-2 bg-[#007be5]/[0.06] border-b border-black/10 text-xs text-black text-center rounded-t-xl"
               >
                 高精度网格 ({{ gridDimensions.N }}×{{ gridDimensions.M }}) — 画布已自动放大，可滚动查看完整图像
               </div>
@@ -1374,14 +1374,14 @@ function handleExportCsv() {
               <!-- Tooltip -->
               <div
                 v-if="tooltipData"
-                class="absolute pointer-events-none bg-gray-900 text-white text-xs rounded-lg px-3 py-2 shadow-lg z-10"
+                class="absolute pointer-events-none bg-black text-white text-xs rounded-lg px-3 py-2 shadow-lg z-10"
                 :style="{ left: tooltipData.x + 'px', top: tooltipData.y + 'px' }"
               >
                 <div class="flex items-center gap-2">
                   <div class="w-4 h-4 rounded border border-white/30" :style="{ backgroundColor: tooltipData.color }"></div>
                   <span class="font-mono">{{ tooltipData.key }}</span>
                 </div>
-                <div class="text-gray-400 mt-1">行 {{ tooltipData.row }} · 列 {{ tooltipData.col }}</div>
+                <div class="text-black/35 mt-1">行 {{ tooltipData.row }} · 列 {{ tooltipData.col }}</div>
               </div>
             </div>
 
@@ -1410,50 +1410,50 @@ function handleExportCsv() {
         <!-- Right sidebar (320px, only when image loaded) -->
         <div
           v-if="mappedPixelData"
-          class="absolute top-0 bottom-0 right-0 z-30 flex flex-col bg-gray-50 border-l border-gray-200/70"
+          class="absolute top-0 bottom-0 right-0 z-30 flex flex-col bg-white border-l border-black/10"
           style="width: 320px;"
         >
           <div class="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-3">
             <!-- Optimize mode sidebar -->
             <template v-if="activeMode === 'optimize'">
               <!-- Upload card -->
-              <div class="bg-white rounded-xl border border-gray-200 p-4">
-                <h3 class="text-sm font-medium text-gray-700 mb-3">图片上传</h3>
+              <div class="bg-white rounded-xl border border-black/10 p-4">
+                <h3 class="text-sm font-medium text-black mb-3">图片上传</h3>
                 <div
                   @click="triggerFileInput"
                   @dragover.prevent
                   @drop="handleFileDrop"
-                  class="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center cursor-pointer hover:border-indigo-400 hover:bg-indigo-50 transition-colors"
+                  class="border-2 border-dashed border-black/10 rounded-lg p-4 text-center cursor-pointer hover:border-black/25 hover:bg-black/[0.03] transition-colors"
                 >
                   <img v-if="originalImageSrc" :src="originalImageSrc" class="max-h-24 mx-auto rounded mb-2" alt="预览" />
                   <div v-else class="space-y-1">
-                    <svg class="w-8 h-8 mx-auto text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg class="w-8 h-8 mx-auto text-black/35" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 6v12m6-6H6" />
                     </svg>
-                    <p class="text-xs text-gray-500">点击或拖放图片</p>
+                    <p class="text-xs text-black/45">点击或拖放图片</p>
                   </div>
                 </div>
               </div>
 
               <!-- Parameter controls card -->
-              <div class="bg-white rounded-xl border border-gray-200 p-4 space-y-4">
-                <h3 class="text-sm font-medium text-gray-700">参数设置</h3>
+              <div class="bg-white rounded-xl border border-black/10 p-4 space-y-4">
+                <h3 class="text-sm font-medium text-black">参数设置</h3>
 
                 <!-- Width -->
                 <div>
-                  <label class="text-xs text-gray-500 mb-1 block">宽度 (横向格子数)</label>
+                  <label class="text-xs text-black/45 mb-1 block">宽度 (横向格子数)</label>
                   <div class="flex items-center gap-2">
                     <input
                       v-model.number="granularity"
                       type="range" min="10" max="300" step="1"
-                      class="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                      class="flex-1 h-1.5 bg-black/10 rounded-lg appearance-none cursor-pointer accent-black"
                     />
                     <input
                       v-model="granularityInput"
                       @blur="granularity = Math.max(10, Math.min(300, parseInt(granularityInput) || 50))"
                       @keyup.enter="granularity = Math.max(10, Math.min(300, parseInt(granularityInput) || 50))"
                       type="text"
-                      class="w-14 px-1.5 py-0.5 text-xs font-mono text-center border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      class="w-14 px-1.5 py-0.5 text-xs font-mono text-center border border-black/10 rounded focus:outline-none focus:ring-1 focus:ring-black"
                     />
                   </div>
                 </div>
@@ -1465,8 +1465,8 @@ function handleExportCsv() {
                     :class="[
                       'flex items-center gap-1 px-3 py-1 text-xs rounded-full border transition-colors',
                       lockAspectRatio
-                        ? 'bg-indigo-50 border-indigo-300 text-indigo-600'
-                        : 'bg-gray-50 border-gray-200 text-gray-500 hover:border-gray-300'
+                        ? 'bg-black/[0.03] border-black/20 text-black'
+                        : 'bg-white border-black/10 text-black/45 hover:border-black/10'
                     ]"
                     :title="lockAspectRatio ? '解锁长宽比' : '锁定长宽比'"
                   >
@@ -1482,16 +1482,16 @@ function handleExportCsv() {
 
                 <!-- Height -->
                 <div>
-                  <label class="text-xs text-gray-500 mb-1 block">
+                  <label class="text-xs text-black/45 mb-1 block">
                     高度 (纵向格子数)
-                    <span v-if="!croppedImageCanvas && !lockAspectRatio" class="text-gray-400 font-normal ml-1">裁剪后可调</span>
+                    <span v-if="!croppedImageCanvas && !lockAspectRatio" class="text-black/35 font-normal ml-1">裁剪后可调</span>
                   </label>
                   <div class="flex items-center gap-2">
                     <input
                       v-model.number="granularityY"
                       type="range" min="10" max="300" step="1"
                       :disabled="!croppedImageCanvas || lockAspectRatio"
-                      class="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-500 disabled:opacity-40"
+                      class="flex-1 h-1.5 bg-black/10 rounded-lg appearance-none cursor-pointer accent-black disabled:opacity-40"
                     />
                     <input
                       v-model="granularityYInput"
@@ -1500,35 +1500,35 @@ function handleExportCsv() {
                       @keyup.enter="granularityY = Math.max(10, Math.min(300, parseInt(granularityYInput) || 0))"
                       type="text"
                       :placeholder="granularityY > 0 ? granularityY.toString() : '自动'"
-                      class="w-14 px-1.5 py-0.5 text-xs font-mono text-center border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-40"
+                      class="w-14 px-1.5 py-0.5 text-xs font-mono text-center border border-black/10 rounded focus:outline-none focus:ring-1 focus:ring-black disabled:opacity-40"
                     />
                   </div>
                 </div>
 
                 <!-- Similarity threshold -->
                 <div>
-                  <label class="text-xs text-gray-500 mb-1 block">
+                  <label class="text-xs text-black/45 mb-1 block">
                     颜色合并阈值
-                    <span class="float-right font-mono text-gray-700">{{ similarityThreshold }}</span>
+                    <span class="float-right font-mono text-black">{{ similarityThreshold }}</span>
                   </label>
                   <input
                     v-model.number="similarityThreshold"
                     type="range" min="0" max="100" step="1"
-                    class="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                    class="w-full h-1.5 bg-black/10 rounded-lg appearance-none cursor-pointer accent-black"
                   />
                 </div>
 
                 <!-- Pixelation mode -->
                 <div>
-                  <label class="text-xs text-gray-500 mb-1 block">像素化模式</label>
+                  <label class="text-xs text-black/45 mb-1 block">像素化模式</label>
                   <div class="flex gap-2">
                     <button
                       @click="pixelationMode = 'dominant'"
                       :class="[
                         'flex-1 px-3 py-1.5 text-xs rounded-lg border transition-colors',
                         pixelationMode === 'dominant'
-                          ? 'bg-indigo-500 text-white border-indigo-500'
-                          : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-300'
+                          ? 'bg-black/[0.03]0 text-white border-black'
+                          : 'bg-white text-black/60 border-black/10 hover:border-black/20'
                       ]"
                     >卡通(主色)</button>
                     <button
@@ -1536,8 +1536,8 @@ function handleExportCsv() {
                       :class="[
                         'flex-1 px-3 py-1.5 text-xs rounded-lg border transition-colors',
                         pixelationMode === 'average'
-                          ? 'bg-indigo-500 text-white border-indigo-500'
-                          : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-300'
+                          ? 'bg-black/[0.03]0 text-white border-black'
+                          : 'bg-white text-black/60 border-black/10 hover:border-black/20'
                       ]"
                     >真实(均色)</button>
                   </div>
@@ -1548,19 +1548,19 @@ function handleExportCsv() {
                   <button
                     @click="handleAutoRemoveBackground"
                     :disabled="!mappedPixelData"
-                    class="flex-1 px-3 py-1.5 text-xs rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    class="flex-1 px-3 py-1.5 text-xs rounded-full border border-black/10 bg-[#007be5]/[0.06] text-black hover:bg-black/[0.06] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >一键去背景</button>
                   <button
                     @click="handleUndoBgRemoval"
                     :disabled="!bgRemovalSnapshot"
-                    class="flex-1 px-3 py-1.5 text-xs rounded-lg border border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    class="flex-1 px-3 py-1.5 text-xs rounded-full border border-black/10 bg-white text-black/60 hover:bg-black/[0.04] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >回撤上一步</button>
                 </div>
               </div>
 
               <!-- Color system card -->
-              <div class="bg-white rounded-xl border border-gray-200 p-4">
-                <h3 class="text-sm font-medium text-gray-700 mb-3">色号系统</h3>
+              <div class="bg-white rounded-xl border border-black/10 p-4">
+                <h3 class="text-sm font-medium text-black mb-3">色号系统</h3>
                 <div class="flex flex-wrap gap-1.5">
                   <button
                     v-for="sys in colorSystemOptions"
@@ -1569,8 +1569,8 @@ function handleExportCsv() {
                     :class="[
                       'px-2.5 py-1 text-xs rounded-lg border transition-all duration-150',
                       selectedColorSystem === sys.key
-                        ? 'bg-indigo-500 text-white border-indigo-500 shadow-sm'
-                        : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-300'
+                        ? 'bg-black/[0.03]0 text-white border-black shadow-sm'
+                        : 'bg-white text-black/60 border-black/10 hover:border-black/20'
                     ]"
                   >{{ sys.name }}</button>
                 </div>
@@ -1580,8 +1580,8 @@ function handleExportCsv() {
             <!-- Edit mode sidebar -->
             <template v-if="activeMode === 'edit'">
               <!-- Edit tools card -->
-              <div class="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
-                <h3 class="text-sm font-medium text-gray-700">编辑工具</h3>
+              <div class="bg-white rounded-xl border border-black/10 p-4 space-y-3">
+                <h3 class="text-sm font-medium text-black">编辑工具</h3>
                 <div class="flex gap-2">
                   <button
                     @click="isManualColoringMode && toggleMagnifier()"
@@ -1589,7 +1589,7 @@ function handleExportCsv() {
                       'flex-1 px-3 py-1.5 text-xs rounded-lg border transition-colors',
                       isMagnifierActive
                         ? 'bg-cyan-500 text-white border-cyan-500'
-                        : 'bg-white text-gray-600 border-gray-300 hover:border-cyan-300'
+                        : 'bg-white text-black/60 border-black/10 hover:border-cyan-300'
                     ]"
                     :disabled="!isManualColoringMode"
                   >🔍 放大镜</button>
@@ -1600,8 +1600,8 @@ function handleExportCsv() {
                     :class="[
                       'flex-1 px-3 py-1.5 text-xs rounded-lg border transition-colors',
                       isManualColoringMode
-                        ? 'bg-green-500 text-white border-green-500'
-                        : 'bg-white text-gray-600 border-gray-300 hover:border-green-300'
+                        ? 'bg-black text-white border-black'
+                        : 'bg-white text-black/60 border-black/10 hover:border-black/20'
                     ]"
                   >{{ isManualColoringMode ? '退出编辑' : '手动编辑' }}</button>
                 </div>
@@ -1624,29 +1624,29 @@ function handleExportCsv() {
                   @color-replace="handlePaletteColorReplace"
                 />
 
-                <p v-if="isManualColoringMode && currentGridColors.length === 0" class="text-xs text-gray-400">
+                <p v-if="isManualColoringMode && currentGridColors.length === 0" class="text-xs text-black/35">
                   当前图纸无可用颜色。
                 </p>
               </div>
 
               <!-- Color palette card -->
-              <div class="bg-white rounded-xl border border-gray-200 p-4">
-                <h3 class="text-sm font-medium text-gray-700 mb-3">
+              <div class="bg-white rounded-xl border border-black/10 p-4">
+                <h3 class="text-sm font-medium text-black mb-3">
                   调色盘
-                  <span class="text-xs text-gray-400 font-normal ml-1">{{ currentGridColors.length }} 种</span>
+                  <span class="text-xs text-black/35 font-normal ml-1">{{ currentGridColors.length }} 种</span>
                 </h3>
-                <div v-if="currentGridColors.length === 0" class="text-xs text-gray-400 text-center py-2">暂无颜色</div>
+                <div v-if="currentGridColors.length === 0" class="text-xs text-black/35 text-center py-2">暂无颜色</div>
                 <div v-else class="grid grid-cols-8 gap-1">
                   <button
                     v-for="color in currentGridColors"
                     :key="color.color"
                     @click="selectEditColor(color)"
-                    class="w-7 h-7 rounded border border-gray-200 hover:scale-125 transition-transform relative group"
+                    class="w-7 h-7 rounded border border-black/10 hover:scale-125 transition-transform relative group"
                     :style="{ backgroundColor: color.color }"
                     :title="color.key"
-                    :class="{ 'ring-2 ring-indigo-500 ring-offset-1': selectedEditColor?.color === color.color }"
+                    :class="{ 'ring-2 ring-black ring-offset-1': selectedEditColor?.color === color.color }"
                   >
-                    <span class="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[9px] text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none bg-white px-1 rounded shadow">
+                    <span class="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[9px] text-black/45 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none bg-white px-1 rounded shadow">
                       {{ color.key }}
                     </span>
                   </button>
@@ -1654,10 +1654,10 @@ function handleExportCsv() {
               </div>
 
               <!-- Color stats/exclude card -->
-              <div v-if="colorCounts" class="bg-white rounded-xl border border-gray-200 p-4">
-                <h3 class="text-sm font-medium text-gray-700 mb-2">
+              <div v-if="colorCounts" class="bg-white rounded-xl border border-black/10 p-4">
+                <h3 class="text-sm font-medium text-black mb-2">
                   颜色统计
-                  <span class="text-xs text-gray-400 font-normal ml-1">
+                  <span class="text-xs text-black/35 font-normal ml-1">
                     {{ Object.keys(colorCounts).length }} 种 / {{ totalBeadCount }} 粒
                   </span>
                 </h3>
@@ -1665,24 +1665,24 @@ function handleExportCsv() {
                   <div
                     v-for="item in currentGridColors"
                     :key="item.color"
-                    class="flex items-center gap-2 py-1 px-2 rounded hover:bg-gray-50 cursor-pointer group"
-                    :class="excludedColorKeys.has(item.color.toUpperCase()) ? 'bg-red-50 opacity-60' : ''"
+                    class="flex items-center gap-2 py-1 px-2 rounded hover:bg-white cursor-pointer group"
+                    :class="excludedColorKeys.has(item.color.toUpperCase()) ? 'bg-[#f4422f]/[0.06] opacity-60' : ''"
                     @click="selectEditColor(item)"
                   >
                     <div
-                      class="w-5 h-5 rounded border border-gray-200 flex-shrink-0"
+                      class="w-5 h-5 rounded-md border border-black/10 flex-shrink-0"
                       :style="{ backgroundColor: item.color }"
                     ></div>
                     <span
                       class="text-xs font-mono flex-1"
-                      :class="excludedColorKeys.has(item.color.toUpperCase()) ? 'text-red-500 line-through' : 'text-gray-700'"
+                      :class="excludedColorKeys.has(item.color.toUpperCase()) ? 'text-[#f4422f] line-through' : 'text-black'"
                     >{{ item.key }}</span>
-                    <span class="text-xs text-gray-400">
+                    <span class="text-xs text-black/35">
                       {{ colorCounts[item.color.toUpperCase()]?.count || 0 }}
                     </span>
                     <button
                       @click.stop="toggleExcludeColor(item.color.toUpperCase())"
-                      class="text-xs text-red-400 hover:text-red-600"
+                      class="text-xs text-[#f4422f]/60 hover:text-[#f4422f]"
                       :class="excludedColorKeys.has(item.color.toUpperCase()) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
                     >
                       {{ excludedColorKeys.has(item.color.toUpperCase()) ? '恢复' : '✕' }}
@@ -1691,10 +1691,10 @@ function handleExportCsv() {
                 </div>
 
                 <!-- Excluded colors panel -->
-                <div v-if="excludedColorKeys.size > 0" class="mt-3 pt-3 border-t border-gray-100">
+                <div v-if="excludedColorKeys.size > 0" class="mt-3 pt-3 border-t border-black/[0.06]">
                   <button
                     @click="showExcludedColors = !showExcludedColors"
-                    class="flex items-center gap-1 text-xs text-red-500 hover:text-red-600 w-full"
+                    class="flex items-center gap-1 text-xs text-[#f4422f] hover:text-[#f4422f] w-full"
                   >
                     <span>{{ showExcludedColors ? '▼' : '▶' }}</span>
                     <span>已排除 {{ excludedColorKeys.size }} 种颜色</span>
@@ -1703,16 +1703,16 @@ function handleExportCsv() {
                     <div
                       v-for="hex in Array.from(excludedColorKeys)"
                       :key="hex"
-                      class="flex items-center gap-2 py-1 px-2 rounded bg-red-50"
+                      class="flex items-center gap-2 py-1 px-2 rounded bg-[#f4422f]/[0.06]"
                     >
-                      <div class="w-4 h-4 rounded border border-gray-200 flex-shrink-0" :style="{ backgroundColor: hex }"></div>
-                      <span class="text-xs font-mono text-red-500 flex-1">{{ getColorKeyByHex(hex, selectedColorSystem) }}</span>
-                      <button @click="toggleExcludeColor(hex)" class="text-xs text-blue-500 hover:text-blue-600">恢复</button>
+                      <div class="w-4 h-4 rounded-md border border-black/10 flex-shrink-0" :style="{ backgroundColor: hex }"></div>
+                      <span class="text-xs font-mono text-[#f4422f] flex-1">{{ getColorKeyByHex(hex, selectedColorSystem) }}</span>
+                      <button @click="toggleExcludeColor(hex)" class="text-xs text-[#007be5] hover:text-[#007be5]/80">恢复</button>
                     </div>
                   </div>
                   <button
                     @click="restoreAllExcludedColors"
-                    class="mt-2 w-full px-3 py-1.5 text-xs rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
+                    class="mt-2 w-full px-3 py-1.5 text-xs rounded-full border border-black/10 bg-[#007be5]/[0.06] text-black hover:bg-black/[0.06] transition-colors"
                   >一键恢复所有颜色</button>
                 </div>
               </div>
@@ -1720,7 +1720,7 @@ function handleExportCsv() {
               <!-- Edit palette button -->
               <button
                 @click="showPaletteEditor = true"
-                class="w-full px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm text-gray-700 hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
+                class="w-full px-4 py-2 bg-white border border-black/10 rounded-xl text-sm text-black hover:bg-white transition-colors flex items-center justify-center gap-2"
               >
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
@@ -1731,12 +1731,12 @@ function handleExportCsv() {
               <!-- Empty palette warning -->
               <div
                 v-if="activeBeadPalette.length === 0 && excludedColorKeys.size > 0"
-                class="bg-yellow-50 border border-yellow-200 rounded-xl p-4"
+                class="bg-[#ffbe2e]/[0.08] border border-[#ffbe2e]/20 rounded-xl p-4"
               >
-                <p class="text-xs text-yellow-700 mb-2">所有颜色已被排除，请恢复部分颜色后重试。</p>
+                <p class="text-xs text-black/70 mb-2">所有颜色已被排除，请恢复部分颜色后重试。</p>
                 <button
                   @click="restoreAllExcludedColors"
-                  class="w-full px-3 py-1.5 text-xs rounded-lg border border-yellow-300 bg-yellow-100 text-yellow-800 hover:bg-yellow-200 transition-colors"
+                  class="w-full px-3 py-1.5 text-xs rounded-lg border border-[#ffbe2e]/30 bg-[#ffbe2e]/10 text-black hover:bg-[#ffbe2e]/20 transition-colors"
                 >查看已排除颜色</button>
               </div>
             </template>
@@ -1744,10 +1744,10 @@ function handleExportCsv() {
             <!-- Preview mode sidebar -->
             <template v-if="activeMode === 'preview'">
               <!-- Color stats card -->
-              <div v-if="colorCounts" class="bg-white rounded-xl border border-gray-200 p-4">
-                <h3 class="text-sm font-medium text-gray-700 mb-2">
+              <div v-if="colorCounts" class="bg-white rounded-xl border border-black/10 p-4">
+                <h3 class="text-sm font-medium text-black mb-2">
                   颜色统计
-                  <span class="text-xs text-gray-400 font-normal ml-1">
+                  <span class="text-xs text-black/35 font-normal ml-1">
                     {{ Object.keys(colorCounts).length }} 种 / {{ totalBeadCount }} 粒
                   </span>
                 </h3>
@@ -1755,14 +1755,14 @@ function handleExportCsv() {
                   <div
                     v-for="item in currentGridColors"
                     :key="item.color"
-                    class="flex items-center gap-2 py-1 px-2 rounded hover:bg-gray-50"
+                    class="flex items-center gap-2 py-1 px-2 rounded hover:bg-white"
                   >
                     <div
-                      class="w-5 h-5 rounded border border-gray-200 flex-shrink-0"
+                      class="w-5 h-5 rounded-md border border-black/10 flex-shrink-0"
                       :style="{ backgroundColor: item.color }"
                     ></div>
-                    <span class="text-xs font-mono flex-1 text-gray-700">{{ item.key }}</span>
-                    <span class="text-xs text-gray-400">
+                    <span class="text-xs font-mono flex-1 text-black">{{ item.key }}</span>
+                    <span class="text-xs text-black/35">
                       {{ colorCounts[item.color.toUpperCase()]?.count || 0 }}
                     </span>
                   </div>
@@ -1772,7 +1772,7 @@ function handleExportCsv() {
               <!-- Edit palette button -->
               <button
                 @click="showPaletteEditor = true"
-                class="w-full px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm text-gray-700 hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
+                class="w-full px-4 py-2 bg-white border border-black/10 rounded-xl text-sm text-black hover:bg-white transition-colors flex items-center justify-center gap-2"
               >
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
@@ -1783,7 +1783,7 @@ function handleExportCsv() {
               <!-- Download stats button -->
               <button
                 @click="handleDownloadStats"
-                class="w-full px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm text-gray-700 hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
+                class="w-full px-4 py-2 bg-white border border-black/10 rounded-xl text-sm text-black hover:bg-white transition-colors flex items-center justify-center gap-2"
               >
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -1795,18 +1795,18 @@ function handleExportCsv() {
             <!-- Focus mode sidebar -->
             <template v-if="activeMode === 'focus'">
               <!-- Current color info -->
-              <div v-if="currentColorInfo" class="bg-white rounded-xl border border-gray-200 p-4">
+              <div v-if="currentColorInfo" class="bg-white rounded-xl border border-black/10 p-4">
                 <div class="flex items-center gap-3 mb-3">
-                  <div class="w-10 h-10 rounded-full border-2 border-gray-300" :style="{ backgroundColor: currentColor }"></div>
+                  <div class="w-10 h-10 rounded-full border-2 border-black/10" :style="{ backgroundColor: currentColor }"></div>
                   <div>
-                    <div class="text-sm font-medium text-gray-800 font-mono">{{ currentColorInfo.name }}</div>
-                    <div class="text-xs text-gray-500">{{ currentColorInfo.completed }}/{{ currentColorInfo.total }} · {{ progressPercentage }}%</div>
+                    <div class="text-sm font-medium text-black font-mono">{{ currentColorInfo.name }}</div>
+                    <div class="text-xs text-black/45">{{ currentColorInfo.completed }}/{{ currentColorInfo.total }} · {{ progressPercentage }}%</div>
                   </div>
                 </div>
-                <div class="flex items-center gap-2 text-xs text-gray-500">
+                <div class="flex items-center gap-2 text-xs text-black/45">
                   <span>{{ elapsedTime }}</span>
-                  <span class="text-gray-300">|</span>
-                  <button @click="cycleGuidanceMode" class="px-2 py-0.5 bg-gray-100 hover:bg-gray-200 rounded-full text-gray-600 transition-colors">
+                  <span class="text-black/25">|</span>
+                  <button @click="cycleGuidanceMode" class="px-2 py-0.5 bg-black/[0.04] hover:bg-black/10 rounded-full text-black/60 transition-colors">
                     {{ guidanceModeLabel }}
                   </button>
                 </div>
@@ -1834,8 +1834,8 @@ function handleExportCsv() {
     </div>
 
     <!-- Footer -->
-    <footer class="border-t border-gray-200/60 bg-gray-50/70">
-      <div class="mx-auto w-full px-4 py-2 flex items-center justify-between text-xs text-gray-500">
+    <footer class="border-t border-black/10/60 bg-white/70">
+      <div class="mx-auto w-full px-4 py-2 flex items-center justify-between text-xs text-black/45">
         <span>PIXBEADS — 拼豆图纸生成工具</span>
       </div>
     </footer>
@@ -1848,10 +1848,10 @@ function handleExportCsv() {
       class="fixed z-40 select-none"
       :style="{ left: floatingPalette.x + 'px', top: floatingPalette.y + 'px' }"
     >
-      <div class="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden" :class="{ 'w-12': floatingPalette.collapsed, 'w-64': !floatingPalette.collapsed }">
+      <div class="bg-white rounded-xl shadow-lg border border-black/10 overflow-hidden" :class="{ 'w-12': floatingPalette.collapsed, 'w-64': !floatingPalette.collapsed }">
         <!-- Drag handle -->
         <div
-          class="bg-gradient-to-r from-indigo-500 to-purple-500 px-3 py-2 flex items-center justify-between cursor-move"
+          class="bg-gradient-to-r from-black to-black/80 px-3 py-2 flex items-center justify-between cursor-move"
           @mousedown="onPaletteHeaderMouseDown"
         >
           <span class="text-white text-xs font-medium" v-if="!floatingPalette.collapsed">调色盘</span>
@@ -1863,25 +1863,25 @@ function handleExportCsv() {
         </div>
 
         <!-- Tool buttons -->
-        <div v-if="!floatingPalette.collapsed" class="p-2 border-b border-gray-100">
+        <div v-if="!floatingPalette.collapsed" class="p-2 border-b border-black/[0.06]">
           <div class="flex gap-1 flex-wrap">
             <button
               @click="undoEdit"
               :disabled="editHistoryIndex < 0"
-              class="px-2 py-1 text-xs rounded bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              class="px-2 py-1 text-xs rounded bg-black/[0.04] text-black/60 hover:bg-black/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               title="撤销 (Ctrl+Z)"
             >↩ 撤销</button>
             <button
               @click="redoEdit"
               :disabled="editHistoryIndex >= editHistory.length - 1"
-              class="px-2 py-1 text-xs rounded bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              class="px-2 py-1 text-xs rounded bg-black/[0.04] text-black/60 hover:bg-black/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               title="重做 (Ctrl+Shift+Z)"
             >↪ 重做</button>
             <button
               @click="toggleEraseMode()"
               :class="[
                 'px-2 py-1 text-xs rounded transition-colors',
-                isEraseMode ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                isEraseMode ? 'bg-[#f4422f]/[0.06]0 text-white' : 'bg-black/[0.04] text-black/60 hover:bg-black/10'
               ]"
               title="橡皮擦"
             >🧹 橡皮</button>
@@ -1889,7 +1889,7 @@ function handleExportCsv() {
               @click="isFloodFillEraseMode ? exitFloodFillEraseMode() : enterFloodFillEraseMode()"
               :class="[
                 'px-2 py-1 text-xs rounded transition-colors',
-                isFloodFillEraseMode ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                isFloodFillEraseMode ? 'bg-orange-500 text-white' : 'bg-black/[0.04] text-black/60 hover:bg-black/10'
               ]"
               title="洪水填充擦除"
             >🪣 区域</button>
@@ -1897,7 +1897,7 @@ function handleExportCsv() {
               @click="colorReplaceState.isActive ? exitColorReplaceMode() : enterColorReplaceMode()"
               :class="[
                 'px-2 py-1 text-xs rounded transition-colors',
-                colorReplaceState.isActive ? 'bg-purple-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                colorReplaceState.isActive ? 'bg-purple-500 text-white' : 'bg-black/[0.04] text-black/60 hover:bg-black/10'
               ]"
               title="颜色批量替换"
             >🔄 替换</button>
@@ -1906,18 +1906,18 @@ function handleExportCsv() {
 
         <!-- Color grid -->
         <div v-if="!floatingPalette.collapsed" class="p-2 max-h-48 overflow-y-auto">
-          <div v-if="currentGridColors.length === 0" class="text-xs text-gray-400 text-center py-2">暂无颜色</div>
+          <div v-if="currentGridColors.length === 0" class="text-xs text-black/35 text-center py-2">暂无颜色</div>
           <div class="grid grid-cols-8 gap-1">
             <button
               v-for="color in currentGridColors"
               :key="color.color"
               @click="selectEditColor(color)"
-              class="w-6 h-6 rounded border border-gray-200 hover:scale-125 transition-transform relative group"
+              class="w-6 h-6 rounded border border-black/10 hover:scale-125 transition-transform relative group"
               :style="{ backgroundColor: color.color }"
               :title="color.key"
-              :class="{ 'ring-2 ring-indigo-500 ring-offset-1': selectedEditColor?.color === color.color }"
+              :class="{ 'ring-2 ring-black ring-offset-1': selectedEditColor?.color === color.color }"
             >
-              <span class="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[9px] text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none bg-white px-1 rounded shadow">
+              <span class="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[9px] text-black/45 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none bg-white px-1 rounded shadow">
                 {{ color.key }}
               </span>
             </button>
@@ -1992,7 +1992,7 @@ function handleExportCsv() {
   <Transition name="toast">
     <div
       v-if="toastMessage"
-      class="fixed bottom-20 left-1/2 -translate-x-1/2 px-4 py-2 bg-gray-900 text-white text-sm rounded-lg shadow-lg z-50 pointer-events-none"
+      class="fixed bottom-20 left-1/2 -translate-x-1/2 px-4 py-2 bg-black text-white text-sm rounded-lg shadow-lg z-50 pointer-events-none"
     >
       {{ toastMessage }}
     </div>
