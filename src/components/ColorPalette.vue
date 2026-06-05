@@ -77,7 +77,7 @@
  </svg>
  <span class="text-sm font-medium text-orange-700 dark:text-orange-300">背景擦除模式</span>
  </div>
- <div class="text-xs text-orange-600 dark:text-orange-400">
+ <div class="text-xs text-orange-600 dark:text-orange-400">1.
  <p class="mb-1">点击图中任意颜色，删除整个颜色块</p>
  <p class="text-black/45 ">使用洪水填充算法，一次性擦除连通的相同颜色区域</p>
  </div>

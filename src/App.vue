@@ -1,9 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, defineAsyncComponent, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, defineAsyncComponent, nextTick, toRaw } from 'vue'
 import {
   hexToRgb,
-  calculatePixelGrid,
-  mergeSimilarRegions,
   recalculateColorStats,
 } from './utils/pixelation'
 import {
@@ -14,9 +12,14 @@ import {
 } from './utils/colorSystemUtils'
 import { downloadGridImage, downloadStatsImage, exportCsv, importCsvData, exportPbds, importPbds } from './utils/downloader'
 import type { PbdsImportResult } from './utils/downloader'
+import { processImageInWorker } from './utils/workerManager'
+import type { ProcessProgress } from './utils/workerManager'
 import { useManualEditingState } from './composables/useManualEditingState'
 import { usePixelEditingOperations } from './composables/usePixelEditingOperations'
-import { clientToGridCoords } from './utils/canvasUtils'
+import { clientToGridCoords, calculateCenterOffset, calculateInterval, calculateVisibleColumns, calculateVisibleRows } from './utils/canvasUtils'
+import { CELL_SIZE, AXIS_WIDTH, AXIS_HEIGHT, MIN_ZOOM, MAX_ZOOM } from './constants/canvasConstants'
+import { MODES } from './constants/modeConstants'
+import type { AppMode } from './constants/modeConstants'
 import { loadPaletteSelections, savePaletteSelections, presetToSelections } from './utils/localStorageUtils'
 import {
   getConnectedRegion,
@@ -64,14 +67,8 @@ const CustomPaletteEditor = defineAsyncComponent(() =>
 )
 
 // ========== 模式系统 ==========
-type AppMode = 'optimize' | 'edit' | 'preview' | 'focus'
 const activeMode = ref<AppMode>('optimize')
-const modes = [
-  { key: 'optimize' as const, label: '优化' },
-  { key: 'edit' as const, label: '编辑' },
-  { key: 'preview' as const, label: '预览' },
-  { key: 'focus' as const, label: '专心' },
-]
+const modes = MODES
 
 // ========== 调色板初始化 ==========
 const mardToHexMapping = getMardToHexMapping()
@@ -115,6 +112,7 @@ const excludedColorKeys = ref<Set<string>>(new Set())
 // UI 状态
 const activeBeadPalette = ref<PaletteColor[]>([])
 const isProcessing = ref(false)
+const processingProgress = ref<ProcessProgress | null>(null)
 const showDownloadModal = ref(false)
 const tooltipData = ref<{ x: number; y: number; key: string; color: string; row: number; col: number } | null>(null)
 const toastMessage = ref<string | null>(null)
@@ -133,10 +131,9 @@ const canvasZoom = ref(1)
 const canvasTranslate = ref({ x: 0, y: 0 })
 const isDragging = ref(false)
 const dragStart = ref({ x: 0, y: 0 })
-const MIN_ZOOM = 0.1
-const MAX_ZOOM = 5
 
 const previewCanvas = ref<HTMLCanvasElement | null>(null)
+const canvasContainer = ref<HTMLDivElement | null>(null)
 
 function showToast(msg: string) {
   toastMessage.value = msg
@@ -505,6 +502,20 @@ function handleImportConfirm(data: { mappedPixelData: MappedPixel[][]; gridDimen
   showImportDialog.value = false
   pendingPbdsData.value = null
   showToast('导入成功')
+
+  // 居中显示
+  nextTick(() => {
+    const container = canvasContainer.value
+    const canvas = previewCanvas.value
+    if (container && canvas) {
+      canvasTranslate.value = calculateCenterOffset(
+        container.clientWidth,
+        container.clientHeight,
+        canvas.width,
+        canvas.height
+      )
+    }
+  })
 }
 
 function handleImportCancel() {
@@ -552,78 +563,109 @@ function handleCropSkip() {
 }
 
 // ========== 核心处理 ==========
-function processImage() {
+async function processImage() {
   if (!originalImage.value && !croppedImageCanvas.value) return
   isProcessing.value = true
+  processingProgress.value = null
 
-  // 使用 setTimeout 让 UI 更新
-  setTimeout(() => {
-    try {
-      const N = granularity.value
-      let sourceCanvas: HTMLCanvasElement
-      let imgWidth: number
-      let imgHeight: number
+  try {
+    const N = granularity.value
+    let sourceCanvas: HTMLCanvasElement
+    let imgWidth: number
+    let imgHeight: number
 
-      if (croppedImageCanvas.value) {
-        // 使用裁剪后的 canvas
-        sourceCanvas = croppedImageCanvas.value
-        imgWidth = sourceCanvas.width
-        imgHeight = sourceCanvas.height
-      } else {
-        // 使用原图
-        const img = originalImage.value!
-        imgWidth = img.width
-        imgHeight = img.height
-        sourceCanvas = document.createElement('canvas')
-        sourceCanvas.width = imgWidth
-        sourceCanvas.height = imgHeight
-        const ctx = sourceCanvas.getContext('2d')!
-        ctx.drawImage(img, 0, 0)
-      }
-
-      // 计算 M：裁剪模式下使用独立值，否则根据比例自动计算
-      let M: number
-      if (croppedImageCanvas.value && granularityY.value > 0) {
-        M = granularityY.value
-      } else {
-        const aspectRatio = imgHeight / imgWidth
-        M = Math.max(1, Math.round(N * aspectRatio))
-      }
-
+    if (croppedImageCanvas.value) {
+      // 使用裁剪后的 canvas
+      sourceCanvas = croppedImageCanvas.value
+      imgWidth = sourceCanvas.width
+      imgHeight = sourceCanvas.height
+    } else {
+      // 使用原图
+      const img = originalImage.value!
+      imgWidth = img.width
+      imgHeight = img.height
+      sourceCanvas = document.createElement('canvas')
+      sourceCanvas.width = imgWidth
+      sourceCanvas.height = imgHeight
       const ctx = sourceCanvas.getContext('2d')!
-
-      // 像素化 — 传入原始 MARD 调色板（hex key），不进行色号系统转换
-      // 回退颜色：T1 key → 任意白色 hex → 第一个调色板颜色
-      const fallbackColor = activeBeadPalette.value.find(p => p.key === 'T1')
-        || activeBeadPalette.value.find(p => p.hex.toUpperCase() === '#FFFFFF')
-        || activeBeadPalette.value[0]
-        || { key: '?', hex: '#000000', rgb: { r: 0, g: 0, b: 0 } }
-      let result = calculatePixelGrid(ctx, imgWidth, imgHeight, N, M, activeBeadPalette.value, pixelationMode.value, fallbackColor)
-
-      // 区域合并 — 传入调色板用于 key→RGB 查找
-      if (similarityThreshold.value > 0) {
-        result = mergeSimilarRegions(result, similarityThreshold.value, activeBeadPalette.value)
-      }
-
-      // 更新状态
-      mappedPixelData.value = result
-      gridDimensions.value = { N, M }
-
-      // 统计
-      const stats = recalculateColorStats(result)
-      colorCounts.value = stats.colorCounts
-      totalBeadCount.value = stats.totalCount
-
-      // 初始化编辑历史
-      editHistory.value = []
-      editHistoryIndex.value = -1
-      saveEditSnapshot()
-    } catch (err) {
-      console.error('处理失败:', err)
-    } finally {
-      isProcessing.value = false
+      ctx.drawImage(img, 0, 0)
     }
-  }, 50)
+
+    // 计算 M：裁剪模式下使用独立值，否则根据比例自动计算
+    let M: number
+    if (croppedImageCanvas.value && granularityY.value > 0) {
+      M = granularityY.value
+    } else {
+      const aspectRatio = imgHeight / imgWidth
+      M = Math.max(1, Math.round(N * aspectRatio))
+    }
+
+    const ctx = sourceCanvas.getContext('2d')!
+    const imageData = ctx.getImageData(0, 0, imgWidth, imgHeight)
+
+    // 像素化 — 传入原始 MARD 调色板（hex key），不进行色号系统转换
+    // 回退颜色：T1 key → 任意白色 hex → 第一个调色板颜色
+    const palette = toRaw(activeBeadPalette.value)
+    const fallbackColor = palette.find(p => p.key === 'T1')
+      || palette.find(p => p.hex.toUpperCase() === '#FFFFFF')
+      || palette[0]
+      || { key: '?', hex: '#000000', rgb: { r: 0, g: 0, b: 0 } }
+
+    // 在 Worker 中处理
+    const result = await processImageInWorker(
+      {
+        imageData,
+        imgWidth,
+        imgHeight,
+        N,
+        M,
+        palette,
+        mode: pixelationMode.value,
+        threshold: similarityThreshold.value,
+        fallbackColor: toRaw(fallbackColor)
+      },
+      (progress) => {
+        processingProgress.value = progress
+      }
+    )
+
+    // 更新状态
+    mappedPixelData.value = result
+    gridDimensions.value = { N, M }
+
+    // 统计
+    const stats = recalculateColorStats(result)
+    colorCounts.value = stats.colorCounts
+    totalBeadCount.value = stats.totalCount
+
+    // 初始化编辑历史
+    editHistory.value = []
+    editHistoryIndex.value = -1
+    saveEditSnapshot()
+
+    // 居中显示
+    nextTick(() => {
+      const container = canvasContainer.value
+      const canvas = previewCanvas.value
+      if (container && canvas) {
+        canvasTranslate.value = calculateCenterOffset(
+          container.clientWidth,
+          container.clientHeight,
+          canvas.width,
+          canvas.height
+        )
+      }
+    })
+  } catch (err) {
+    if (err instanceof Error && err.message === 'Processing cancelled') {
+      console.log('处理已取消')
+    } else {
+      console.error('处理失败:', err)
+    }
+  } finally {
+    isProcessing.value = false
+    processingProgress.value = null
+  }
 }
 
 // 重新处理
@@ -1155,26 +1197,52 @@ watch(customPaletteSelections, (val) => {
   savePaletteSelections(val)
 }, { deep: true })
 
+// ========== 可见行列计算 ==========
+const visibleColumns = computed(() => {
+  if (!gridDimensions.value || !canvasContainer.value) return []
+  return calculateVisibleColumns(
+    gridDimensions.value.N,
+    canvasContainer.value.clientWidth,
+    canvasTranslate.value.x,
+    canvasZoom.value
+  )
+})
+
+const visibleRows = computed(() => {
+  if (!gridDimensions.value || !canvasContainer.value) return []
+  return calculateVisibleRows(
+    gridDimensions.value.M,
+    canvasContainer.value.clientHeight,
+    canvasTranslate.value.y,
+    canvasZoom.value
+  )
+})
+
 // ========== Canvas 缩放和拖动控制 ==========
 function handleCanvasWheel(e: WheelEvent) {
   e.preventDefault()
   
-  const canvas = previewCanvas.value
-  if (!canvas) return
+  const container = canvasContainer.value
+  if (!container) return
   
-  const rect = canvas.getBoundingClientRect()
-  const mouseX = e.clientX - rect.left
-  const mouseY = e.clientY - rect.top
+  const containerRect = container.getBoundingClientRect()
+  
+  // 鼠标相对于 canvas 区域的位置（减去坐标轴偏移）
+  const mouseInCanvasAreaX = e.clientX - containerRect.left - AXIS_WIDTH
+  const mouseInCanvasAreaY = e.clientY - containerRect.top - AXIS_HEIGHT
+  
+  // 鼠标指向的 canvas 坐标
+  const canvasPointX = (mouseInCanvasAreaX - canvasTranslate.value.x) / canvasZoom.value
+  const canvasPointY = (mouseInCanvasAreaY - canvasTranslate.value.y) / canvasZoom.value
   
   const oldZoom = canvasZoom.value
   const delta = e.deltaY > 0 ? -0.1 : 0.1
   const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, oldZoom + delta))
   
-  // 以鼠标位置为基准进行缩放
-  const scale = newZoom / oldZoom
+  // 缩放后保持鼠标指向的 canvas 坐标不变
   canvasTranslate.value = {
-    x: mouseX - (mouseX - canvasTranslate.value.x) * scale,
-    y: mouseY - (mouseY - canvasTranslate.value.y) * scale
+    x: mouseInCanvasAreaX - canvasPointX * newZoom,
+    y: mouseInCanvasAreaY - canvasPointY * newZoom
   }
   
   canvasZoom.value = newZoom
@@ -1185,18 +1253,35 @@ function handleCanvasDragStart(e: MouseEvent) {
   if (activeMode.value === 'edit' && !e.shiftKey) return
   if (activeMode.value === 'focus') return
   
+  const container = canvasContainer.value
+  if (!container) return
+  
+  const containerRect = container.getBoundingClientRect()
+  
+  // 记录拖动起始点（相对于 canvas 区域的位置）
   isDragging.value = true
   dragStart.value = { 
-    x: e.clientX - canvasTranslate.value.x, 
-    y: e.clientY - canvasTranslate.value.y 
+    x: e.clientX - containerRect.left - AXIS_WIDTH - canvasTranslate.value.x, 
+    y: e.clientY - containerRect.top - AXIS_HEIGHT - canvasTranslate.value.y 
   }
 }
 
 function handleCanvasDragMove(e: MouseEvent) {
   if (!isDragging.value) return
+  
+  const container = canvasContainer.value
+  if (!container) return
+  
+  const containerRect = container.getBoundingClientRect()
+  
+  // 当前鼠标位置（相对于 canvas 区域）
+  const mouseX = e.clientX - containerRect.left - AXIS_WIDTH
+  const mouseY = e.clientY - containerRect.top - AXIS_HEIGHT
+  
+  // 更新平移：鼠标位置 - 拖动偏移
   canvasTranslate.value = {
-    x: e.clientX - dragStart.value.x,
-    y: e.clientY - dragStart.value.y
+    x: mouseX - dragStart.value.x,
+    y: mouseY - dragStart.value.y
   }
 }
 
@@ -1206,7 +1291,18 @@ function handleCanvasDragEnd() {
 
 function resetCanvasView() {
   canvasZoom.value = 1
-  canvasTranslate.value = { x: 0, y: 0 }
+  const container = canvasContainer.value
+  const canvas = previewCanvas.value
+  if (container && canvas) {
+    canvasTranslate.value = calculateCenterOffset(
+      container.clientWidth,
+      container.clientHeight,
+      canvas.width,
+      canvas.height
+    )
+  } else {
+    canvasTranslate.value = { x: 0, y: 0 }
+  }
 }
 
 // ========== 画布渲染 ==========
@@ -1215,15 +1311,13 @@ function renderCanvas() {
   if (!canvas || !mappedPixelData.value || !gridDimensions.value) return
 
   const { N, M } = gridDimensions.value
-  const cellSize = 8
-  canvas.width = N * cellSize
-  canvas.height = M * cellSize
+  canvas.width = N * CELL_SIZE
+  canvas.height = M * CELL_SIZE
   const ctx = canvas.getContext('2d')
   ctx.imageSmoothingEnabled = false
 
-  // 背景
-  ctx.fillStyle = '#E5E7EB'
-  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  // 清空画布（透明背景）
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
 
   let extCount = 0
   let colorCount = 0
@@ -1234,23 +1328,25 @@ function renderCanvas() {
       const cell = mappedPixelData.value[j]?.[i]
       if (!cell) continue
 
-      const x = i * cellSize
-      const y = j * cellSize
+      const x = i * CELL_SIZE
+      const y = j * CELL_SIZE
 
       if (cell.isExternal) {
-        ctx.fillStyle = (i + j) % 2 === 0 ? '#F3F4F6' : '#E5E7EB'
+        // 外部区域透明，显示 CSS 背景
+        ctx.clearRect(x, y, CELL_SIZE, CELL_SIZE)
         extCount++
+        continue  // 跳过网格线绘制
       } else {
         ctx.fillStyle = cell.color
         colorCount++
         if (sampleColors.length < 3) sampleColors.push(cell.color)
       }
-      ctx.fillRect(x, y, cellSize, cellSize)
+      ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE)
 
       // 网格线
       ctx.strokeStyle = 'rgba(0,0,0,0.08)'
       ctx.lineWidth = 0.5
-      ctx.strokeRect(x, y, cellSize, cellSize)
+      ctx.strokeRect(x, y, CELL_SIZE, CELL_SIZE)
     }
   }
 
@@ -1261,7 +1357,7 @@ function renderCanvas() {
       for (let i = 0; i < N; i++) {
         const cell = mappedPixelData.value[j]?.[i]
         if (cell && !cell.isExternal && cell.color.toUpperCase() === highlightColorKey.value.toUpperCase()) {
-          ctx.fillRect(i * cellSize, j * cellSize, cellSize, cellSize)
+          ctx.fillRect(i * CELL_SIZE, j * CELL_SIZE, CELL_SIZE, CELL_SIZE)
         }
       }
     }
@@ -1522,39 +1618,117 @@ async function handleExportPbds() {
 
             <!-- Processing -->
             <div v-else-if="isProcessing" class="flex-1 flex items-center justify-center">
-              <div class="text-center">
+              <div class="text-center w-64">
                 <div class="w-12 h-12 border-4 border-black/10 border-t-black rounded-full animate-spin mx-auto mb-4"></div>
-                <p class="text-black/45">处理中...</p>
+                <p class="text-black/45 mb-3">
+                  {{ processingProgress?.phase === 'pixelate' ? '像素化处理中...' : processingProgress?.phase === 'merge' ? '颜色合并中...' : '处理中...' }}
+                </p>
+                <div v-if="processingProgress" class="w-full bg-black/10 rounded-full h-2">
+                  <div
+                    class="bg-black h-2 rounded-full transition-all duration-150"
+                    :style="{ width: `${Math.round((processingProgress.current / processingProgress.total) * 100)}%` }"
+                  ></div>
+                </div>
+                <p v-if="processingProgress" class="text-xs text-black/35 mt-2">
+                  {{ processingProgress.current }} / {{ processingProgress.total }}
+                </p>
               </div>
             </div>
 
             <!-- Canvas preview (optimize/edit/preview modes) -->
-            <div v-else-if="activeMode !== 'focus'" class="flex-1 relative overflow-hidden">
-              <!-- Large grid hint -->
-              <div
-                v-if="gridDimensions && gridDimensions.N > 100"
-                class="px-4 py-2 bg-[#007be5]/[0.06] border-b border-black/10 text-xs text-black text-center rounded-t-xl"
-              >
-                高精度网格 ({{ gridDimensions.N }}×{{ gridDimensions.M }}) — 画布已自动放大，可滚动查看完整图像
-              </div>
-              <canvas
-                ref="previewCanvas"
-                class="block"
-                :style="{ 
-                  imageRendering: 'pixelated', 
-                  transform: `translate(${canvasTranslate.x}px, ${canvasTranslate.y}px) scale(${canvasZoom})`, 
-                  transformOrigin: '0 0', 
-                  cursor: isDragging ? 'grabbing' : (isManualColoringMode ? (isFloodFillEraseMode ? 'cell' : colorReplaceState.isActive ? 'copy' : isEraseMode ? 'crosshair' : 'crosshair') : (activeMode === 'edit' ? 'crosshair' : 'grab'))
-                }"
+            <div v-else-if="activeMode !== 'focus'" class="flex-1 relative overflow-hidden bg-white">
+              <!-- 坐标轴和画布容器 -->
+              <div 
+                ref="canvasContainer"
+                class="absolute inset-0"
                 @wheel.prevent="handleCanvasWheel"
                 @mousedown="handleCanvasDragStart"
                 @mousemove="handleCanvasDragMove"
                 @mouseup="handleCanvasDragEnd"
                 @mouseleave="handleCanvasDragEnd"
-                @click="handleCanvasClick"
-              ></canvas>
+              >
+                <!-- 上方行号轴 -->
+                <div class="absolute top-0 left-0 right-0 bg-white border-b border-black/10 z-10 flex" :style="{ height: AXIS_HEIGHT + 'px' }">
+                  <div :style="{ width: AXIS_WIDTH + 'px' }" class="flex-shrink-0"></div>
+                  <div class="flex-1 relative overflow-hidden">
+                    <div 
+                      class="absolute"
+                      :style="{ 
+                        transform: `translateX(${canvasTranslate.x}px)`,
+                        width: `${(gridDimensions?.N || 0) * CELL_SIZE * canvasZoom}px`,
+                        height: '100%'
+                      }"
+                    >
+                      <div 
+                        v-for="col in visibleColumns" 
+                        :key="'col-' + col"
+                        class="absolute text-[10px] text-black/50"
+                        :style="{ left: (col - 1) * CELL_SIZE * canvasZoom + 'px' }"
+                      >
+                        {{ col }}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 左侧列号轴 -->
+                <div class="absolute top-0 left-0 bottom-0 bg-white border-r border-black/10 z-10" :style="{ width: AXIS_WIDTH + 'px', top: AXIS_HEIGHT + 'px' }">
+                  <div class="relative overflow-hidden h-full">
+                    <div 
+                      class="absolute"
+                      :style="{ 
+                        transform: `translateY(${canvasTranslate.y}px)`,
+                        width: '100%',
+                        height: `${(gridDimensions?.M || 0) * CELL_SIZE * canvasZoom}px`
+                      }"
+                    >
+                      <div 
+                        v-for="row in visibleRows" 
+                        :key="'row-' + row"
+                        class="absolute text-[10px] text-black/50 text-right pr-1"
+                        :style="{ 
+                          top: (row - 1) * CELL_SIZE * canvasZoom + 'px',
+                          width: AXIS_WIDTH + 'px'
+                        }"
+                      >
+                        {{ row }}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Canvas 画布 -->
+                <div 
+                  class="absolute overflow-hidden"
+                  :style="{ 
+                    top: AXIS_HEIGHT + 'px', 
+                    left: AXIS_WIDTH + 'px', 
+                    right: 0, 
+                    bottom: 0,
+                    backgroundColor: '#F0F0F0',
+                    backgroundImage: 'linear-gradient(45deg, #FFFFFF 25%, transparent 25%), linear-gradient(-45deg, #FFFFFF 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #FFFFFF 75%), linear-gradient(-45deg, transparent 75%, #FFFFFF 75%)',
+                    backgroundSize: '16px 16px',
+                    backgroundPosition: '0 0, 0 8px, 8px -8px, -8px 0px'
+                  }"
+                >
+                  <canvas
+                    ref="previewCanvas"
+                    class="block"
+                    :style="{ 
+                      imageRendering: 'pixelated', 
+                      transform: `translate(${canvasTranslate.x}px, ${canvasTranslate.y}px) scale(${canvasZoom})`, 
+                      transformOrigin: '0 0', 
+                      cursor: isDragging ? 'grabbing' : (isManualColoringMode ? 'crosshair' : (activeMode === 'edit' ? 'crosshair' : 'grab'))
+                    }"
+                    @click="handleCanvasClick"
+                    @mousemove="handleCanvasHover"
+                    @mouseleave="handleCanvasLeave"
+                  ></canvas>
+                </div>
+              </div>
+              
               <!-- Zoom controls -->
-              <div class="absolute bottom-4 right-4 flex items-center gap-2 bg-white/90 backdrop-blur-sm rounded-lg px-3 py-1.5 shadow-sm border border-black/10">
+              <div class="absolute bottom-4 right-4 flex items-center gap-2 bg-white/90 backdrop-blur-sm rounded-lg px-3 py-1.5 shadow-sm border border-black/10 z-20">
                 <button
                   @click="canvasZoom = Math.max(MIN_ZOOM, canvasZoom - 0.1)"
                   class="w-6 h-6 flex items-center justify-center text-black/60 hover:text-black transition-colors"
@@ -1572,7 +1746,7 @@ async function handleExportPbds() {
               <!-- Tooltip -->
               <div
                 v-if="tooltipData"
-                class="absolute pointer-events-none bg-black text-white text-xs rounded-lg px-3 py-2 shadow-lg z-10"
+                class="absolute pointer-events-none bg-black text-white text-xs rounded-lg px-3 py-2 shadow-lg z-30"
                 :style="{ left: tooltipData.x + 'px', top: tooltipData.y + 'px' }"
               >
                 <div class="flex items-center gap-2">
