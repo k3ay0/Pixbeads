@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, defineAsyncComponent, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
 import { storeToRefs } from 'pinia'
 
 // Stores
@@ -20,9 +20,9 @@ import { useCanvasTransform } from './composables/useCanvasTransform'
 import { useFocusModeLogic } from './composables/useFocusModeLogic'
 
 // Utils
-import { getColorKeyByHex, colorSystemOptions, sortColorsByHue } from './utils/colorSystemUtils'
-import { clientToGridCoords, calculateVisibleColumns, calculateVisibleRows } from './utils/canvasUtils'
-import { CELL_SIZE, AXIS_WIDTH, AXIS_HEIGHT, MIN_ZOOM, MAX_ZOOM } from './constants/canvasConstants'
+import { getColorKeyByHex, sortColorsByHue } from './utils/colorSystemUtils'
+import { clientToGridCoords } from './utils/canvasUtils'
+import { CELL_SIZE } from './constants/canvasConstants'
 import { MODES } from './constants/modeConstants'
 import type { AppMode } from './constants/modeConstants'
 import { TRANSPARENT_KEY } from './types'
@@ -88,28 +88,26 @@ const {
 
 const {
   canvasZoom, canvasTranslate, isDragging, tooltipData,
-  previewCanvas, canvasContainer,
+  previewCanvas,
 } = storeToRefs(canvasStore)
 
 const {
   isManualColoringMode, selectedEditColor, isEraseMode,
-  colorReplaceState, highlightColorKey, showFullPalette,
-  isFloodFillEraseMode, bgRemovalSnapshot, isMagnifierActive,
-  magnifierSelectionArea, floatingPalette,
+  colorReplaceState, highlightColorKey,
+  isFloodFillEraseMode, isMagnifierActive,
 } = storeToRefs(editorStore)
 
 const {
-  activeMode, showImportMenu, showExportMenu, showDownloadModal,
+  activeMode, showDownloadModal,
   showSettingsPanel, showDonationModal, showImportDialog,
   toastMessage, downloadOptions,
 } = storeToRefs(uiStore)
 
 const {
-  currentColor, selectedCell, canvasScale, canvasOffset,
-  completedCells, colorProgress, recommendedRegion, recommendedCell,
-  guidanceMode, showColorPanel, isPaused, totalElapsedTime,
-  availableColors, gridSectionInterval, showSectionLines, sectionLineColor,
-  elapsedTime, progressPercentage, guidanceModeLabel, currentColorInfo,
+  currentColor, canvasScale, canvasOffset,
+  completedCells, recommendedRegion, recommendedCell,
+  showColorPanel, availableColors, gridSectionInterval, showSectionLines, sectionLineColor,
+  progressPercentage, currentColorInfo,
 } = storeToRefs(focusStore)
 
 // ========== 本地状态 ==========
@@ -177,16 +175,6 @@ const currentGridColors = computed(() => {
     }
   })
   return sortColorsByHue(Array.from(map.values()).map(c => ({ key: getColorKeyByHex(c.color, selectedColorSystem.value), color: c.color })))
-})
-
-const visibleColumns = computed(() => {
-  if (!gridDimensions.value || !canvasContainer.value) return []
-  return calculateVisibleColumns(gridDimensions.value.N, canvasContainer.value.clientWidth, canvasTranslate.value.x, canvasZoom.value)
-})
-
-const visibleRows = computed(() => {
-  if (!gridDimensions.value || !canvasContainer.value) return []
-  return calculateVisibleRows(gridDimensions.value.M, canvasContainer.value.clientHeight, canvasTranslate.value.y, canvasZoom.value)
 })
 
 // Canvas 交互
