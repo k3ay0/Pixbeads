@@ -8,13 +8,13 @@ import { loadPaletteSelections, savePaletteSelections } from '@/utils/localStora
 export const usePaletteStore = defineStore('palette', () => {
   // ========== 完整色板 ==========
   const mardToHexMapping = getMardToHexMapping()
-  const fullBeadPalette: PaletteColor[] = Object.entries(mardToHexMapping)
+  const fullBeadPalette = ref<PaletteColor[]>(Object.entries(mardToHexMapping)
     .map(([mardKey, hex]) => {
       const rgb = hexToRgb(hex)
       if (!rgb) return null
       return { key: hex, hex, rgb }
     })
-    .filter((c): c is PaletteColor => c !== null)
+    .filter((c): c is PaletteColor => c !== null))
 
   // ========== 色板选择状态 ==========
   const selectedColorSystem = ref<ColorSystem>('MARD')
@@ -26,7 +26,7 @@ export const usePaletteStore = defineStore('palette', () => {
   // ========== Getters ==========
 
   const activeBeadPalette = computed(() => {
-    return fullBeadPalette.filter(color => {
+    return fullBeadPalette.value.filter(color => {
       const hex = color.hex.toUpperCase()
       return customPaletteSelections.value[hex] && !excludedColorKeys.value.has(hex)
     })
@@ -35,7 +35,7 @@ export const usePaletteStore = defineStore('palette', () => {
   // ========== Actions ==========
 
   function initPalette() {
-    const allHexValues = fullBeadPalette.map(c => c.hex.toUpperCase())
+    const allHexValues = fullBeadPalette.value.map(c => c.hex.toUpperCase())
     const saved = loadPaletteSelections()
 
     if (saved) {
