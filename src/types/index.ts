@@ -82,7 +82,7 @@ export interface GridDownloadOptions {
   showCellNumbers: boolean
   gridLineColor: string
   includeStats: boolean
-  exportCsv: boolean
+  exportPbds: boolean
 }
 
 // ========== 裁剪相关 ==========

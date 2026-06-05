@@ -144,22 +144,22 @@ export const gridLineColorOptions = [
  </label>
  </div>
 
- <!-- 导出CSV hex数据选项 -->
+ <!-- 当前导出方案选项 -->
  <div class="flex items-center justify-between">
  <div class="flex flex-col">
  <label class="flex items-center text-sm font-medium text-black ">
- 同时导出源数据
+ 当前导出方案
  </label>
  <span class="text-xs text-black/45 mt-1">
- 导出hex颜色值的CSV文件，可用于重新导入
+ 同时导出 .pbds 文件，包含完整项目数据
  </span>
  </div>
  <label class="relative inline-flex items-center cursor-pointer">
  <input
  type="checkbox"
  class="sr-only peer"
- :checked="tempOptions.exportCsv"
- @change="handleOptionChange('exportCsv', $event.target.checked)"
+ :checked="tempOptions.exportPbds"
+ @change="handleOptionChange('exportPbds', $event.target.checked)"
  />
  <div class="w-11 h-6 bg-black/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-black/10 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-black"></div>
  </label>

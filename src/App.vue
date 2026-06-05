@@ -12,7 +12,8 @@ import {
   colorSystemOptions,
   sortColorsByHue,
 } from './utils/colorSystemUtils'
-import { downloadGridImage, downloadStatsImage, exportCsv, importCsvData } from './utils/downloader'
+import { downloadGridImage, downloadStatsImage, exportCsv, importCsvData, exportPbds, importPbds } from './utils/downloader'
+import type { PbdsImportResult } from './utils/downloader'
 import { useManualEditingState } from './composables/useManualEditingState'
 import { usePixelEditingOperations } from './composables/usePixelEditingOperations'
 import { clientToGridCoords } from './utils/canvasUtils'
@@ -26,6 +27,7 @@ import {
   sortRegionsBySize,
 } from './utils/floodFillUtils'
 import DownloadSettingsModal from './components/DownloadSettingsModal.vue'
+import ImportConvertDialog from './components/ImportConvertDialog.vue'
 import ColorPalette from './components/ColorPalette.vue'
 import InstallPWA from './components/InstallPWA.vue'
 import ImageCropper from './components/ImageCropper.vue'
@@ -116,6 +118,23 @@ const isProcessing = ref(false)
 const showDownloadModal = ref(false)
 const tooltipData = ref<{ x: number; y: number; key: string; color: string; row: number; col: number } | null>(null)
 const toastMessage = ref<string | null>(null)
+
+// 导入相关状态
+const showImportMenu = ref(false)
+const pbdsFileInput = ref<HTMLInputElement | null>(null)
+const showImportDialog = ref(false)
+const pendingPbdsData = ref<PbdsImportResult | null>(null)
+
+// 导出相关状态
+const showExportMenu = ref(false)
+
+// Canvas 缩放和拖动状态
+const canvasZoom = ref(1)
+const canvasTranslate = ref({ x: 0, y: 0 })
+const isDragging = ref(false)
+const dragStart = ref({ x: 0, y: 0 })
+const MIN_ZOOM = 0.1
+const MAX_ZOOM = 5
 
 const previewCanvas = ref<HTMLCanvasElement | null>(null)
 
@@ -325,7 +344,7 @@ const downloadOptions = ref<GridDownloadOptions>({
   showCellNumbers: true,
   gridLineColor: '#CCCCCC',
   includeStats: true,
-  exportCsv: false,
+  exportPbds: false,
 })
 
 // ========== 初始化色板选择 ==========
@@ -350,7 +369,22 @@ onMounted(() => {
   } else {
     initDefaultPalette(allHexValues)
   }
+
+  // 全局点击关闭导入菜单
+  document.addEventListener('click', handleGlobalClick)
 })
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleGlobalClick)
+})
+
+function handleGlobalClick(e: MouseEvent) {
+  const target = e.target as HTMLElement
+  if (!target.closest('.relative')) {
+    showImportMenu.value = false
+    showExportMenu.value = false
+  }
+}
 
 function initDefaultPalette(allHexValues) {
   const selections = {}
@@ -406,15 +440,21 @@ watch(similarityThreshold, v => { similarityThresholdInput.value = v.toString() 
 const fileInput = ref(null)
 
 function triggerFileInput() {
+  showImportMenu.value = false
   fileInput.value?.click()
+}
+
+function triggerPbdsInput() {
+  showImportMenu.value = false
+  pbdsFileInput.value?.click()
 }
 
 function handleFileDrop(e) {
   e.preventDefault()
   const file = e.dataTransfer?.files?.[0]
   if (!file) return
-  if (file.name.toLowerCase().endsWith('.csv')) {
-    loadCsv(file)
+  if (file.name.toLowerCase().endsWith('.pbds')) {
+    loadPbds(file)
   } else if (file.type.startsWith('image/')) {
     loadImage(file)
   }
@@ -423,11 +463,53 @@ function handleFileDrop(e) {
 function handleFileChange(e) {
   const file = e.target?.files?.[0]
   if (!file) return
-  if (file.name.toLowerCase().endsWith('.csv')) {
-    loadCsv(file)
-  } else {
-    loadImage(file)
+  loadImage(file)
+}
+
+function handlePbdsFileChange(e) {
+  const file = e.target?.files?.[0]
+  if (!file) return
+  loadPbds(file)
+}
+
+async function loadPbds(file: File) {
+  try {
+    const result = await importPbds(file)
+    pendingPbdsData.value = result
+    showImportDialog.value = true
+  } catch (error) {
+    console.error('PBDS导入失败:', error)
+    alert(`PBDS导入失败：${error}`)
   }
+}
+
+function handleImportConfirm(data: { mappedPixelData: MappedPixel[][]; gridDimensions: GridDimensions; colorSystem: ColorSystem }) {
+  mappedPixelData.value = data.mappedPixelData
+  gridDimensions.value = data.gridDimensions
+  selectedColorSystem.value = data.colorSystem
+  originalImageSrc.value = null
+  originalImage.value = null
+  bgRemovalSnapshot.value = null
+
+  const stats = recalculateColorStats(data.mappedPixelData)
+  colorCounts.value = stats.colorCounts
+  totalBeadCount.value = stats.totalCount
+
+  editHistory.value = []
+  editHistoryIndex.value = -1
+  saveEditSnapshot()
+
+  granularity.value = data.gridDimensions.N
+  granularityInput.value = data.gridDimensions.N.toString()
+
+  showImportDialog.value = false
+  pendingPbdsData.value = null
+  showToast('导入成功')
+}
+
+function handleImportCancel() {
+  showImportDialog.value = false
+  pendingPbdsData.value = null
 }
 
 function loadImage(file: File) {
@@ -467,32 +549,6 @@ function handleCropSkip() {
   granularityY.value = 0
   granularityYInput.value = '0'
   processImage()
-}
-
-function loadCsv(file) {
-  importCsvData(file)
-    .then(({ mappedPixelData: data, gridDimensions: dims }) => {
-      mappedPixelData.value = data
-      gridDimensions.value = dims
-      originalImageSrc.value = null
-      originalImage.value = null
-      bgRemovalSnapshot.value = null
-
-      const stats = recalculateColorStats(data)
-      colorCounts.value = stats.colorCounts
-      totalBeadCount.value = stats.totalCount
-
-      editHistory.value = []
-      editHistoryIndex.value = -1
-      saveEditSnapshot()
-
-      granularity.value = dims.N
-      granularityInput.value = dims.N.toString()
-    })
-    .catch(error => {
-      console.error('CSV导入失败:', error)
-      alert(`CSV导入失败：${error.message}`)
-    })
 }
 
 // ========== 核心处理 ==========
@@ -644,6 +700,7 @@ function handlePaletteColorReplace(sourceColor, targetColor) {
 function handleCanvasClick(e) {
   if (!mappedPixelData.value || !gridDimensions.value) return
   if (!isManualColoringMode.value) return
+  if (isDragging.value) return
 
   const canvas = e.target
   const coords = clientToGridCoords(e.clientX, e.clientY, canvas, gridDimensions.value)
@@ -684,6 +741,7 @@ function handleCanvasClick(e) {
 
 function handleCanvasHover(e) {
   if (!mappedPixelData.value || !gridDimensions.value) return
+  if (isDragging.value) return
   const canvas = e.target
   const coords = clientToGridCoords(e.clientX, e.clientY, canvas, gridDimensions.value)
 
@@ -1097,6 +1155,60 @@ watch(customPaletteSelections, (val) => {
   savePaletteSelections(val)
 }, { deep: true })
 
+// ========== Canvas 缩放和拖动控制 ==========
+function handleCanvasWheel(e: WheelEvent) {
+  e.preventDefault()
+  
+  const canvas = previewCanvas.value
+  if (!canvas) return
+  
+  const rect = canvas.getBoundingClientRect()
+  const mouseX = e.clientX - rect.left
+  const mouseY = e.clientY - rect.top
+  
+  const oldZoom = canvasZoom.value
+  const delta = e.deltaY > 0 ? -0.1 : 0.1
+  const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, oldZoom + delta))
+  
+  // 以鼠标位置为基准进行缩放
+  const scale = newZoom / oldZoom
+  canvasTranslate.value = {
+    x: mouseX - (mouseX - canvasTranslate.value.x) * scale,
+    y: mouseY - (mouseY - canvasTranslate.value.y) * scale
+  }
+  
+  canvasZoom.value = newZoom
+}
+
+function handleCanvasDragStart(e: MouseEvent) {
+  // 编辑模式下需要按住 Shift 键才能拖动
+  if (activeMode.value === 'edit' && !e.shiftKey) return
+  if (activeMode.value === 'focus') return
+  
+  isDragging.value = true
+  dragStart.value = { 
+    x: e.clientX - canvasTranslate.value.x, 
+    y: e.clientY - canvasTranslate.value.y 
+  }
+}
+
+function handleCanvasDragMove(e: MouseEvent) {
+  if (!isDragging.value) return
+  canvasTranslate.value = {
+    x: e.clientX - dragStart.value.x,
+    y: e.clientY - dragStart.value.y
+  }
+}
+
+function handleCanvasDragEnd() {
+  isDragging.value = false
+}
+
+function resetCanvasView() {
+  canvasZoom.value = 1
+  canvasTranslate.value = { x: 0, y: 0 }
+}
+
 // ========== 画布渲染 ==========
 function renderCanvas() {
   const canvas = previewCanvas.value
@@ -1182,13 +1294,9 @@ function handleDownloadGrid() {
     options: downloadOptions.value,
   })
 
-  // 同时导出 CSV
-  if (downloadOptions.value.exportCsv) {
-    exportCsv({
-      mappedPixelData: mappedPixelData.value,
-      gridDimensions: gridDimensions.value,
-      selectedColorSystem: selectedColorSystem.value,
-    })
+  // 同时导出 .pbds
+  if (downloadOptions.value.exportPbds) {
+    handleExportPbds()
   }
 }
 
@@ -1198,7 +1306,13 @@ function handleDownloadGridWithOptions(options) {
   handleDownloadGrid()
 }
 
+function handleDownloadImage() {
+  showExportMenu.value = false
+  showDownloadModal.value = true
+}
+
 function handleDownloadStats() {
+  showExportMenu.value = false
   downloadStatsImage({
     colorCounts: colorCounts.value,
     totalBeadCount: totalBeadCount.value,
@@ -1206,12 +1320,16 @@ function handleDownloadStats() {
   })
 }
 
-function handleExportCsv() {
-  exportCsv({
+async function handleExportPbds() {
+  showExportMenu.value = false
+  await exportPbds({
     mappedPixelData: mappedPixelData.value,
     gridDimensions: gridDimensions.value,
+    colorCounts: colorCounts.value,
+    totalBeadCount: totalBeadCount.value,
     selectedColorSystem: selectedColorSystem.value,
   })
+  showToast('导出成功')
 }
 </script>
 
@@ -1250,18 +1368,27 @@ function handleExportCsv() {
             >优化</button>
             <button
               @click="switchMode('edit')"
+              :disabled="!mappedPixelData"
+              :title="!mappedPixelData ? '请先导入文件' : ''"
               :class="['px-2 sm:px-3 h-8 text-xs rounded-full font-medium transition-colors min-w-[44px]',
-                activeMode === 'edit' ? 'bg-black text-white shadow-none' : 'text-black/45 hover:text-black']"
+                activeMode === 'edit' ? 'bg-black text-white shadow-none' : 'text-black/45 hover:text-black',
+                !mappedPixelData && 'opacity-40 cursor-not-allowed']"
             >编辑</button>
             <button
               @click="switchMode('preview')"
+              :disabled="!mappedPixelData"
+              :title="!mappedPixelData ? '请先导入文件' : ''"
               :class="['px-2 sm:px-3 h-8 text-xs rounded-full font-medium transition-colors min-w-[44px]',
-                activeMode === 'preview' ? 'bg-black text-white shadow-none' : 'text-black/45 hover:text-black']"
+                activeMode === 'preview' ? 'bg-black text-white shadow-none' : 'text-black/45 hover:text-black',
+                !mappedPixelData && 'opacity-40 cursor-not-allowed']"
             >预览</button>
             <button
               @click="switchMode('focus')"
+              :disabled="!mappedPixelData"
+              :title="!mappedPixelData ? '请先导入文件' : ''"
               :class="['px-2 sm:px-3 h-8 text-xs rounded-full font-medium transition-colors min-w-[44px]',
-                activeMode === 'focus' ? 'bg-black text-white shadow-none' : 'text-black/45 hover:text-black']"
+                activeMode === 'focus' ? 'bg-black text-white shadow-none' : 'text-black/45 hover:text-black',
+                !mappedPixelData && 'opacity-40 cursor-not-allowed']"
             >专心</button>
           </div>
         </div>
@@ -1280,16 +1407,62 @@ function handleExportCsv() {
             </button>
           </div>
           <!-- Import button -->
-          <button
-            @click="triggerFileInput"
-            class="min-h-[44px] px-3 text-xs rounded-full border border-black/10 bg-black/[0.04] text-black/60 hover:bg-black/10 transition-colors"
-          >导入</button>
-          <!-- Download button -->
-          <button
-            v-if="mappedPixelData"
-            @click="showDownloadModal = true"
-            class="min-h-[44px] px-3 text-xs rounded-full border border-black/10 bg-black/[0.04] text-black/60 hover:bg-black/10 transition-colors"
-          >下载</button>
+          <div class="relative">
+            <button
+              @click="showImportMenu = !showImportMenu"
+              class="min-h-[44px] px-3 text-xs rounded-full border border-black/10 bg-black/[0.04] text-black/60 hover:bg-black/10 transition-colors"
+            >导入</button>
+            <!-- Import dropdown menu -->
+            <div
+              v-if="showImportMenu"
+              class="absolute right-0 mt-1 w-36 bg-white rounded-lg shadow-lg border border-black/10 py-1 z-50"
+            >
+              <button
+                @click="triggerFileInput"
+                class="w-full px-3 py-2 text-left text-xs text-black/80 hover:bg-black/[0.04] transition-colors"
+              >
+                从图片导入
+              </button>
+              <button
+                @click="triggerPbdsInput"
+                class="w-full px-3 py-2 text-left text-xs text-black/80 hover:bg-black/[0.04] transition-colors"
+              >
+                从文件导入
+              </button>
+            </div>
+          </div>
+          <!-- Export dropdown -->
+          <div class="relative">
+            <button
+              v-if="mappedPixelData"
+              @click="showExportMenu = !showExportMenu"
+              class="min-h-[44px] px-3 text-xs rounded-full border border-black/10 bg-black/[0.04] text-black/60 hover:bg-black/10 transition-colors"
+            >导出</button>
+            <!-- Export dropdown menu -->
+            <div
+              v-if="showExportMenu"
+              class="absolute right-0 mt-1 w-44 bg-white rounded-lg shadow-lg border border-black/10 py-1 z-50"
+            >
+              <button
+                @click="handleExportPbds"
+                class="w-full px-3 py-2 text-left text-xs text-black/80 hover:bg-black/[0.04] transition-colors"
+              >
+                导出图纸文件 (.pbds)
+              </button>
+              <button
+                @click="handleDownloadImage"
+                class="w-full px-3 py-2 text-left text-xs text-black/80 hover:bg-black/[0.04] transition-colors"
+              >
+                下载图纸图片 (.png)
+              </button>
+              <button
+                @click="handleDownloadStats"
+                class="w-full px-3 py-2 text-left text-xs text-black/80 hover:bg-black/[0.04] transition-colors"
+              >
+                下载颜色统计 (.png)
+              </button>
+            </div>
+          </div>
           <!-- Settings button -->
           <button
             v-if="mappedPixelData"
@@ -1315,8 +1488,9 @@ function handleExportCsv() {
       </div>
     </header>
 
-    <!-- Hidden file input -->
-    <input ref="fileInput" type="file" accept="image/*,.csv" class="hidden" @change="handleFileChange" />
+    <!-- Hidden file inputs -->
+    <input ref="fileInput" type="file" accept="image/*" class="hidden" @change="handleFileChange" />
+    <input ref="pbdsFileInput" type="file" accept=".pbds" class="hidden" @change="handlePbdsFileChange" />
 
     <!-- Main content area -->
     <div class="relative flex-1 min-h-0 flex">
@@ -1342,7 +1516,7 @@ function handleExportCsv() {
                 <span class="w-6 h-6 rounded-full bg-emerald-400"></span>
               </div>
               <p class="text-black/35 text-lg mb-1">拖放或点击上传图片</p>
-              <p class="text-black/25 text-sm">支持 JPG / PNG / CSV 格式</p>
+              <p class="text-black/25 text-sm">支持 JPG / PNG / PBDS 格式</p>
               <p class="text-black/25 text-xs mt-3">建议将图片主体边缘对齐画布边界，减少后期去背景工作量</p>
             </div>
 
@@ -1355,7 +1529,7 @@ function handleExportCsv() {
             </div>
 
             <!-- Canvas preview (optimize/edit/preview modes) -->
-            <div v-else-if="activeMode !== 'focus'" class="flex-1 relative overflow-auto">
+            <div v-else-if="activeMode !== 'focus'" class="flex-1 relative overflow-hidden">
               <!-- Large grid hint -->
               <div
                 v-if="gridDimensions && gridDimensions.N > 100"
@@ -1365,12 +1539,36 @@ function handleExportCsv() {
               </div>
               <canvas
                 ref="previewCanvas"
-                class="w-full h-auto block"
-                :style="{ imageRendering: 'pixelated', cursor: isManualColoringMode ? (isFloodFillEraseMode ? 'cell' : colorReplaceState.isActive ? 'copy' : isEraseMode ? 'crosshair' : 'crosshair') : 'default' }"
+                class="block"
+                :style="{ 
+                  imageRendering: 'pixelated', 
+                  transform: `translate(${canvasTranslate.x}px, ${canvasTranslate.y}px) scale(${canvasZoom})`, 
+                  transformOrigin: '0 0', 
+                  cursor: isDragging ? 'grabbing' : (isManualColoringMode ? (isFloodFillEraseMode ? 'cell' : colorReplaceState.isActive ? 'copy' : isEraseMode ? 'crosshair' : 'crosshair') : (activeMode === 'edit' ? 'crosshair' : 'grab'))
+                }"
+                @wheel.prevent="handleCanvasWheel"
+                @mousedown="handleCanvasDragStart"
+                @mousemove="handleCanvasDragMove"
+                @mouseup="handleCanvasDragEnd"
+                @mouseleave="handleCanvasDragEnd"
                 @click="handleCanvasClick"
-                @mousemove="handleCanvasHover"
-                @mouseleave="handleCanvasLeave"
               ></canvas>
+              <!-- Zoom controls -->
+              <div class="absolute bottom-4 right-4 flex items-center gap-2 bg-white/90 backdrop-blur-sm rounded-lg px-3 py-1.5 shadow-sm border border-black/10">
+                <button
+                  @click="canvasZoom = Math.max(MIN_ZOOM, canvasZoom - 0.1)"
+                  class="w-6 h-6 flex items-center justify-center text-black/60 hover:text-black transition-colors"
+                >−</button>
+                <span class="text-xs text-black/80 min-w-[40px] text-center">{{ Math.round(canvasZoom * 100) }}%</span>
+                <button
+                  @click="canvasZoom = Math.min(MAX_ZOOM, canvasZoom + 0.1)"
+                  class="w-6 h-6 flex items-center justify-center text-black/60 hover:text-black transition-colors"
+                >+</button>
+                <button
+                  @click="resetCanvasView"
+                  class="text-xs text-black/45 hover:text-black transition-colors ml-1"
+                >重置</button>
+              </div>
               <!-- Tooltip -->
               <div
                 v-if="tooltipData"
@@ -1950,16 +2148,25 @@ function handleExportCsv() {
     @close="showDownloadModal = false"
   />
 
+  <!-- Import convert dialog -->
+  <ImportConvertDialog
+    :is-open="showImportDialog"
+    :import-data="pendingPbdsData"
+    :current-color-system="selectedColorSystem"
+    :full-palette="fullBeadPalette"
+    @confirm="handleImportConfirm"
+    @close="handleImportCancel"
+  />
+
   <!-- Custom palette editor -->
-  <Teleport to="body">
-    <CustomPaletteEditor
-      v-if="showPaletteEditor"
-      :all-colors="fullBeadPalette"
-      :current-selections="customPaletteSelections"
-      @save="handlePaletteEditorSave"
-      @close="handlePaletteEditorClose"
-    />
-  </Teleport>
+  <CustomPaletteEditor
+    v-if="showPaletteEditor"
+    :all-colors="fullBeadPalette"
+    :current-selections="customPaletteSelections"
+    :selected-color-system="selectedColorSystem"
+    @save="handlePaletteEditorSave"
+    @close="handlePaletteEditorClose"
+  />
 
   <!-- Settings panel -->
   <Teleport to="body">

@@ -9,7 +9,6 @@ const props = defineProps({
 })
 
 const emit = defineEmits([
- 'selectionChange',
  'save',
  'close',
  'exportPalette',
@@ -18,6 +17,11 @@ const emit = defineEmits([
 
 const expandedGroups = ref({})
 const searchTerm = ref('')
+const tempSelections = ref({ ...props.currentSelections })
+
+watch(() => props.currentSelections, (val) => {
+ tempSelections.value = { ...val }
+}, { deep: true })
 
 // 对颜色进行分组的工具函数，按前缀分组
 function groupColorsByPrefix(colors) {
@@ -68,7 +72,7 @@ function groupColorsByPrefix(colors) {
 }
 
 const selectedCount = computed(() => {
- return Object.values(props.currentSelections).filter(Boolean).length
+ return Object.values(tempSelections.value).filter(Boolean).length
 })
 
 const filteredColors = computed(() => {
@@ -90,36 +94,47 @@ function toggleGroup(prefix) {
 
 function toggleAllColors(selected) {
  props.allColors.forEach(color => {
- emit('selectionChange', color.hex.toUpperCase(), selected)
+  tempSelections.value[color.hex.toUpperCase()] = selected
  })
 }
 
 function toggleGroupColors(prefix, selected) {
  colorGroups.value[prefix].forEach(color => {
- emit('selectionChange', color.hex.toUpperCase(), selected)
+  tempSelections.value[color.hex.toUpperCase()] = selected
  })
+}
+
+function toggleColor(hex, checked) {
+ tempSelections.value[hex] = checked
 }
 </script>
 
 <template>
- <div class="flex flex-col h-full max-h-[calc(90vh-80px)]">
- <!-- 头部 -->
- <div class="flex justify-between items-center border-b pb-3 mb-3">
- <h2 class="text-lg font-semibold text-black flex items-center">
- <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2 text-[#007be5]" viewBox="0 0 20 20" fill="currentColor">
- <path fill-rule="evenodd" d="M4 2a2 2 0 00-2 2v11a3 3 0 106 0V4a2 2 0 00-2-2H4zm1 14a1 1 0 100-2 1 1 0 000 2zm5-1.757l4.9-4.9a2 2 0 000-2.828L13.485 5.1a2 2 0 00-2.828 0L10 5.757v8.486zM16 18H9.071l6-6H16a2 2 0 012 2v2a2 2 0 01-2 2z" clip-rule="evenodd" />
- </svg>
- 色板管理中心 <span class="ml-2 text-sm text-[#007be5] dark:text-blue-400">({{ selectedCount }} 色)</span>
- </h2>
- <button
- @click="emit('close')"
- class="text-black/45 hover:text-black "
- >
- <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
- <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
- </svg>
- </button>
- </div>
+ <Teleport to="body">
+  <div
+   class="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+   @click.self="emit('close')"
+  >
+   <div class="bg-white rounded-xl shadow-lg overflow-hidden w-full max-w-lg max-h-[90vh] flex flex-col">
+    <!-- 头部 -->
+    <div class="flex justify-between items-center border-b pb-3 mb-3 px-5 pt-5">
+     <h2 class="text-lg font-semibold text-black flex items-center">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2 text-[#007be5]" viewBox="0 0 20 20" fill="currentColor">
+       <path fill-rule="evenodd" d="M4 2a2 2 0 00-2 2v11a3 3 0 106 0V4a2 2 0 00-2-2H4zm1 14a1 1 0 100-2 1 1 0 000 2zm5-1.757l4.9-4.9a2 2 0 000-2.828L13.485 5.1a2 2 0 00-2.828 0L10 5.757v8.486zM16 18H9.071l6-6H16a2 2 0 012 2v2a2 2 0 01-2 2z" clip-rule="evenodd" />
+      </svg>
+      色板管理中心 <span class="ml-2 text-sm text-[#007be5] dark:text-blue-400">({{ selectedCount }} 色)</span>
+     </h2>
+     <button
+      @click="emit('close')"
+      class="text-black/45 hover:text-black "
+     >
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+       <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+      </svg>
+     </button>
+    </div>
+
+    <div class="flex-1 overflow-y-auto px-5 pb-5">
 
  <!-- 搜索框 -->
  <div class="mb-4">
@@ -237,10 +252,10 @@ function toggleGroupColors(prefix, selected) {
  class="flex items-center space-x-2 p-1.5 hover:bg-white rounded cursor-pointer"
  >
  <input
- type="checkbox"
- :checked="!!currentSelections[color.hex.toUpperCase()]"
- @change="emit('selectionChange', color.hex.toUpperCase(), $event.target.checked)"
- class="h-4 w-4 rounded border-black/10 text-black focus:ring-black "
+  type="checkbox"
+  :checked="!!tempSelections[color.hex.toUpperCase()]"
+  @change="toggleColor(color.hex.toUpperCase(), $event.target.checked)"
+  class="h-4 w-4 rounded border-black/10 text-black focus:ring-black "
  />
  <div
  class="w-6 h-6 rounded-sm border border-black/10 flex-shrink-0"
@@ -252,20 +267,24 @@ function toggleGroupColors(prefix, selected) {
  </div>
  </div>
 
- <!-- 底部按钮 -->
- <div class="mt-4 pt-3 border-t flex justify-between">
- <button
- @click="emit('close')"
- class="px-4 py-2 bg-black/10 text-black rounded-md hover:bg-black/10 "
- >
- 取消
- </button>
- <button
- @click="emit('save')"
- class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
- >
- 保存并应用
- </button>
- </div>
- </div>
+    </div>
+
+    <!-- 底部按钮 -->
+    <div class="px-5 pb-5 pt-3 border-t flex justify-between">
+     <button
+      @click="emit('close')"
+      class="px-4 py-2 bg-black/10 text-black rounded-md hover:bg-black/10 "
+     >
+      取消
+     </button>
+     <button
+      @click="emit('save', { ...tempSelections })"
+      class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+     >
+      保存并应用
+     </button>
+    </div>
+   </div>
+  </div>
+ </Teleport>
 </template>
