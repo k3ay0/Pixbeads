@@ -144,14 +144,14 @@ export const gridLineColorOptions = [
  </label>
  </div>
 
- <!-- 当前导出方案选项 -->
+ <!-- 同时导出方案选项 -->
  <div class="flex items-center justify-between">
  <div class="flex flex-col">
  <label class="flex items-center text-sm font-medium text-black ">
- 当前导出方案
+ 导出分享方案
  </label>
  <span class="text-xs text-black/45 mt-1">
- 同时导出 .pbds 文件，包含完整项目数据
+ 同时导出 .pbds 文件，包含完整项目数据，可以分享。
  </span>
  </div>
  <label class="relative inline-flex items-center cursor-pointer">

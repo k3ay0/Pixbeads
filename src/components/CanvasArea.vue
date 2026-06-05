@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useBeadStore } from '../stores/beadStore'
 import { useCanvasStore } from '../stores/canvasStore'
@@ -6,11 +7,15 @@ import { useEditorStore } from '../stores/editorStore'
 import { useUiStore } from '../stores/uiStore'
 import { useFocusStore } from '../stores/focusStore'
 import { useCanvasTransform } from '../composables/useCanvasTransform'
+import { calculateVisibleColumns, calculateVisibleRows } from '../utils/canvasUtils'
 import { CELL_SIZE, AXIS_WIDTH, AXIS_HEIGHT, MIN_ZOOM, MAX_ZOOM } from '../constants/canvasConstants'
+import FocusCanvas from './FocusCanvas.vue'
 
 const emit = defineEmits<{
   (e: 'canvas-click', ev: MouseEvent): void
   (e: 'canvas-hover', ev: MouseEvent): void
+  (e: 'trigger-file-input'): void
+  (e: 'file-drop', ev: DragEvent): void
 }>()
 
 const beadStore = useBeadStore()
@@ -22,9 +27,19 @@ const canvasTransform = useCanvasTransform()
 
 const { originalImageSrc, mappedPixelData, gridDimensions, isProcessing, processingProgress } = storeToRefs(beadStore)
 const { canvasZoom, canvasTranslate, isDragging, tooltipData, previewCanvas, canvasContainer } = storeToRefs(canvasStore)
-const { isManualColoringMode, isMagnifierActive } = storeToRefs(editorStore)
+const { isManualColoringMode } = storeToRefs(editorStore)
 const { activeMode } = storeToRefs(uiStore)
 const { currentColor, completedCells, recommendedCell, recommendedRegion, canvasScale, canvasOffset, gridSectionInterval, showSectionLines, sectionLineColor } = storeToRefs(focusStore)
+
+const visibleColumns = computed(() => {
+  if (!gridDimensions.value || !canvasContainer.value) return []
+  return calculateVisibleColumns(gridDimensions.value.N, canvasContainer.value.clientWidth, canvasTranslate.value.x, canvasZoom.value)
+})
+
+const visibleRows = computed(() => {
+  if (!gridDimensions.value || !canvasContainer.value) return []
+  return calculateVisibleRows(gridDimensions.value.M, canvasContainer.value.clientHeight, canvasTranslate.value.y, canvasZoom.value)
+})
 
 function handleCanvasWheel(e: WheelEvent) { canvasTransform.handleCanvasWheel(e) }
 function handleCanvasDragStart(e: MouseEvent) { canvasTransform.handleCanvasDragStart(e) }
