@@ -346,7 +346,7 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
     :import-data="pendingPbdsData"
     :current-color-system="selectedColorSystem"
     :full-palette="fullBeadPalette"
-    @confirm="handleImportConfirm"
+    @confirm="handleImportConfirmFromDialog"
     @close="handleImportCancel"
   />
 
