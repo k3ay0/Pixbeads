@@ -20,7 +20,6 @@ export const usePaletteStore = defineStore('palette', () => {
   const selectedColorSystem = ref<ColorSystem>('MARD')
   const customPaletteSelections = ref<Record<string, boolean>>({})
   const excludedColorKeys = ref<Set<string>>(new Set())
-  const showPaletteEditor = ref(false)
   const showExcludedColors = ref(false)
 
   // ========== Getters ==========
@@ -99,7 +98,6 @@ export const usePaletteStore = defineStore('palette', () => {
     selectedColorSystem,
     customPaletteSelections,
     excludedColorKeys,
-    showPaletteEditor,
     showExcludedColors,
     // Getters
     activeBeadPalette,

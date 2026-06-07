@@ -16,6 +16,7 @@ export const useUiStore = defineStore('ui', () => {
   const showSettingsPanel = ref(false)
   const showDonationModal = ref(false)
   const showImportDialog = ref(false)
+  const showPaletteEditor = ref(false)
 
   // ========== Toast ==========
   const toastMessage = ref<string | null>(null)
@@ -76,6 +77,7 @@ export const useUiStore = defineStore('ui', () => {
     showSettingsPanel,
     showDonationModal,
     showImportDialog,
+    showPaletteEditor,
     toastMessage,
     downloadOptions,
     // Actions

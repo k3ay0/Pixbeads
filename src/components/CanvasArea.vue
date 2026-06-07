@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useBeadStore } from '../stores/beadStore'
 import { useCanvasStore } from '../stores/canvasStore'
@@ -14,6 +14,8 @@ import FocusCanvas from './FocusCanvas.vue'
 const emit = defineEmits<{
   (e: 'canvas-click', ev: MouseEvent): void
   (e: 'canvas-hover', ev: MouseEvent): void
+  (e: 'canvas-mousedown', ev: MouseEvent): void
+  (e: 'canvas-mouseup', ev: MouseEvent): void
   (e: 'trigger-file-input'): void
   (e: 'file-drop', ev: DragEvent): void
 }>()
@@ -27,8 +29,12 @@ const canvasTransform = useCanvasTransform()
 
 const { originalImageSrc, mappedPixelData, gridDimensions, isProcessing, processingProgress } = storeToRefs(beadStore)
 const { canvasZoom, canvasTranslate, isDragging, tooltipData, previewCanvas, canvasContainer } = storeToRefs(canvasStore)
-const { isManualColoringMode } = storeToRefs(editorStore)
+const { isManualColoringMode, manualTool } = storeToRefs(editorStore)
 const { activeMode } = storeToRefs(uiStore)
+
+const previewOverlayCanvas = ref<HTMLCanvasElement | null>(null)
+
+defineExpose({ previewOverlayCanvas })
 const { currentColor, completedCells, recommendedCell, recommendedRegion, canvasScale, canvasOffset, gridSectionInterval, showSectionLines, sectionLineColor } = storeToRefs(focusStore)
 
 const visibleColumns = computed(() => {
@@ -42,10 +48,22 @@ const visibleRows = computed(() => {
 })
 
 function handleCanvasWheel(e: WheelEvent) { canvasTransform.handleCanvasWheel(e) }
-function handleCanvasDragStart(e: MouseEvent) { canvasTransform.handleCanvasDragStart(e) }
+function handleCanvasDragStart(e: MouseEvent) {
+  // 编辑模式下，仅 drag 工具允许拖动画布
+  if (activeMode.value === 'edit' && manualTool.value !== 'drag') return
+  canvasTransform.handleCanvasDragStart(e)
+}
 function handleCanvasDragMove(e: MouseEvent) { canvasTransform.handleCanvasDragMove(e) }
 function handleCanvasDragEnd() { canvasTransform.handleCanvasDragEnd() }
-function handleCanvasLeave() { canvasStore.clearTooltip(); canvasTransform.handleCanvasDragEnd() }
+function handleCanvasLeave() {
+  canvasStore.clearTooltip()
+  canvasTransform.handleCanvasDragEnd()
+  // 画笔/橡皮需要在离开画布时停止绘画
+  if (manualTool.value === 'brush' || manualTool.value === 'eraser') {
+    emit('canvas-mouseup', new MouseEvent('mouseup'))
+  }
+  // line/rect/select/move 由 document 级别事件处理，不在此终止
+}
 function resetCanvasView() { canvasTransform.resetCanvasView() }
 function handleCellClick(data: any) { focusStore.handleCellClick(data) }
 </script>
@@ -121,10 +139,41 @@ function handleCellClick(data: any) { focusStore.handleCellClick(data) }
             <canvas
               ref="previewCanvas"
               class="block"
-              :style="{ imageRendering: 'pixelated', transform: `translate(${canvasTranslate.x}px, ${canvasTranslate.y}px) scale(${canvasZoom})`, transformOrigin: '0 0', cursor: isDragging ? 'grabbing' : (isManualColoringMode ? 'crosshair' : (activeMode === 'edit' ? 'crosshair' : 'grab')) }"
+              :style="{
+                imageRendering: 'pixelated',
+                transform: `translate(${canvasTranslate.x}px, ${canvasTranslate.y}px) scale(${canvasZoom})`,
+                transformOrigin: '0 0',
+                cursor: isDragging ? 'grabbing' : (
+                  activeMode === 'edit' ? (
+                    manualTool === 'picker' ? 'crosshair' :
+                    manualTool === 'fill' ? 'cell' :
+                    manualTool === 'select' ? 'crosshair' :
+                    manualTool === 'move' ? 'move' :
+                    manualTool === 'drag' ? 'grab' :
+                    manualTool === 'eraser' ? 'cell' :
+                    manualTool === 'line' ? 'crosshair' :
+                    manualTool === 'rect' ? 'crosshair' :
+                    'crosshair'
+                  ) : 'grab'
+                )
+              }"
               @click="$emit('canvas-click', $event)"
+              @mousedown="$emit('canvas-mousedown', $event)"
               @mousemove="$emit('canvas-hover', $event)"
+              @mouseup="$emit('canvas-mouseup', $event)"
               @mouseleave="handleCanvasLeave"
+            ></canvas>
+            <!-- Brush preview overlay -->
+            <canvas
+              ref="previewOverlayCanvas"
+              class="block pointer-events-none absolute top-0 left-0"
+              :style="{
+                imageRendering: 'pixelated',
+                transform: `translate(${canvasTranslate.x}px, ${canvasTranslate.y}px) scale(${canvasZoom})`,
+                transformOrigin: '0 0',
+                width: previewCanvas ? previewCanvas.width + 'px' : '0',
+                height: previewCanvas ? previewCanvas.height + 'px' : '0',
+              }"
             ></canvas>
           </div>
         </div>

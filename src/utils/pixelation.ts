@@ -372,6 +372,39 @@ export function floodFillErase(
   return result
 }
 
+export function floodFill(
+  mappedData: MappedPixel[][],
+  gridDimensions: GridDimensions,
+  startRow: number,
+  startCol: number,
+  fillColor: { key: string; color: string }
+): MappedPixel[][] {
+  const { N, M } = gridDimensions
+  const startCell = mappedData[startRow]?.[startCol]
+  if (!startCell || startCell.isExternal) return mappedData
+  const targetColor = startCell.color.toUpperCase()
+  // 如果填充色和目标色相同，不做任何事
+  if (fillColor.color.toUpperCase() === targetColor) return mappedData
+
+  const result: MappedPixel[][] = mappedData.map(row => row.map(cell => ({ ...cell })))
+  const visited: boolean[][] = Array(M).fill(null).map(() => Array(N).fill(false))
+  const stack: { row: number; col: number }[] = [{ row: startRow, col: startCol }]
+
+  while (stack.length > 0) {
+    const { row, col } = stack.pop()!
+    if (row < 0 || row >= M || col < 0 || col >= N || visited[row][col]) continue
+    const cell = result[row][col]
+    if (!cell || cell.isExternal || cell.color.toUpperCase() !== targetColor) continue
+    visited[row][col] = true
+    result[row][col] = { key: fillColor.key, color: fillColor.color, isExternal: false }
+    stack.push(
+      { row: row - 1, col }, { row: row + 1, col },
+      { row, col: col - 1 }, { row, col: col + 1 }
+    )
+  }
+  return result
+}
+
 export function recalculateColorStats(
   mappedData: MappedPixel[][]
 ): { colorCounts: ColorCounts; totalCount: number } {

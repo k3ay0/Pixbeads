@@ -272,7 +272,7 @@ function toggleColor(hex, checked) {
     <!-- 底部按钮 -->
     <div class="px-5 pb-5 pt-3 border-t flex justify-between">
      <button
-      @click="emit('close')"
+      @click="handleClose"
       class="px-4 py-2 bg-black/10 text-black rounded-md hover:bg-black/10 "
      >
       取消

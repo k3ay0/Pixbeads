@@ -75,8 +75,8 @@ function handleDownloadStats() {
             :disabled="mode.key !== 'optimize' && !mappedPixelData"
             :title="mode.key !== 'optimize' && !mappedPixelData ? '请先导入文件' : ''"
             :class="[
-              'px-2 sm:px-3 h-8 text-xs rounded-full font-medium transition-colors min-w-[44px]',
-              activeMode === mode.key ? 'bg-black text-white shadow-none' : 'text-black/45 hover:text-black',
+              'px-2 sm:px-3 h-8 text-[11px] sm:text-xs rounded-md font-medium transition-colors min-w-[44px] flex items-center justify-center',
+              activeMode === mode.key ? 'bg-black text-white shadow-sm' : 'text-black/45 hover:text-black',
               mode.key !== 'optimize' && !mappedPixelData && 'opacity-40 cursor-not-allowed'
             ]"
           >{{ mode.label }}</button>

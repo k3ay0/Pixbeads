@@ -18,14 +18,14 @@ import { useBackgroundRemoval } from './composables/useBackgroundRemoval'
 import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts'
 import { useCanvasTransform } from './composables/useCanvasTransform'
 import { useFocusModeLogic } from './composables/useFocusModeLogic'
+import { useMarchingAnts } from './composables/useMarchingAnts'
+import { useCanvasRenderer } from './composables/useCanvasRenderer'
+import { useCanvasInteraction } from './composables/useCanvasInteraction'
 
 // Utils
 import { getColorKeyByHex, sortColorsByHue } from './utils/colorSystemUtils'
-import { clientToGridCoords } from './utils/canvasUtils'
-import { CELL_SIZE } from './constants/canvasConstants'
 import { MODES } from './constants/modeConstants'
 import type { AppMode } from './constants/modeConstants'
-import { TRANSPARENT_KEY } from './types'
 import type { PbdsImportResult } from './utils/downloader'
 
 // Components
@@ -37,9 +37,9 @@ import AppHeader from './components/AppHeader.vue'
 import CanvasArea from './components/CanvasArea.vue'
 import OptimizeSidebar from './components/OptimizeSidebar.vue'
 import EditSidebar from './components/EditSidebar.vue'
+import EditToolbar from './components/EditToolbar.vue'
 import PreviewSidebar from './components/PreviewSidebar.vue'
 import FocusSidebar from './components/FocusSidebar.vue'
-import FloatingPalette from './components/FloatingPalette.vue'
 
 // Async components
 const MagnifierTool = defineAsyncComponent(() =>
@@ -71,6 +71,7 @@ const bgRemoval = useBackgroundRemoval()
 useKeyboardShortcuts()
 const canvasTransform = useCanvasTransform()
 const focusLogic = useFocusModeLogic()
+const { marchingAntsOffset, startMarchingAnts, stopMarchingAnts } = useMarchingAnts()
 
 // ========== 从 Store 映射状态 ==========
 const {
@@ -83,7 +84,7 @@ const {
 
 const {
   selectedColorSystem, customPaletteSelections, excludedColorKeys,
-  activeBeadPalette, showPaletteEditor, showExcludedColors, fullBeadPalette,
+  activeBeadPalette, showExcludedColors, fullBeadPalette,
 } = storeToRefs(paletteStore)
 
 const {
@@ -95,12 +96,17 @@ const {
   isManualColoringMode, selectedEditColor, isEraseMode,
   colorReplaceState, highlightColorKey,
   isFloodFillEraseMode, isMagnifierActive,
+  manualTool, manualBrushSize, manualMirrorX, manualMirrorY, manualShapeFill,
+  selectionStart, selectionEnd, manualPasteActive, lineStart, clipboard,
+  lineDrawing, rectDrawing, dragDrawing, currentDrawEnd, selectDrawing,
+  selectionBoxDragging, selectionBoxDragStart, selectionBoxDragOffset,
+  selectionDragging, selectionDragOffset, isCopyingSelection, moveToolMode,
 } = storeToRefs(editorStore)
 
 const {
   activeMode, showDownloadModal,
   showSettingsPanel, showDonationModal, showImportDialog,
-  toastMessage, downloadOptions,
+  toastMessage, downloadOptions, showPaletteEditor
 } = storeToRefs(uiStore)
 
 const {
@@ -115,6 +121,37 @@ const modes = MODES
 const pendingPbdsData = ref<PbdsImportResult | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 const pbdsFileInput = ref<HTMLInputElement | null>(null)
+const isPainting = ref(false)
+const lastPaintCell = ref<{ row: number; col: number } | null>(null)
+const hoverCell = ref<{ row: number; col: number } | null>(null)
+const previewOverlayCanvas = ref<HTMLCanvasElement | null>(null)
+
+// CanvasArea ref for accessing overlay canvas
+const canvasAreaRef = ref<any>(null)
+
+// ========== 初始化 Composables ==========
+const { scheduleRender, renderCanvas, renderPreviewOverlay, clearPreviewOverlay } = useCanvasRenderer(
+  canvasAreaRef,
+  previewOverlayCanvas,
+  hoverCell,
+  marchingAntsOffset
+)
+
+const {
+  handleCanvasClick,
+  handleCanvasHover,
+  handleCanvasMouseDown,
+  handleCanvasMouseUp,
+  handleDocumentMouseMove,
+  handleDocumentSelectMouseMove,
+} = useCanvasInteraction(
+  hoverCell,
+  isPainting,
+  lastPaintCell,
+  renderPreviewOverlay,
+  clearPreviewOverlay,
+  scheduleRender
+)
 
 // ========== 函数定义 ==========
 function triggerFileInput() { uiStore.closeAllMenus(); fileInput.value?.click() }
@@ -161,6 +198,7 @@ function switchMode(mode: AppMode) {
   if (activeMode.value === 'edit') editorStore.exitManualMode()
   if (activeMode.value === 'focus') focusStore.stopTimer()
   uiStore.switchMode(mode)
+  if (mode === 'edit') editorStore.enterManualMode()
   if (mode === 'focus') focusLogic.initFocusMode()
 }
 
@@ -177,67 +215,10 @@ const currentGridColors = computed(() => {
   return sortColorsByHue(Array.from(map.values()).map(c => ({ key: getColorKeyByHex(c.color, selectedColorSystem.value), color: c.color })))
 })
 
-// Canvas 交互
-function handleCanvasClick(e: MouseEvent) {
-  if (!mappedPixelData.value || !gridDimensions.value || !isManualColoringMode.value || isDragging.value) return
-  const canvas = e.target as HTMLCanvasElement
-  const coords = clientToGridCoords(e.clientX, e.clientY, canvas, gridDimensions.value)
-  if (!coords) return
-  const { i: col, j: row } = coords
-  const cell = mappedPixelData.value[row][col]
-  if (!cell || cell.isExternal) return
-  if (isFloodFillEraseMode.value) { pixelEditing.handleFloodFillErase(row, col); return }
-  if (colorReplaceState.value.isActive) { pixelEditing.handleColorReplaceClick(row, col); return }
-  if (isEraseMode.value) { editorStore.saveSnapshot(mappedPixelData.value); pixelEditing.performSinglePixelPaint(row, col, { key: TRANSPARENT_KEY, color: '#FFFFFF', isExternal: true }) }
-  else if (selectedEditColor.value) { editorStore.saveSnapshot(mappedPixelData.value); pixelEditing.performSinglePixelPaint(row, col, { key: selectedEditColor.value.key, color: selectedEditColor.value.color, isExternal: false }) }
-  else { const hex = cell.color.toUpperCase(); pixelEditing.selectEditColor({ key: getColorKeyByHex(hex, selectedColorSystem.value), color: cell.color }) }
-}
-
-function handleCanvasHover(e: MouseEvent) {
-  if (!mappedPixelData.value || !gridDimensions.value || isDragging.value) return
-  const canvas = e.target as HTMLCanvasElement
-  const coords = clientToGridCoords(e.clientX, e.clientY, canvas, gridDimensions.value)
-  if (coords) {
-    const { i: col, j: row } = coords
-    const cell = mappedPixelData.value[row][col]
-    if (cell && !cell.isExternal) {
-      const rect = canvas.getBoundingClientRect()
-      canvasStore.setTooltip({ x: e.clientX - rect.left + 15, y: e.clientY - rect.top - 10, key: getColorKeyByHex(cell.color, selectedColorSystem.value), color: cell.color, row: row + 1, col: col + 1 })
-      return
-    }
-  }
-  canvasStore.clearTooltip()
-}
-
-// 画布渲染
-function renderCanvas() {
-  const canvas = previewCanvas.value
-  if (!canvas || !mappedPixelData.value || !gridDimensions.value) return
-  const { N, M } = gridDimensions.value
-  canvas.width = N * CELL_SIZE; canvas.height = M * CELL_SIZE
-  const ctx = canvas.getContext('2d'); ctx.imageSmoothingEnabled = false
-  ctx.clearRect(0, 0, canvas.width, canvas.height)
-  for (let j = 0; j < M; j++) for (let i = 0; i < N; i++) {
-    const cell = mappedPixelData.value[j]?.[i]; if (!cell) continue
-    const x = i * CELL_SIZE, y = j * CELL_SIZE
-    if (cell.isExternal) { ctx.clearRect(x, y, CELL_SIZE, CELL_SIZE); continue }
-    ctx.fillStyle = cell.color; ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE)
-    ctx.strokeStyle = 'rgba(0,0,0,0.08)'; ctx.lineWidth = 0.5; ctx.strokeRect(x, y, CELL_SIZE, CELL_SIZE)
-  }
-  if (highlightColorKey.value) {
-    ctx.fillStyle = 'rgba(255, 255, 0, 0.3)'
-    for (let j = 0; j < M; j++) for (let i = 0; i < N; i++) {
-      const cell = mappedPixelData.value[j]?.[i]
-      if (cell && !cell.isExternal && cell.color.toUpperCase() === highlightColorKey.value.toUpperCase())
-        ctx.fillRect(i * CELL_SIZE, j * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-    }
-  }
-}
-
 // Watch
-watch([mappedPixelData, highlightColorKey], () => renderCanvas(), { flush: 'post' })
-watch(isProcessing, () => { if (!isProcessing.value) renderCanvas() })
-watch(originalImageSrc, () => { if (!originalImageSrc.value) renderCanvas() })
+watch([mappedPixelData, highlightColorKey, () => editorStore.selectionInfo], () => scheduleRender(), { flush: 'post' })
+watch(isProcessing, () => { if (!isProcessing.value) scheduleRender() })
+watch(originalImageSrc, () => { if (!originalImageSrc.value) scheduleRender() })
 watch(granularity, v => { beadStore.granularityInput = v.toString(); if (lockAspectRatio.value) { const src = croppedImageCanvas.value || beadStore.originalImage; if (src) { const r = ('height' in src ? src.height : (src as HTMLCanvasElement).height) / ('width' in src ? src.width : (src as HTMLCanvasElement).width); beadStore.updateGranularityY(Math.max(1, Math.round(v * r))) } } })
 watch(granularityY, v => { beadStore.granularityYInput = v.toString() })
 watch(similarityThreshold, v => { beadStore.similarityThresholdInput = v.toString() })
@@ -245,9 +226,39 @@ watch([granularity, granularityY, similarityThreshold, pixelationMode, activeBea
 watch(selectedColorSystem, () => { if (beadStore.originalImage) processImage() })
 watch(customPaletteSelections, () => paletteStore.saveSelections(), { deep: true })
 
+// Marching ants 动画控制
+watch(() => editorStore.selectionInfo, (info) => {
+  if (info && (manualTool.value === 'select' || manualTool.value === 'move')) {
+    startMarchingAnts(renderPreviewOverlay)
+  } else {
+    stopMarchingAnts()
+  }
+}, { flush: 'post' })
+
+watch(manualTool, (tool) => {
+  if (tool !== 'select' && tool !== 'move') {
+    stopMarchingAnts()
+  } else if (editorStore.selectionInfo) {
+    startMarchingAnts(renderPreviewOverlay)
+  }
+})
+
 // Lifecycle
-onMounted(() => { paletteStore.initPalette(); document.addEventListener('click', handleGlobalClick) })
-onUnmounted(() => { document.removeEventListener('click', handleGlobalClick); focusStore.stopTimer() })
+onMounted(() => {
+  paletteStore.initPalette()
+  document.addEventListener('click', handleGlobalClick)
+  document.addEventListener('mouseup', handleCanvasMouseUp)
+  document.addEventListener('mousemove', handleDocumentMouseMove)
+  document.addEventListener('mousemove', handleDocumentSelectMouseMove)
+})
+onUnmounted(() => {
+  document.removeEventListener('click', handleGlobalClick)
+  document.removeEventListener('mouseup', handleCanvasMouseUp)
+  document.removeEventListener('mousemove', handleDocumentMouseMove)
+  document.removeEventListener('mousemove', handleDocumentSelectMouseMove)
+  focusStore.stopTimer()
+  stopMarchingAnts()
+})
 
 // 其他函数
 function handleDownloadGridWithOptions(o: any) { uiStore.updateDownloadOptions(o); fileIO.handleDownloadGrid() }
@@ -277,7 +288,6 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
       @download-stats="handleDownloadStats"
     />
 
-    <!-- Hidden file inputs -->
     <input ref="fileInput" type="file" accept="image/*" class="hidden" @change="handleFileChange" />
     <input ref="pbdsFileInput" type="file" accept=".pbds" class="hidden" @change="handlePbdsFileChange" />
 
@@ -286,10 +296,19 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
       <div class="mx-auto w-full flex-1 min-h-0 flex">
         <!-- Canvas area -->
         <CanvasArea
+          ref="canvasAreaRef"
           @trigger-file-input="triggerFileInput"
           @file-drop="handleFileDrop"
           @canvas-click="handleCanvasClick"
           @canvas-hover="handleCanvasHover"
+          @canvas-mousedown="handleCanvasMouseDown"
+          @canvas-mouseup="handleCanvasMouseUp"
+        />
+
+        <!-- Edit toolbar (floating on canvas left) -->
+        <EditToolbar
+          v-if="activeMode === 'edit' && mappedPixelData"
+          @toggle-palette="showPaletteEditor = true"
         />
 
         <!-- Right sidebar -->
@@ -299,7 +318,7 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
           style="width: 320px;"
         >
           <OptimizeSidebar v-if="activeMode === 'optimize'" @trigger-file-input="triggerFileInput" @auto-remove-background="handleAutoRemoveBackground" @undo-bg-removal="handleUndoBgRemoval" />
-          <EditSidebar v-if="activeMode === 'edit'" @trigger-file-input="triggerFileInput" @open-palette-editor="showPaletteEditor = true" @color-select="handlePaletteColorSelect" @color-replace="handlePaletteColorReplace" />
+          <EditSidebar v-if="activeMode === 'edit'" @color-select="handlePaletteColorSelect" @color-replace="handlePaletteColorReplace" />
           <PreviewSidebar v-if="activeMode === 'preview'" @open-palette-editor="showPaletteEditor = true" @download-stats="handleDownloadStats" />
           <FocusSidebar v-if="activeMode === 'focus'" @color-change="handleFocusColorChange" />
         </div>
@@ -307,15 +326,14 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
     </div>
 
     <!-- Footer -->
-    <footer class="border-t border-black/10/60 bg-white/70">
+    <footer class="border-t border-black/[0.06] bg-white/70">
       <div class="mx-auto w-full px-4 py-2 flex items-center justify-between text-xs text-black/45">
         <span>PIXBEADS — 拼豆图纸生成工具</span>
       </div>
     </footer>
   </div>
 
-  <!-- Floating palette -->
-  <FloatingPalette @color-select="handlePaletteColorSelect" @color-replace="handlePaletteColorReplace" />
+
 
   <!-- Magnifier tool -->
   <Teleport to="body">
@@ -370,7 +388,12 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
       :pixelation-mode="pixelationMode"
       @update:downloadOptions="downloadOptions = $event"
       @update:granularity="granularity = $event"
+      @update:granularity-input="granularityInput = $event"
+      @update:granularity-y="granularityY = $event"
+      @update:granularity-y-input="granularityYInput = $event"
+      @update:lockAspectRatio="lockAspectRatio = $event"
       @update:similarityThreshold="similarityThreshold = $event"
+      @update:similarityThresholdInput="similarityThresholdInput = $event"
       @update:pixelationMode="pixelationMode = $event"
       @close="showSettingsPanel = false"
     />
@@ -378,36 +401,19 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
 
   <!-- Donation modal -->
   <Teleport to="body">
-    <DonationModal v-if="showDonationModal" @close="showDonationModal = false" />
+    <DonationModal
+      v-if="showDonationModal"
+      @close="showDonationModal = false"
+    />
   </Teleport>
 
-  <!-- PWA install prompt -->
-  <InstallPWA />
-
   <!-- Toast -->
-  <Transition name="toast">
-    <div
-      v-if="toastMessage"
-      class="fixed bottom-20 left-1/2 -translate-x-1/2 px-4 py-2 bg-black text-white text-sm rounded-lg shadow-lg z-50 pointer-events-none"
-    >{{ toastMessage }}</div>
-  </Transition>
+  <Teleport to="body">
+    <div v-if="toastMessage" class="fixed bottom-4 left-1/2 -translate-x-1/2 bg-black text-white text-sm px-4 py-2 rounded-lg shadow-lg z-50">
+      {{ toastMessage }}
+    </div>
+  </Teleport>
+
+  <!-- Install PWA -->
+  <InstallPWA />
 </template>
-<style>
-/* 全局滚动条美化 */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #9CA3AF; }
-
-/* Toast 过渡动画 */
-.toast-enter-active { transition: all 0.3s ease-out; }
-.toast-leave-active { transition: all 0.3s ease-in; }
-.toast-enter-from { opacity: 0; transform: translate(-50%, 10px); }
-.toast-leave-to { opacity: 0; transform: translate(-50%, 10px); }
-
-/* 悬浮调色盘拖拽时禁止选中 */
-.palette-dragging * {
-  user-select: none;
-  -webkit-user-select: none;
-}
-</style>

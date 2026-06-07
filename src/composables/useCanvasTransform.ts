@@ -31,9 +31,7 @@ export function useCanvasTransform() {
     canvasStore.setZoom(newZoom)
   }
 
-  function handleCanvasDragStart(e: MouseEvent, activeMode: string) {
-    if (activeMode === 'edit' && !e.shiftKey) return
-    if (activeMode === 'focus') return
+  function handleCanvasDragStart(e: MouseEvent) {
     canvasStore.startDrag(e.clientX, e.clientY)
   }
 

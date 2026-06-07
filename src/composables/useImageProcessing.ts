@@ -49,7 +49,11 @@ export function useImageProcessing() {
       const ctx = sourceCanvas.getContext('2d')!
       const imageData = ctx.getImageData(0, 0, imgWidth, imgHeight)
 
-      const palette = toRaw(paletteStore.activeBeadPalette)
+      const palette = toRaw(paletteStore.activeBeadPalette).map(c => ({
+        key: c.key,
+        hex: c.hex,
+        rgb: { r: c.rgb.r, g: c.rgb.g, b: c.rgb.b }
+      }))
       const fallbackColor = palette.find(p => p.key === 'T1')
         || palette.find(p => p.hex.toUpperCase() === '#FFFFFF')
         || palette[0]
@@ -65,7 +69,7 @@ export function useImageProcessing() {
           palette,
           mode: beadStore.pixelationMode,
           threshold: beadStore.similarityThreshold,
-          fallbackColor: toRaw(fallbackColor)
+          fallbackColor: { key: fallbackColor.key, color: fallbackColor.hex, isExternal: false }
         },
         (progress) => {
           beadStore.setProcessing(true, progress)
