@@ -105,39 +105,76 @@ bun run tauri build
 ```
 Pixbeads/
 ├── src/                          # Vue 3 前端
-│   ├── App.vue                   # 主页面（~1270行）
-│   ├── main.js                   # 入口（含路由逻辑）
+│   ├── App.vue                   # 主页面
+│   ├── main.ts                   # 入口
+│   ├── Root.vue                  # 根组件（router-view）
 │   ├── style.css                 # Tailwind CSS 引入
-│   ├── views/
-│   │   └── FocusMode.vue         # 专心拼豆模式页面
-│   ├── components/               # 16 个 Vue 组件
-│   │   ├── FocusCanvas.vue       # 游戏化画布
-│   │   ├── ColorStatusBar.vue    # 颜色状态栏
-│   │   ├── ProgressBar.vue       # 进度条
-│   │   ├── FocusToolBar.vue      # 工具栏
+│   ├── router/
+│   │   └── index.ts              # Vue Router 配置
+│   ├── stores/                   # Pinia 状态管理
+│   │   ├── beadStore.ts          # 拼豆数据
+│   │   ├── canvasStore.ts        # 画布状态
+│   │   ├── editorStore.ts        # 编辑器状态
+│   │   ├── focusStore.ts         # 专心模式状态
+│   │   ├── paletteStore.ts       # 色板配置
+│   │   └── uiStore.ts            # UI 状态
+│   ├── components/               # 26 个 Vue 组件
+│   │   ├── CanvasArea.vue        # 画布区域
+│   │   ├── FocusCanvas.vue       # 专心模式画布
+│   │   ├── FocusToolBar.vue      # 专心模式工具栏
+│   │   ├── FocusSidebar.vue      # 专心模式侧边栏
 │   │   ├── FocusColorPanel.vue   # 颜色面板
+│   │   ├── FocusColorRing.vue    # 颜色环
+│   │   ├── EditToolbar.vue       # 编辑工具栏
+│   │   ├── EditSidebar.vue       # 编辑侧边栏
+│   │   ├── PreviewSidebar.vue    # 预览侧边栏
+│   │   ├── OptimizeSidebar.vue   # 优化侧边栏
+│   │   ├── AppHeader.vue         # 应用顶栏
+│   │   ├── FloatingPalette.vue   # 悬浮调色盘
 │   │   ├── MagnifierTool.vue     # 放大镜工具
-│   │   ├── SettingsPanel.vue     # 设置面板
-│   │   ├── DonationModal.vue     # 打赏弹窗
-│   │   ├── CustomPaletteEditor.vue # 色板编辑器
-│   │   ├── CelebrationAnimation.vue # 庆祝动画
-│   │   ├── CompletionCard.vue    # 完成打卡
-│   │   ├── FocusModePreDownloadModal.vue # 预下载提醒
-│   │   ├── DownloadSettingsModal.vue     # 下载设置
+│   │   ├── ImageCropper.vue      # 图片裁剪
+│   │   ├── ImportConvertDialog.vue # 导入转换对话框
 │   │   ├── ColorPalette.vue      # 颜色面板组件
 │   │   ├── ColorPanel.vue        # 颜色选择面板
+│   │   ├── ColorStatusBar.vue    # 颜色状态栏
+│   │   ├── ProgressBar.vue       # 进度条
+│   │   ├── CelebrationAnimation.vue # 庆祝动画
+│   │   ├── CompletionCard.vue    # 完成打卡
+│   │   ├── CustomPaletteEditor.vue # 色板编辑器
+│   │   ├── DonationModal.vue     # 打赏弹窗
+│   │   ├── DownloadSettingsModal.vue # 下载设置
+│   │   ├── FocusModePreDownloadModal.vue # 预下载提醒
 │   │   └── InstallPWA.vue        # PWA 安装提示
 │   ├── composables/              # Vue 3 Composables
-│   │   ├── useManualEditingState.js   # 编辑状态管理
-│   │   └── usePixelEditingOperations.js # 编辑操作封装
+│   │   ├── useCanvasRenderer.ts  # 画布渲染
+│   │   ├── useCanvasInteraction.ts # 画布交互
+│   │   ├── useCanvasTransform.ts # 画布变换
+│   │   ├── useFocusModeLogic.ts  # 专心模式逻辑
+│   │   ├── usePixelEditing.ts    # 像素编辑
+│   │   ├── usePixelEditingOperations.ts # 编辑操作封装
+│   │   ├── useManualEditingState.ts # 编辑状态管理
+│   │   ├── useImageProcessing.ts # 图像处理
+│   │   ├── useBackgroundRemoval.ts # 背景移除
+│   │   ├── useFileIO.ts          # 文件 IO
+│   │   ├── useKeyboardShortcuts.ts # 键盘快捷键
+│   │   └── useMarchingAnts.ts    # 蚂蚁线动画
 │   ├── utils/                    # 工具函数
-│   │   ├── pixelation.js         # 像素化核心算法
-│   │   ├── colorSystemUtils.js   # 色号系统工具
-│   │   ├── floodFillUtils.js     # 连通区域检测
-│   │   ├── downloader.js         # 导出功能
-│   │   ├── canvasUtils.js        # 画布坐标转换
-│   │   ├── localStorageUtils.js  # 本地存储管理
-│   │   └── pixelEditingUtils.js  # 像素编辑桥接
+│   │   ├── pixelation.ts         # 像素化核心算法
+│   │   ├── colorSystemUtils.ts   # 色号系统工具
+│   │   ├── floodFillUtils.ts     # 连通区域检测
+│   │   ├── downloader.ts         # 导出功能
+│   │   ├── canvasUtils.ts        # 画布坐标转换
+│   │   ├── drawingAlgorithms.ts  # 绘图算法
+│   │   ├── localStorageUtils.ts  # 本地存储管理
+│   │   ├── pixelEditingUtils.ts  # 像素编辑桥接
+│   │   └── workerManager.ts      # Web Worker 管理
+│   ├── workers/
+│   │   └── pixelation.worker.ts  # 像素化 Web Worker
+│   ├── constants/
+│   │   ├── modeConstants.ts      # 模式常量
+│   │   └── canvasConstants.ts    # 画布常量
+│   ├── types/
+│   │   └── index.ts              # TypeScript 类型定义
 │   └── data/
 │       └── colorSystemMapping.json # 291色 x 5店家映射
 ├── src-tauri/                    # Rust 后端（脚手架）
