@@ -25,6 +25,9 @@ export default {
         success: 'var(--color-success)',
         error: 'var(--color-error)',
         info: 'var(--color-info)',
+        brand: {
+          500: '#3b82f6',
+        },
       },
     },
   },

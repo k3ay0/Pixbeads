@@ -376,6 +376,7 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
     :selected-color-system="selectedColorSystem"
     @save="handlePaletteEditorSave"
     @close="handlePaletteEditorClose"
+    @update:color-system="paletteStore.selectedColorSystem = $event"
   />
 
   <!-- Settings panel -->

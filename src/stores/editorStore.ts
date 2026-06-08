@@ -56,7 +56,7 @@ export const useEditorStore = defineStore('editor', () => {
   const showFullPalette = ref(false)
 
   // ========== 工具系统 ==========
-  const manualTool = ref<ManualTool>('brush')
+  const manualTool = ref<ManualTool>('drag')
   const manualBrushSize = ref(1)
   const manualMirrorX = ref(false)
   const manualMirrorY = ref(false)
@@ -124,9 +124,10 @@ export const useEditorStore = defineStore('editor', () => {
     isManualColoringMode.value = true
     selectedEditColor.value = null
     isEraseMode.value = false
+    isFloodFillEraseMode.value = false
     resetColorReplaceState()
     highlightColorKey.value = null
-    manualTool.value = 'brush'
+    manualTool.value = 'drag'
   }
 
   function exitManualMode() {
@@ -146,7 +147,7 @@ export const useEditorStore = defineStore('editor', () => {
 
   function setManualTool(tool: ManualTool) {
     manualTool.value = tool
-    if (tool !== 'eraser') isEraseMode.value = false
+    if (tool !== 'eraser') { isEraseMode.value = false; isFloodFillEraseMode.value = false }
     if (tool !== 'fill') { resetColorReplaceState(); highlightColorKey.value = null }
     if (tool !== 'select' && tool !== 'move') { selectionStart.value = null; selectionEnd.value = null }
     manualPasteActive.value = false
@@ -239,6 +240,7 @@ export const useEditorStore = defineStore('editor', () => {
 
   // 洪水填充擦除
   function enterFloodFillEraseMode() {
+    manualTool.value = 'eraser'
     isFloodFillEraseMode.value = true
     isEraseMode.value = false
     selectedEditColor.value = null

@@ -1,290 +1,329 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { getColorKeyByHex } from '../utils/colorSystemUtils'
+import { getColorKeyByHex, colorSystemOptions } from '../utils/colorSystemUtils'
+import type { ColorSystem } from '@/types'
 
 const props = defineProps({
- allColors: { type: Array, default: () => [] },
- currentSelections: { type: Object, default: () => ({}) },
- selectedColorSystem: { type: String, default: 'MARD' },
+  allColors: { type: Array, default: () => [] },
+  currentSelections: { type: Object, default: () => ({}) },
+  selectedColorSystem: { type: String, default: 'MARD' },
 })
 
 const emit = defineEmits([
- 'save',
- 'close',
- 'exportPalette',
- 'importPalette',
+  'save',
+  'close',
+  'exportPalette',
+  'importPalette',
+  'update:colorSystem',
 ])
 
-const expandedGroups = ref({})
 const searchTerm = ref('')
-const tempSelections = ref({ ...props.currentSelections })
+const tempSelections = ref<Record<string, boolean>>({ ...props.currentSelections })
+const activeCategory = ref('全部')
 
 watch(() => props.currentSelections, (val) => {
- tempSelections.value = { ...val }
+  tempSelections.value = { ...val }
 }, { deep: true })
 
-// 对颜色进行分组的工具函数，按前缀分组
-function groupColorsByPrefix(colors) {
- const groups = {}
-
- colors.forEach(color => {
- const displayKey = getColorKeyByHex(color.hex, props.selectedColorSystem)
-
- let prefix
- if (props.selectedColorSystem === '盼盼' || props.selectedColorSystem === '咪小窝') {
- if (/^\d+$/.test(displayKey)) {
- const num = parseInt(displayKey, 10)
- if (num <= 20) prefix = '1-20'
- else if (num <= 50) prefix = '21-50'
- else if (num <= 100) prefix = '51-100'
- else if (num <= 200) prefix = '101-200'
- else prefix = '200+'
- } else {
- prefix = '其他'
- }
- } else {
- prefix = displayKey.match(/^[A-Z]+/)?.[0] || '其他'
- }
-
- if (!groups[prefix]) groups[prefix] = []
- groups[prefix].push(color)
- })
-
- // 对每个组内的颜色按键进行排序
- Object.keys(groups).forEach(prefix => {
- groups[prefix].sort((a, b) => {
- const displayKeyA = getColorKeyByHex(a.hex, props.selectedColorSystem)
- const displayKeyB = getColorKeyByHex(b.hex, props.selectedColorSystem)
-
- if (props.selectedColorSystem === '盼盼' || props.selectedColorSystem === '咪小窝') {
- const numA = parseInt(displayKeyA, 10) || 0
- const numB = parseInt(displayKeyB, 10) || 0
- return numA - numB
- } else {
- const numA = parseInt(displayKeyA.replace(/^[A-Z]+/, ''), 10) || 0
- const numB = parseInt(displayKeyB.replace(/^[A-Z]+/, ''), 10) || 0
- return numA - numB
- }
- })
- })
-
- return groups
+// 获取颜色的显示色号
+function getDisplayKey(hex: string): string {
+  return getColorKeyByHex(hex, props.selectedColorSystem as ColorSystem)
 }
 
+// 获取颜色的分类前缀
+function getColorPrefix(hex: string): string {
+  const displayKey = getDisplayKey(hex)
+  if (props.selectedColorSystem === '盼盼' || props.selectedColorSystem === '咪小窝') {
+    if (/^\d+$/.test(displayKey)) {
+      const num = parseInt(displayKey, 10)
+      if (num <= 20) return '1-20'
+      if (num <= 50) return '21-50'
+      if (num <= 100) return '51-100'
+      if (num <= 200) return '101-200'
+      return '200+'
+    }
+    return '其他'
+  }
+  return displayKey.match(/^[A-Z]+/)?.[0] || '其他'
+}
+
+// 已选数量
 const selectedCount = computed(() => {
- return Object.values(tempSelections.value).filter(Boolean).length
+  return Object.values(tempSelections.value).filter(Boolean).length
 })
 
+// 搜索过滤
 const filteredColors = computed(() => {
- if (!searchTerm.value) return props.allColors
- const searchLower = searchTerm.value.toLowerCase()
- return props.allColors.filter(color => {
- const displayKey = getColorKeyByHex(color.hex, props.selectedColorSystem).toLowerCase()
- return displayKey.includes(searchLower)
- })
+  if (!searchTerm.value) return props.allColors
+  const searchLower = searchTerm.value.toLowerCase()
+  return (props.allColors as any[]).filter((color: any) => {
+    const displayKey = getDisplayKey(color.hex).toLowerCase()
+    return displayKey.includes(searchLower)
+  })
 })
 
-const colorGroups = computed(() => {
- return groupColorsByPrefix(filteredColors.value)
+// 分类列表（带计数）
+const categories = computed(() => {
+  const prefixMap = new Map<string, { total: number; selected: number }>()
+  let totalAll = 0
+  let selectedAll = 0
+
+  ;(props.allColors as any[]).forEach((color: any) => {
+    const hex = color.hex.toUpperCase()
+    const prefix = getColorPrefix(color.hex)
+    const isSelected = !!tempSelections.value[hex]
+
+    if (!prefixMap.has(prefix)) {
+      prefixMap.set(prefix, { total: 0, selected: 0 })
+    }
+    const entry = prefixMap.get(prefix)!
+    entry.total++
+    if (isSelected) entry.selected++
+
+    totalAll++
+    if (isSelected) selectedAll++
+  })
+
+  // 按前缀排序
+  const sortedPrefixes = Array.from(prefixMap.entries()).sort((a, b) => {
+    const isNumA = /^\d/.test(a[0])
+    const isNumB = /^\d/.test(b[0])
+    if (isNumA && !isNumB) return 1
+    if (!isNumA && isNumB) return -1
+    return a[0].localeCompare(b[0])
+  })
+
+  return [
+    { prefix: '全部', total: totalAll, selected: selectedAll },
+    ...sortedPrefixes.map(([prefix, data]) => ({ prefix, ...data })),
+  ]
 })
 
-function toggleGroup(prefix) {
- expandedGroups.value = { ...expandedGroups.value, [prefix]: !expandedGroups.value[prefix] }
+// 当前分类过滤后的颜色
+const displayedColors = computed(() => {
+  if (activeCategory.value === '全部') return filteredColors.value
+  return (filteredColors.value as any[]).filter((color: any) => {
+    return getColorPrefix(color.hex) === activeCategory.value
+  })
+})
+
+// 判断颜色亮度（用于文字颜色）
+function getContrastColor(hex: string): string {
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  const luma = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
+  return luma > 0.5 ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.7)'
 }
 
-function toggleAllColors(selected) {
- props.allColors.forEach(color => {
-  tempSelections.value[color.hex.toUpperCase()] = selected
- })
+function toggleColor(hex: string) {
+  const upperHex = hex.toUpperCase()
+  tempSelections.value[upperHex] = !tempSelections.value[upperHex]
 }
 
-function toggleGroupColors(prefix, selected) {
- colorGroups.value[prefix].forEach(color => {
-  tempSelections.value[color.hex.toUpperCase()] = selected
- })
+function selectAll() {
+  ;(displayedColors.value as any[]).forEach((color: any) => {
+    tempSelections.value[color.hex.toUpperCase()] = true
+  })
 }
 
-function toggleColor(hex, checked) {
- tempSelections.value[hex] = checked
+function clearAll() {
+  ;(displayedColors.value as any[]).forEach((color: any) => {
+    tempSelections.value[color.hex.toUpperCase()] = false
+  })
+}
+
+function handleSave() {
+  emit('save', { ...tempSelections.value })
+}
+
+function handleClose() {
+  emit('close')
+}
+
+function handleColorSystemChange(system: string) {
+  emit('update:colorSystem', system)
 }
 </script>
 
 <template>
- <Teleport to="body">
-  <div
-   class="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-   @click.self="emit('close')"
-  >
-   <div class="bg-white rounded-xl shadow-lg overflow-hidden w-full max-w-lg max-h-[90vh] flex flex-col">
-    <!-- 头部 -->
-    <div class="flex justify-between items-center border-b pb-3 mb-3 px-5 pt-5">
-     <h2 class="text-lg font-semibold text-black flex items-center">
-      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2 text-[#007be5]" viewBox="0 0 20 20" fill="currentColor">
-       <path fill-rule="evenodd" d="M4 2a2 2 0 00-2 2v11a3 3 0 106 0V4a2 2 0 00-2-2H4zm1 14a1 1 0 100-2 1 1 0 000 2zm5-1.757l4.9-4.9a2 2 0 000-2.828L13.485 5.1a2 2 0 00-2.828 0L10 5.757v8.486zM16 18H9.071l6-6H16a2 2 0 012 2v2a2 2 0 01-2 2z" clip-rule="evenodd" />
-      </svg>
-      色板管理中心 <span class="ml-2 text-sm text-[#007be5] dark:text-blue-400">({{ selectedCount }} 色)</span>
-     </h2>
-     <button
-      @click="emit('close')"
-      class="text-black/45 hover:text-black "
-     >
-      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-       <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
-      </svg>
-     </button>
+  <Teleport to="body">
+    <div
+      class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      @click.self="handleClose"
+    >
+      <div class="relative bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+        <div class="flex-1 overflow-y-auto">
+          <div class="p-4 sm:p-6">
+            <div class="flex flex-col h-full max-h-[calc(90vh-40px)]">
+              <!-- 标题栏 -->
+              <div class="flex flex-col gap-2 pb-3 border-b border-gray-200 dark:border-gray-700">
+                <div class="flex items-center justify-between gap-2">
+                  <div>
+                    <div class="text-base font-semibold text-gray-900 dark:text-gray-100">色板设置</div>
+                    <div class="text-[11px] text-gray-400 dark:text-gray-500 tabular-nums">
+                      已选 {{ selectedCount }} / {{ allColors.length }}
+                    </div>
+                  </div>
+                  <button
+                    aria-label="关闭"
+                    class="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 active:bg-gray-200 dark:active:bg-gray-700 transition-colors flex-shrink-0"
+                    @click="handleClose"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+
+                <!-- 色系切换 + 搜索 -->
+                <div class="flex items-center gap-2 flex-wrap">
+                  <div class="flex h-8 rounded-lg bg-gray-100 dark:bg-gray-800 overflow-hidden flex-shrink-0">
+                    <button
+                      v-for="system in colorSystemOptions"
+                      :key="system.key"
+                      class="px-3 text-[11px] font-medium transition-colors"
+                      :class="selectedColorSystem === system.key
+                        ? 'bg-gray-900 text-gray-50 dark:bg-gray-200 dark:text-gray-900'
+                        : 'text-gray-500 dark:text-gray-400 active:bg-gray-200 dark:active:bg-gray-700'"
+                      @click="handleColorSystemChange(system.key)"
+                    >
+                      {{ system.name }}
+                    </button>
+                  </div>
+
+                  <div class="relative flex-1 min-w-[120px]">
+                    <input
+                      v-model="searchTerm"
+                      placeholder="搜索色号"
+                      class="w-full h-8 pl-8 pr-2 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-200 focus:ring-1 focus:ring-brand-500 focus:outline-none"
+                      type="text"
+                    />
+                    <svg xmlns="http://www.w3.org/2000/svg" class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 分类筛选 + 色彩网格 -->
+              <div class="flex-1 flex min-h-0 mt-0 sm:mt-3 gap-3">
+                <!-- 左侧分类栏（桌面端） -->
+                <div class="hidden sm:flex w-28 flex-shrink-0 flex-col gap-1 overflow-y-auto overscroll-contain pr-1">
+                  <button
+                    v-for="cat in categories"
+                    :key="cat.prefix"
+                    class="w-full text-left px-3 py-2 text-xs rounded-lg transition-colors"
+                    :class="activeCategory === cat.prefix
+                      ? 'bg-gray-900 text-gray-50 dark:bg-gray-200 dark:text-gray-900'
+                      : 'text-gray-600 dark:text-gray-400 active:bg-gray-200 dark:active:bg-gray-700'"
+                    @click="activeCategory = cat.prefix"
+                  >
+                    {{ cat.prefix }}
+                    <span class="tabular-nums" :class="activeCategory === cat.prefix ? 'text-gray-400 dark:text-gray-500' : 'text-gray-400 dark:text-gray-500'">
+                      {{ cat.selected }}/{{ cat.total }}
+                    </span>
+                  </button>
+                </div>
+
+                <!-- 移动端分类横滑 -->
+                <div class="sm:hidden flex gap-1.5 overflow-x-auto [&::-webkit-scrollbar]:hidden [scrollbar-width:none] py-2 flex-shrink-0">
+                  <button
+                    v-for="cat in categories"
+                    :key="cat.prefix"
+                    class="flex-shrink-0 px-3 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap"
+                    :class="activeCategory === cat.prefix
+                      ? 'bg-gray-900 text-gray-50 dark:bg-gray-200 dark:text-gray-900'
+                      : 'text-gray-600 dark:text-gray-400 active:bg-gray-200 dark:active:bg-gray-700'"
+                    @click="activeCategory = cat.prefix"
+                  >
+                    {{ cat.prefix }}
+                    <span class="tabular-nums" :class="activeCategory === cat.prefix ? '' : 'text-gray-500 dark:text-gray-400'">
+                      {{ cat.selected }}/{{ cat.total }}
+                    </span>
+                  </button>
+                </div>
+
+                <!-- 色彩网格 -->
+                <div class="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-1">
+                  <div class="flex flex-wrap gap-1.5 content-start">
+                    <button
+                      v-for="color in displayedColors"
+                      :key="color.hex"
+                      class="relative w-11 h-11 rounded-lg transition-all duration-100 flex items-center justify-center flex-shrink-0"
+                      :class="tempSelections[color.hex.toUpperCase()]
+                        ? 'border-2 border-brand-500'
+                        : 'border-2 border-transparent opacity-35 active:opacity-70'"
+                      :style="{ backgroundColor: color.hex }"
+                      @click="toggleColor(color.hex)"
+                    >
+                      <span
+                        class="text-[9px] font-bold leading-none select-none"
+                        :style="{ color: getContrastColor(color.hex) }"
+                      >
+                        {{ getDisplayKey(color.hex) }}
+                      </span>
+                      <div
+                        v-if="tempSelections[color.hex.toUpperCase()]"
+                        class="absolute top-0 right-0 w-3 h-3 bg-brand-500 rounded-bl-md rounded-tr-[5px] flex items-center justify-center"
+                      >
+                        <svg class="w-2 h-2 text-white" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="3">
+                          <path d="M2 6l3 3 5-5" />
+                        </svg>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 底部操作栏 -->
+              <div class="flex items-center justify-between flex-wrap gap-2 pt-3 mt-3 border-t border-gray-200 dark:border-gray-700">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <button
+                    class="px-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 active:bg-gray-200 dark:active:bg-gray-700 transition-colors"
+                    @click="selectAll"
+                  >
+                    全选
+                  </button>
+                  <button
+                    class="px-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 active:bg-gray-200 dark:active:bg-gray-700 transition-colors"
+                    @click="clearAll"
+                  >
+                    清空
+                  </button>
+                  <div class="w-px h-5 bg-gray-200 dark:bg-gray-700"></div>
+                  <button
+                    class="px-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 active:bg-gray-200 dark:active:bg-gray-700 transition-colors"
+                    @click="emit('importPalette')"
+                  >
+                    导入
+                  </button>
+                  <button
+                    class="px-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 active:bg-gray-200 dark:active:bg-gray-700 transition-colors"
+                    @click="emit('exportPalette')"
+                  >
+                    导出
+                  </button>
+                </div>
+                <div class="flex items-center gap-2">
+                  <button
+                    class="px-4 py-2 text-xs rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 active:bg-gray-200 dark:active:bg-gray-700 transition-colors"
+                    @click="handleClose"
+                  >
+                    取消
+                  </button>
+                  <button
+                    class="px-4 py-2 text-xs rounded-lg bg-gray-900 text-gray-50 dark:bg-gray-200 dark:text-gray-900 active:bg-gray-800 dark:active:bg-gray-300 transition-colors"
+                    @click="handleSave"
+                  >
+                    保存并应用
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
-
-    <div class="flex-1 overflow-y-auto px-5 pb-5">
-
- <!-- 搜索框 -->
- <div class="mb-4">
- <div class="relative">
- <input
- type="text"
- placeholder="搜索色号..."
- v-model="searchTerm"
- class="w-full px-3 py-2 pl-9 border border-black/10 rounded-md text-sm bg-white text-black focus:ring-black focus:border-black"
- />
- <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
- <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-black/45 " fill="none" viewBox="0 0 24 24" stroke="currentColor">
- <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
- </svg>
- </div>
- </div>
- </div>
-
- <!-- 说明文本 -->
- <div class="mb-4 text-xs text-black/60 bg-[#007be5]/[0.06] dark:bg-blue-900/20 p-2 rounded-md border border-black/[0.06] dark:border-blue-800/30">
- <p class="flex items-start">
- <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1 text-[#007be5] flex-shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
- <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
- </svg>
- 在此选择要使用的拼豆色系。您可以选择预设色板，然后根据需要手动添加或删除特定色号。完成后点击底部的"保存并应用"按钮。
- </p>
- </div>
-
- <!-- 快捷操作按钮 -->
- <div class="flex flex-wrap gap-2 mb-4 items-center">
- <button
- @click="toggleAllColors(true)"
- class="px-3 py-1.5 text-xs bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300 rounded-md hover:bg-green-200 dark:hover:bg-green-900/50"
- >
- 全选
- </button>
- <button
- @click="toggleAllColors(false)"
- class="px-3 py-1.5 text-xs bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300 rounded-md hover:bg-red-200 dark:hover:bg-red-900/50"
- >
- 全不选
- </button>
- <button
- @click="emit('importPalette')"
- class="px-3 py-1.5 text-xs bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 rounded-md hover:bg-blue-200 dark:hover:bg-blue-900/50 flex items-center gap-1"
- >
- <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
- <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
- </svg>
- 导入配置
- </button>
- <button
- @click="emit('exportPalette')"
- class="px-3 py-1.5 text-xs bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300 rounded-md hover:bg-purple-200 dark:hover:bg-purple-900/50 flex items-center gap-1"
- >
- <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
- <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
- </svg>
- 导出配置
- </button>
- </div>
-
- <!-- 颜色列表 -->
- <div class="flex-1 overflow-y-auto pr-1">
- <div
- v-for="prefix in Object.keys(colorGroups).sort()"
- :key="prefix"
- class="mb-3 border border-black/10 rounded-lg overflow-hidden"
- >
- <!-- 组标题 -->
- <div
- class="flex justify-between items-center px-3 py-2 bg-white cursor-pointer hover:bg-black/[0.04] "
- @click="toggleGroup(prefix)"
- >
- <div class="flex items-center">
- <span class="font-medium text-black ">{{ prefix }} 系列</span>
- <span class="ml-2 text-xs text-black/45 ">
- ({{ colorGroups[prefix].length }} 色)
- </span>
- </div>
-
- <div class="flex items-center">
- <!-- 组操作按钮 -->
- <button
- @click.stop="toggleGroupColors(prefix, true)"
- class="text-xs text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 mr-2"
- >
- 全选
- </button>
- <button
- @click.stop="toggleGroupColors(prefix, false)"
- class="text-xs text-red-600 dark:text-[#f4422f]/60 hover:text-red-800 dark:hover:text-red-300 mr-2"
- >
- 全不选
- </button>
-
- <!-- 展开/收起图标 -->
- <svg
- xmlns="http://www.w3.org/2000/svg"
- :class="['h-4 w-4 text-black/45 transform transition-transform', expandedGroups[prefix] ? 'rotate-180' : '']"
- fill="none"
- viewBox="0 0 24 24"
- stroke="currentColor"
- >
- <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
- </svg>
- </div>
- </div>
-
- <!-- 组内容 -->
- <div v-if="expandedGroups[prefix]" class="p-3 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
- <label
- v-for="color in colorGroups[prefix]"
- :key="color.key"
- class="flex items-center space-x-2 p-1.5 hover:bg-white rounded cursor-pointer"
- >
- <input
-  type="checkbox"
-  :checked="!!tempSelections[color.hex.toUpperCase()]"
-  @change="toggleColor(color.hex.toUpperCase(), $event.target.checked)"
-  class="h-4 w-4 rounded border-black/10 text-black focus:ring-black "
- />
- <div
- class="w-6 h-6 rounded-sm border border-black/10 flex-shrink-0"
- :style="{ backgroundColor: color.hex }"
- />
- <span class="text-sm text-black ">{{ getColorKeyByHex(color.hex, selectedColorSystem) }}</span>
- </label>
- </div>
- </div>
- </div>
-
-    </div>
-
-    <!-- 底部按钮 -->
-    <div class="px-5 pb-5 pt-3 border-t flex justify-between">
-     <button
-      @click="handleClose"
-      class="px-4 py-2 bg-black/10 text-black rounded-md hover:bg-black/10 "
-     >
-      取消
-     </button>
-     <button
-      @click="emit('save', { ...tempSelections })"
-      class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-     >
-      保存并应用
-     </button>
-    </div>
-   </div>
-  </div>
- </Teleport>
+  </Teleport>
 </template>

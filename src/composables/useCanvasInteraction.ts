@@ -161,24 +161,25 @@ export function useCanvasInteraction(
       }
       case 'select':
       case 'move':
+      case 'drag':
       case 'line':
       case 'rect': {
         // 这些工具不处理点击事件，只处理 mousedown/mousemove/mouseup
         return
       }
-      default: {
-        // brush / eraser — 单击也触发一次绘画
+      case 'eraser': {
+        // 橡皮工具 — 区域擦除或单格擦除
         const cell = mappedPixelData.value[row]?.[col]
-        if (!cell) return
+        if (!cell || cell.isExternal) return
         if (isFloodFillEraseMode.value) {
           // 洪水填充擦除
-          const targetKey = cell.color.toUpperCase()
+          const targetColor = cell.color.toUpperCase()
           editorStore.saveSnapshot(mappedPixelData.value)
           const stack = [{ row, col }]
           while (stack.length > 0) {
             const { row: r, col: c } = stack.pop()!
             const currentCell = mappedPixelData.value[r]?.[c]
-            if (!currentCell || currentCell.isExternal || currentCell.color.toUpperCase() !== targetKey) continue
+            if (!currentCell || currentCell.isExternal || currentCell.color.toUpperCase() !== targetColor) continue
             mappedPixelData.value[r][c] = { key: TRANSPARENT_KEY, color: '#FFFFFF', isExternal: true }
             if (r > 0) stack.push({ row: r - 1, col: c })
             if (r < gridDimensions.value!.M - 1) stack.push({ row: r + 1, col: c })
@@ -186,8 +187,16 @@ export function useCanvasInteraction(
             if (c < gridDimensions.value!.N - 1) stack.push({ row: r, col: c + 1 })
           }
           scheduleRender()
-          return
+        } else {
+          // 单格擦除
+          paintAtCell(row, col)
         }
+        return
+      }
+      default: {
+        // brush — 单击也触发一次绘画
+        const cell = mappedPixelData.value[row]?.[col]
+        if (!cell) return
         if (editorStore.colorReplaceState.isActive) {
           // 色替换点击
           const sourceColor = { key: cell.key, color: cell.color }
@@ -207,7 +216,7 @@ export function useCanvasInteraction(
           }
           return
         }
-        if (!isEraseMode.value && manualTool.value !== 'eraser' && !selectedEditColor.value) {
+        if (!selectedEditColor.value) {
           const hex = cell.color.toUpperCase()
           editorStore.selectEditColor({ key: getColorKeyByHex(hex, selectedColorSystem.value), color: cell.color })
           return
@@ -293,8 +302,16 @@ export function useCanvasInteraction(
 
     // 工具分发
     switch (manualTool.value) {
-      case 'brush':
+      case 'brush': {
+        isPainting.value = true
+        lastPaintCell.value = null
+        paintAtCell(row, col)
+        lastPaintCell.value = { row, col }
+        return
+      }
       case 'eraser': {
+        // 区域擦除模式不启动连续绘画
+        if (isFloodFillEraseMode.value) return
         isPainting.value = true
         lastPaintCell.value = null
         paintAtCell(row, col)
@@ -328,6 +345,11 @@ export function useCanvasInteraction(
           editorStore.startSelectionDrag({ row, col }, isCopy)
           return
         }
+        return
+      }
+      case 'drag':
+      case 'picker': {
+        // 拖拽工具和取色器不处理 mousedown 绘制
         return
       }
     }
