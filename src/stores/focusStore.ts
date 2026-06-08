@@ -11,6 +11,7 @@ import {
 } from '@/utils/floodFillUtils'
 import { getColorKeyByHex } from '@/utils/colorSystemUtils'
 import type { ColorSystem } from '@/types'
+import { useBeadStore } from './beadStore'
 
 export const useFocusStore = defineStore('focus', () => {
   // ========== 状态 ==========
@@ -31,6 +32,13 @@ export const useFocusStore = defineStore('focus', () => {
   const showSectionLines = ref(true)
   const sectionLineColor = ref('#007acc')
   const availableColors = ref<Array<{ color: string; name: string; total: number; completed: number }>>([])
+  const showSettings = ref(false)
+  const showConfetti = ref(true)
+  const showCelebration = ref(false)
+  const celebrationData = ref<{ colorName: string; colorHex: string; completed: number; total: number } | null>(null)
+
+  // ========== Stores ==========
+  const beadStore = useBeadStore()
 
   // ========== 计时器 ==========
   let timerInterval: ReturnType<typeof setInterval> | null = null
@@ -83,6 +91,9 @@ export const useFocusStore = defineStore('focus', () => {
     canvasScale.value = 1
     canvasOffset.value = { x: 0, y: 0 }
     startTimer()
+    
+    // 计算初始引导区域
+    calculateRecommendedRegion(mappedPixelData)
   }
 
   function startTimer() {
@@ -215,6 +226,19 @@ export const useFocusStore = defineStore('focus', () => {
     )
 
     if (newProgress[currentColor.value]?.completed >= newProgress[currentColor.value]?.total) {
+      // 触发庆祝动画
+      if (showConfetti.value) {
+        const colorInfo = availableColors.value.find(c => c.color === currentColor.value)
+        if (colorInfo) {
+          celebrationData.value = {
+            colorName: colorInfo.name,
+            colorHex: colorInfo.color,
+            completed: colorInfo.completed,
+            total: colorInfo.total,
+          }
+          showCelebration.value = true
+        }
+      }
       switchToNextIncompleteColor()
     }
   }
@@ -226,6 +250,8 @@ export const useFocusStore = defineStore('focus', () => {
       const next = availableColors.value[(idx + i) % availableColors.value.length]
       if (next.completed < next.total) {
         currentColor.value = next.color
+        // 重新计算推荐区域
+        calculateRecommendedRegion(beadStore.mappedPixelData)
         return
       }
     }
@@ -248,6 +274,71 @@ export const useFocusStore = defineStore('focus', () => {
     }
   }
 
+  function markCurrentColorComplete(mappedPixelData: MappedPixel[][] | null) {
+    if (!mappedPixelData || !currentColor.value || !recommendedRegion.value) return
+    
+    const newSet = new Set(completedCells.value)
+    const newProgress = { ...colorProgress.value }
+    
+    // 只标记当前推荐区域为完成
+    recommendedRegion.value.forEach(({ row, col }) => {
+      newSet.add(`${row},${col}`)
+    })
+    
+    // 更新当前颜色的进度
+    if (newProgress[currentColor.value]) {
+      const completedCount = Array.from(newSet).filter(k => {
+        const [r, c] = k.split(',').map(Number)
+        return mappedPixelData[r]?.[c]?.color === currentColor.value
+      }).length
+      
+      newProgress[currentColor.value] = {
+        ...newProgress[currentColor.value],
+        completed: completedCount,
+      }
+    }
+    
+    completedCells.value = newSet
+    colorProgress.value = newProgress
+    
+    // 更新 availableColors
+    availableColors.value = availableColors.value.map(c =>
+      c.color === currentColor.value
+        ? { ...c, completed: newProgress[currentColor.value]?.completed || 0 }
+        : c
+    )
+    
+    // 检查是否完成该颜色
+    if (newProgress[currentColor.value]?.completed >= newProgress[currentColor.value]?.total) {
+      // 触发庆祝动画
+      if (showConfetti.value) {
+        const colorInfo = availableColors.value.find(c => c.color === currentColor.value)
+        if (colorInfo) {
+          celebrationData.value = {
+            colorName: colorInfo.name,
+            colorHex: colorInfo.color,
+            completed: colorInfo.completed,
+            total: colorInfo.total,
+          }
+          showCelebration.value = true
+        }
+      }
+    }
+    
+    // 重新计算推荐区域
+    calculateRecommendedRegion(mappedPixelData)
+    
+    // 如果当前颜色已完成，切换到下一个
+    if (newProgress[currentColor.value]?.completed >= newProgress[currentColor.value]?.total) {
+      switchToNextIncompleteColor()
+    }
+  }
+
+  function closeCelebration() {
+    showCelebration.value = false
+    celebrationData.value = null
+  }
+
   return {
     // State
     currentColor,
@@ -267,6 +358,10 @@ export const useFocusStore = defineStore('focus', () => {
     showSectionLines,
     sectionLineColor,
     availableColors,
+    showSettings,
+    showConfetti,
+    showCelebration,
+    celebrationData,
     // Getters
     currentColorInfo,
     progressPercentage,
@@ -284,5 +379,7 @@ export const useFocusStore = defineStore('focus', () => {
     switchToNextIncompleteColor,
     handleFocusColorChange,
     handleLocateRecommended,
+    markCurrentColorComplete,
+    closeCelebration,
   }
 })

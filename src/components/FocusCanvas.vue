@@ -24,6 +24,58 @@ const lastPanPoint = ref(null)
 const lastPinchDistance = ref(null)
 const hasDragged = ref(false)
 
+// 计算互补色
+function getComplementaryColor(hex: string): string {
+ const r = parseInt(hex.slice(1, 3), 16)
+ const g = parseInt(hex.slice(3, 5), 16)
+ const b = parseInt(hex.slice(5, 7), 16)
+ 
+ // 计算互补色（色轮上对面的颜色）
+ const compR = 255 - r
+ const compG = 255 - g
+ const compB = 255 - b
+ 
+ return `rgb(${compR}, ${compG}, ${compB})`
+}
+
+// 计算浅色版本的互补色（用于已完成区域）
+function getLightComplementaryColor(hex: string): string {
+ const r = parseInt(hex.slice(1, 3), 16)
+ const g = parseInt(hex.slice(3, 5), 16)
+ const b = parseInt(hex.slice(5, 7), 16)
+ 
+ // 计算互补色
+ const compR = 255 - r
+ const compG = 255 - g
+ const compB = 255 - b
+ 
+ // 将互补色变浅（混合白色 60%）
+ const lightR = Math.round(compR + (255 - compR) * 0.6)
+ const lightG = Math.round(compG + (255 - compG) * 0.6)
+ const lightB = Math.round(compB + (255 - compB) * 0.6)
+ 
+ return `rgb(${lightR}, ${lightG}, ${lightB})`
+}
+
+// 计算深色版本的互补色（用于未完成的推荐区域）
+function getDarkComplementaryColor(hex: string): string {
+ const r = parseInt(hex.slice(1, 3), 16)
+ const g = parseInt(hex.slice(3, 5), 16)
+ const b = parseInt(hex.slice(5, 7), 16)
+ 
+ // 计算互补色
+ const compR = 255 - r
+ const compG = 255 - g
+ const compB = 255 - b
+ 
+ // 将互补色变深（混合黑色 30%）
+ const darkR = Math.round(compR * 0.7)
+ const darkG = Math.round(compG * 0.7)
+ const darkB = Math.round(compB * 0.7)
+ 
+ return `rgba(${darkR}, ${darkG}, ${darkB}, 0.5)`
+}
+
 // 计算格子大小
 const cellSize = computed(() => {
  return Math.max(15, Math.min(40, 300 / Math.max(props.gridDimensions.N, props.gridDimensions.M)))
@@ -60,6 +112,14 @@ function renderCanvas() {
 
  ctx.clearRect(0, 0, canvasWidth, canvasHeight)
 
+ // 预计算推荐区域的 Set
+ const regionSet = new Set()
+ if (props.recommendedRegion) {
+ props.recommendedRegion.forEach(({ row, col }) => {
+ regionSet.add(`${row},${col}`)
+ })
+ }
+
  // 渲染每个格子
  for (let row = 0; row < M; row++) {
  for (let col = 0; col < N; col++) {
@@ -87,43 +147,83 @@ function renderCanvas() {
  ctx.fillStyle = fillColor
  ctx.fillRect(x, y, cs, cs)
 
- // 如果是已完成的格子且是当前颜色，添加勾选标记
- if (props.completedCells.has(cellKey) && pixel.color === props.currentColor) {
- ctx.fillStyle = 'rgba(0, 255, 0, 0.6)'
+ // 如果是当前颜色的格子
+ if (pixel.color === props.currentColor) {
+ if (props.completedCells.has(cellKey)) {
+ // 已完成的格子，使用浅色互补色覆盖
+ ctx.fillStyle = getLightComplementaryColor(props.currentColor)
  ctx.fillRect(x, y, cs, cs)
-
- // 绘制勾选图标
- ctx.strokeStyle = '#fff'
- ctx.lineWidth = 2
- ctx.beginPath()
- ctx.moveTo(x + cs * 0.2, y + cs * 0.5)
- ctx.lineTo(x + cs * 0.4, y + cs * 0.7)
- ctx.lineTo(x + cs * 0.8, y + cs * 0.3)
- ctx.stroke()
+ } else if (regionSet.has(cellKey)) {
+ // 推荐区域内未完成的格子，使用深色互补色覆盖
+ ctx.fillStyle = getDarkComplementaryColor(props.currentColor)
+ ctx.fillRect(x, y, cs, cs)
+ }
+ }
+ }
  }
 
- // 如果是推荐区域的一部分，添加高亮边框
- if (recommendedRegionSet.value.has(cellKey)) {
- ctx.strokeStyle = '#ff4444'
- ctx.lineWidth = 3
- ctx.setLineDash([5, 5])
- ctx.strokeRect(x + 1, y + 1, cs - 2, cs - 2)
+ // 绘制推荐区域的虚线轮廓（精确框住引导区域）
+ if (props.recommendedRegion && props.recommendedRegion.length > 0) {
+ // 使用当前颜色的互补色
+ ctx.strokeStyle = getComplementaryColor(props.currentColor)
+ ctx.lineWidth = 2
+ ctx.setLineDash([6, 4])
+ ctx.beginPath()
+ 
+ // 遍历推荐区域的每个格子，绘制轮廓边
+ props.recommendedRegion.forEach(({ row, col }) => {
+ const x = col * cs
+ const y = row * cs
+ 
+ // 上边：如果上方格子不在推荐区域内
+ if (!regionSet.has(`${row - 1},${col}`)) {
+ ctx.moveTo(x, y)
+ ctx.lineTo(x + cs, y)
+ }
+ 
+ // 下边：如果下方格子不在推荐区域内
+ if (!regionSet.has(`${row + 1},${col}`)) {
+ ctx.moveTo(x, y + cs)
+ ctx.lineTo(x + cs, y + cs)
+ }
+ 
+ // 左边：如果左方格子不在推荐区域内
+ if (!regionSet.has(`${row},${col - 1}`)) {
+ ctx.moveTo(x, y)
+ ctx.lineTo(x, y + cs)
+ }
+ 
+ // 右边：如果右方格子不在推荐区域内
+ if (!regionSet.has(`${row},${col + 1}`)) {
+ ctx.moveTo(x + cs, y)
+ ctx.lineTo(x + cs, y + cs)
+ }
+ })
+ 
+ ctx.stroke()
  ctx.setLineDash([])
  }
 
- // 如果是推荐区域的中心点，添加特殊标记
- if (
- props.recommendedCell &&
- props.recommendedCell.row === row &&
- props.recommendedCell.col === col &&
- recommendedRegionSet.value.has(cellKey)
- ) {
- ctx.fillStyle = '#ff4444'
+ // 绘制每一格的浅灰色分隔线
+ ctx.strokeStyle = 'rgba(0, 0, 0, 0.08)'
+ ctx.lineWidth = 0.5
+ 
+ // 垂直线
+ for (let col = 1; col < N; col++) {
+ const x = col * cs
  ctx.beginPath()
- ctx.arc(x + cs / 2, y + cs / 2, 4, 0, 2 * Math.PI)
- ctx.fill()
+ ctx.moveTo(x, 0)
+ ctx.lineTo(x, canvasHeight)
+ ctx.stroke()
  }
- }
+ 
+ // 水平线
+ for (let row = 1; row < M; row++) {
+ const y = row * cs
+ ctx.beginPath()
+ ctx.moveTo(0, y)
+ ctx.lineTo(canvasWidth, y)
+ ctx.stroke()
  }
 
  // 绘制分区线

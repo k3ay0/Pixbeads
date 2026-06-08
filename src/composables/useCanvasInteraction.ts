@@ -60,7 +60,9 @@ export function useCanvasInteraction(
     if (!mappedPixelData.value || !gridDimensions.value) return
     const { N, M } = gridDimensions.value
     const size = manualBrushSize.value
-    const half = Math.floor(size / 2)
+    // 计算笔刷范围：奇数大小以中心对称，偶数大小偏右下
+    const halfBefore = Math.floor((size - 1) / 2)
+    const halfAfter = Math.ceil((size - 1) / 2)
     const isErasing = isEraseMode.value || manualTool.value === 'eraser'
     const color = isErasing ? null : selectedEditColor.value
     if (!isErasing && !color) return
@@ -82,8 +84,8 @@ export function useCanvasInteraction(
       }
     }
 
-    for (let dr = -half; dr <= half; dr++) {
-      for (let dc = -half; dc <= half; dc++) {
+    for (let dr = -halfBefore; dr <= halfAfter; dr++) {
+      for (let dc = -halfBefore; dc <= halfAfter; dc++) {
         applyCell(row + dr, col + dc)
         if (manualMirrorX.value) applyCell(row + dr, N - 1 - col - dc)
         if (manualMirrorY.value) applyCell(M - 1 - row - dr, col + dc)

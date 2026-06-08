@@ -10,6 +10,9 @@ import { useCanvasTransform } from '../composables/useCanvasTransform'
 import { calculateVisibleColumns, calculateVisibleRows } from '../utils/canvasUtils'
 import { CELL_SIZE, AXIS_WIDTH, AXIS_HEIGHT, MIN_ZOOM, MAX_ZOOM } from '../constants/canvasConstants'
 import FocusCanvas from './FocusCanvas.vue'
+import FocusToolBar from './FocusToolBar.vue'
+import FocusColorRing from './FocusColorRing.vue'
+import CelebrationAnimation from './CelebrationAnimation.vue'
 
 const emit = defineEmits<{
   (e: 'canvas-click', ev: MouseEvent): void
@@ -35,7 +38,7 @@ const { activeMode } = storeToRefs(uiStore)
 const previewOverlayCanvas = ref<HTMLCanvasElement | null>(null)
 
 defineExpose({ previewOverlayCanvas })
-const { currentColor, completedCells, recommendedCell, recommendedRegion, canvasScale, canvasOffset, gridSectionInterval, showSectionLines, sectionLineColor } = storeToRefs(focusStore)
+const { currentColor, completedCells, recommendedCell, recommendedRegion, canvasScale, canvasOffset, gridSectionInterval, showSectionLines, sectionLineColor, availableColors, showCelebration, celebrationData } = storeToRefs(focusStore)
 
 const visibleColumns = computed(() => {
   if (!gridDimensions.value || !canvasContainer.value) return []
@@ -65,7 +68,7 @@ function handleCanvasLeave() {
   // line/rect/select/move 由 document 级别事件处理，不在此终止
 }
 function resetCanvasView() { canvasTransform.resetCanvasView() }
-function handleCellClick(data: any) { focusStore.handleCellClick(data) }
+function handleCellClick(row: number, col: number) { focusStore.handleCellClick(row, col, mappedPixelData.value) }
 </script>
 
 <template>
@@ -213,6 +216,34 @@ function handleCellClick(data: any) { focusStore.handleCellClick(data) }
           @cell-click="handleCellClick"
           @scale-change="(s) => (canvasScale = s)"
           @offset-change="(o) => (canvasOffset = o)"
+        />
+
+        <!-- Focus mode overlays -->
+        <div class="absolute inset-0 pointer-events-none z-10">
+          <!-- Top toolbar -->
+          <FocusToolBar
+            @locate="focusStore.handleLocateRecommended(gridDimensions)"
+            @toggle-settings="focusStore.showSettings = !focusStore.showSettings"
+          />
+
+          <!-- Bottom color ring picker -->
+          <FocusColorRing
+            :colors="availableColors"
+            :current-color="currentColor"
+            @color-select="focusStore.handleFocusColorChange"
+          />
+        </div>
+
+        <!-- Celebration animation -->
+        <CelebrationAnimation
+          v-if="showCelebration && celebrationData"
+          :color-name="celebrationData.colorName"
+          :color-hex="celebrationData.colorHex"
+          :completed="celebrationData.completed"
+          :total="celebrationData.total"
+          :total-completed="availableColors.reduce((sum, c) => sum + c.completed, 0)"
+          :total-all="availableColors.reduce((sum, c) => sum + c.total, 0)"
+          @close="focusStore.closeCelebration()"
         />
       </div>
     </main>

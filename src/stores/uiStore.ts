@@ -13,7 +13,6 @@ export const useUiStore = defineStore('ui', () => {
 
   // ========== 弹窗状态 ==========
   const showDownloadModal = ref(false)
-  const showSettingsPanel = ref(false)
   const showDonationModal = ref(false)
   const showImportDialog = ref(false)
   const showPaletteEditor = ref(false)
@@ -74,7 +73,6 @@ export const useUiStore = defineStore('ui', () => {
     showImportMenu,
     showExportMenu,
     showDownloadModal,
-    showSettingsPanel,
     showDonationModal,
     showImportDialog,
     showPaletteEditor,

@@ -1,78 +1,97 @@
 <script setup lang="ts">
-const props = defineProps({
-  isPaused: { type: Boolean, default: true },
-  elapsedTime: { type: String, default: '0:00' },
-})
+import { storeToRefs } from 'pinia'
+import { useFocusStore } from '../stores/focusStore'
+import { useBeadStore } from '../stores/beadStore'
 
-const emit = defineEmits(['colorSelect', 'locate', 'pause'])
+const focusStore = useFocusStore()
+const beadStore = useBeadStore()
+
+const {
+  currentColor,
+  currentColorInfo,
+  progressPercentage,
+  elapsedTime,
+  isPaused,
+} = storeToRefs(focusStore)
+
+const emit = defineEmits<{
+  (e: 'locate'): void
+  (e: 'toggle-settings'): void
+}>()
+
+function handlePauseToggle() {
+  focusStore.handlePauseToggle()
+}
+
+function handleMarkComplete() {
+  focusStore.markCurrentColorComplete(beadStore.mappedPixelData)
+}
 </script>
 
 <template>
-  <div class="h-15 bg-white border-t border-black/10 px-4 py-2 flex items-center justify-around">
-    <!-- 颜色选择 -->
-    <button
-      @click="emit('colorSelect')"
-      class="flex flex-col items-center space-y-1 text-black/60 hover:text-blue-600 transition-colors"
-    >
-      <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-        <path
-          fill-rule="evenodd"
-          d="M4 2a2 2 0 00-2 2v11a3 3 0 106 0V4a2 2 0 00-2-2H4zm1 14a1 1 0 100-2 1 1 0 000 2zm5-1.757l4.9-4.9a2 2 0 000-2.828L13.485 5.1a2 2 0 00-2.828 0L10 5.757v8.486zM16 18H9.071l6-6H16a2 2 0 012 2v2a2 2 0 01-2 2z"
-          clip-rule="evenodd"
-        />
-      </svg>
-      <span class="text-xs">颜色</span>
-    </button>
+  <!-- 顶部工具栏叠加层 -->
+  <div class="pointer-events-auto absolute top-3 left-3 right-3 flex items-center gap-2 h-12 px-3.5 rounded-2xl bg-black/50 backdrop-blur-xl shadow-lg">
+    <!-- 左侧颜色信息 -->
+    <div class="flex items-center gap-2.5 flex-1 min-w-0">
+      <!-- 颜色圆点 -->
+      <div
+        class="w-7 h-7 rounded-full border-2 border-white/60 flex-shrink-0 shadow-sm"
+        :style="{ backgroundColor: currentColor }"
+      />
+      <!-- 文字信息 -->
+      <div class="min-w-0 leading-tight">
+        <span class="text-[13px] font-semibold text-white truncate block">
+          {{ currentColorInfo?.name }}
+        </span>
+        <span class="text-[11px] text-white/60">
+          {{ currentColorInfo?.completed }}/{{ currentColorInfo?.total }}
+          <span class="ml-1 text-white/80 font-medium">{{ progressPercentage }}%</span>
+        </span>
+      </div>
+    </div>
 
-    <!-- 定位 -->
+    <!-- 右侧按钮组 -->
+    <div class="flex items-center gap-0.5 flex-shrink-0">
+      <!-- 计时器 -->
+      <span class="text-[11px] font-mono text-white/70 tabular-nums mr-1">{{ elapsedTime }}</span>
+      <!-- 暂停/继续 -->
+      <button
+        @click="handlePauseToggle"
+        class="w-10 h-10 rounded-xl flex items-center justify-center active:bg-white/10 transition-colors"
+      >
+        <!-- 暂停状态：播放图标 -->
+        <svg v-if="isPaused" class="w-4.5 h-4.5 text-green-400" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M8 5v14l11-7z" />
+        </svg>
+        <!-- 运行状态：暂停图标 -->
+        <svg v-else class="w-4.5 h-4.5 text-white/70" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- 右侧按钮组 -->
+  <div class="pointer-events-auto absolute right-3 bottom-[76px] flex flex-col gap-2">
+    <!-- 定位按钮 -->
     <button
       @click="emit('locate')"
-      class="flex flex-col items-center space-y-1 text-black/60 hover:text-green-600 transition-colors"
+      class="w-11 h-11 rounded-[14px] bg-black/50 backdrop-blur-xl shadow-lg flex items-center justify-center active:scale-90 transition-transform"
     >
-      <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width="2"
-          d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
-        />
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width="2"
-          d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
-        />
+      <svg class="w-5 h-5 text-white/80" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="3" />
+        <path stroke-linecap="round" d="M12 2v4m0 12v4M2 12h4m12 0h4" />
       </svg>
-      <span class="text-xs">定位</span>
     </button>
-
-    <!-- 计时器/暂停 -->
+    <!-- 标记完成按钮 -->
     <button
-      @click="emit('pause')"
-      class="flex flex-col items-center space-y-1 transition-colors"
-      :class="
-        isPaused
-          ? 'text-green-600 hover:text-green-700'
-          : 'text-red-600 hover:text-red-700'
-      "
+      @click="handleMarkComplete"
+      :disabled="!currentColorInfo || currentColorInfo.completed >= currentColorInfo.total"
+      class="w-11 h-11 rounded-[14px] bg-green-500 shadow-lg flex items-center justify-center active:scale-90 transition-transform disabled:opacity-30"
     >
-      <!-- 暂停状态显示播放图标 -->
-      <svg v-if="isPaused" class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-        <path
-          fill-rule="evenodd"
-          d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z"
-          clip-rule="evenodd"
-        />
+      <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
       </svg>
-      <!-- 运行状态显示暂停图标 -->
-      <svg v-else class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-        <path
-          fill-rule="evenodd"
-          d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z"
-          clip-rule="evenodd"
-        />
-      </svg>
-      <span class="text-xs font-mono">{{ elapsedTime }}</span>
     </button>
   </div>
 </template>

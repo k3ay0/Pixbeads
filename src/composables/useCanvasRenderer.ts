@@ -124,12 +124,14 @@ export function useCanvasRenderer(
     // 画笔/橡皮预览
     if ((manualTool.value === 'brush' || manualTool.value === 'eraser') && hc) {
       const size = manualBrushSize.value
-      const half = Math.floor(size / 2)
+      // 计算笔刷范围：奇数大小以中心对称，偶数大小偏右下
+      const halfBefore = Math.floor((size - 1) / 2)
+      const halfAfter = Math.ceil((size - 1) / 2)
       const isErase = isEraseMode.value || manualTool.value === 'eraser'
       const fill = isErase ? 'rgba(239,68,68,0.3)' : 'rgba(59,130,246,0.3)'
       const stroke = isErase ? 'rgba(239,68,68,0.6)' : 'rgba(59,130,246,0.6)'
-      for (let dr = -half; dr <= half; dr++) {
-        for (let dc = -half; dc <= half; dc++) {
+      for (let dr = -halfBefore; dr <= halfAfter; dr++) {
+        for (let dc = -halfBefore; dc <= halfAfter; dc++) {
           drawCell(hc.row + dr, hc.col + dc, fill, stroke)
           if (manualMirrorX.value) drawCell(hc.row + dr, N - 1 - hc.col - dc, fill, stroke)
           if (manualMirrorY.value) drawCell(M - 1 - hc.row - dr, hc.col + dc, fill, stroke)

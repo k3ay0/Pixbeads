@@ -45,9 +45,6 @@ import FocusSidebar from './components/FocusSidebar.vue'
 const MagnifierTool = defineAsyncComponent(() =>
   import('./components/MagnifierTool.vue').catch(() => ({ render: () => null }))
 )
-const SettingsPanel = defineAsyncComponent(() =>
-  import('./components/SettingsPanel.vue').catch(() => ({ render: () => null }))
-)
 const DonationModal = defineAsyncComponent(() =>
   import('./components/DonationModal.vue').catch(() => ({ render: () => null }))
 )
@@ -105,7 +102,7 @@ const {
 
 const {
   activeMode, showDownloadModal,
-  showSettingsPanel, showDonationModal, showImportDialog,
+  showDonationModal, showImportDialog,
   toastMessage, downloadOptions, showPaletteEditor
 } = storeToRefs(uiStore)
 
@@ -378,27 +375,6 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
     @close="handlePaletteEditorClose"
     @update:color-system="paletteStore.selectedColorSystem = $event"
   />
-
-  <!-- Settings panel -->
-  <Teleport to="body">
-    <SettingsPanel
-      v-if="showSettingsPanel"
-      :download-options="downloadOptions"
-      :granularity="granularity"
-      :similarity-threshold="similarityThreshold"
-      :pixelation-mode="pixelationMode"
-      @update:downloadOptions="downloadOptions = $event"
-      @update:granularity="granularity = $event"
-      @update:granularity-input="granularityInput = $event"
-      @update:granularity-y="granularityY = $event"
-      @update:granularity-y-input="granularityYInput = $event"
-      @update:lockAspectRatio="lockAspectRatio = $event"
-      @update:similarityThreshold="similarityThreshold = $event"
-      @update:similarityThresholdInput="similarityThresholdInput = $event"
-      @update:pixelationMode="pixelationMode = $event"
-      @close="showSettingsPanel = false"
-    />
-  </Teleport>
 
   <!-- Donation modal -->
   <Teleport to="body">
