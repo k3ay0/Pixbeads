@@ -347,7 +347,7 @@ const toolNameMap: Record<string, string> = {
 </script>
 
 <template>
-  <div class="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-3">
+  <div class="flex-1 overflow-y-auto scrollbar-hide px-3 py-3 flex flex-col gap-3">
     <!-- Status indicator (color replace / erase mode) -->
     <div
       v-if="colorReplaceState.isActive || isEraseMode"

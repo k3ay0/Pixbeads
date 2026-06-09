@@ -21,12 +21,15 @@ import { useFocusModeLogic } from './composables/useFocusModeLogic'
 import { useMarchingAnts } from './composables/useMarchingAnts'
 import { useCanvasRenderer } from './composables/useCanvasRenderer'
 import { useCanvasInteraction } from './composables/useCanvasInteraction'
+import { useStatePersistence } from './composables/useStatePersistence'
 
 // Utils
 import { getColorKeyByHex, sortColorsByHue } from './utils/colorSystemUtils'
 import { MODES } from './constants/modeConstants'
 import type { AppMode } from './constants/modeConstants'
 import type { PbdsImportResult } from './utils/downloader'
+import type { IroningPreviewConfig } from './utils/ironingPreview'
+import { DEFAULT_IRONING_CONFIG } from './utils/ironingPreview'
 
 // Components
 import DownloadSettingsModal from './components/DownloadSettingsModal.vue'
@@ -39,6 +42,7 @@ import OptimizeSidebar from './components/OptimizeSidebar.vue'
 import EditSidebar from './components/EditSidebar.vue'
 import EditToolbar from './components/EditToolbar.vue'
 import PreviewSidebar from './components/PreviewSidebar.vue'
+import IroningPreview from './components/IroningPreview.vue'
 import FocusSidebar from './components/FocusSidebar.vue'
 
 // Async components
@@ -69,6 +73,7 @@ useKeyboardShortcuts()
 const canvasTransform = useCanvasTransform()
 const focusLogic = useFocusModeLogic()
 const { marchingAntsOffset, startMarchingAnts, stopMarchingAnts } = useMarchingAnts()
+const { restoreState, clearState: clearPersistedState } = useStatePersistence()
 
 // ========== 从 Store 映射状态 ==========
 const {
@@ -125,6 +130,10 @@ const previewOverlayCanvas = ref<HTMLCanvasElement | null>(null)
 
 // CanvasArea ref for accessing overlay canvas
 const canvasAreaRef = ref<any>(null)
+
+// 熨烫预览
+const ironingPreviewRef = ref<InstanceType<typeof IroningPreview> | null>(null)
+const ironingConfig = ref<IroningPreviewConfig>(DEFAULT_IRONING_CONFIG)
 
 // ========== 初始化 Composables ==========
 const { scheduleRender, renderCanvas, renderPreviewOverlay, clearPreviewOverlay } = useCanvasRenderer(
@@ -186,6 +195,7 @@ function handlePaletteColorReplace(s: any, t: any) { editorStore.saveSnapshot(be
 function handleExportPbds() { fileIO.handleExportPbds() }
 function handleDownloadImage() { fileIO.handleDownloadImage() }
 function handleDownloadStats() { fileIO.handleDownloadStats() }
+function handleDownloadPreview() { ironingPreviewRef.value?.download() }
 function loadPbds(file: File) { fileIO.loadPbds(file).then(result => { if (result) { pendingPbdsData.value = result; uiStore.showImportDialog = true } }) }
 function handleAutoRemoveBackground() { bgRemoval.handleAutoRemoveBackground() }
 function handleUndoBgRemoval() { bgRemoval.handleUndoBgRemoval() }
@@ -216,6 +226,13 @@ const currentGridColors = computed(() => {
 watch([mappedPixelData, highlightColorKey, () => editorStore.selectionInfo], () => scheduleRender(), { flush: 'post' })
 watch(isProcessing, () => { if (!isProcessing.value) scheduleRender() })
 watch(originalImageSrc, () => { if (!originalImageSrc.value) scheduleRender() })
+// 从预览/专心模式返回时重新渲染canvas
+watch(activeMode, (newMode, oldMode) => {
+  if (oldMode === 'preview' || oldMode === 'focus') {
+    // 延迟一帧确保DOM已更新
+    requestAnimationFrame(() => scheduleRender())
+  }
+})
 watch(granularity, v => { beadStore.granularityInput = v.toString(); if (lockAspectRatio.value) { const src = croppedImageCanvas.value || beadStore.originalImage; if (src) { const r = ('height' in src ? src.height : (src as HTMLCanvasElement).height) / ('width' in src ? src.width : (src as HTMLCanvasElement).width); beadStore.updateGranularityY(Math.max(1, Math.round(v * r))) } } })
 watch(granularityY, v => { beadStore.granularityYInput = v.toString() })
 watch(similarityThreshold, v => { beadStore.similarityThresholdInput = v.toString() })
@@ -243,6 +260,14 @@ watch(manualTool, (tool) => {
 // Lifecycle
 onMounted(() => {
   paletteStore.initPalette()
+
+  // 恢复持久化状态
+  const restored = restoreState()
+  if (restored) {
+    // 如果恢复了状态，触发重新渲染
+    requestAnimationFrame(() => scheduleRender())
+  }
+
   document.addEventListener('click', handleGlobalClick)
   document.addEventListener('mouseup', handleCanvasMouseUp)
   document.addEventListener('mousemove', handleDocumentMouseMove)
@@ -293,6 +318,7 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
       <div class="mx-auto w-full flex-1 min-h-0 flex">
         <!-- Canvas area -->
         <CanvasArea
+          v-show="activeMode !== 'preview'"
           ref="canvasAreaRef"
           @trigger-file-input="triggerFileInput"
           @file-drop="handleFileDrop"
@@ -300,6 +326,13 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
           @canvas-hover="handleCanvasHover"
           @canvas-mousedown="handleCanvasMouseDown"
           @canvas-mouseup="handleCanvasMouseUp"
+        />
+
+        <!-- Ironing preview canvas -->
+        <IroningPreview
+          v-if="activeMode === 'preview' && mappedPixelData"
+          ref="ironingPreviewRef"
+          :config="ironingConfig"
         />
 
         <!-- Edit toolbar (floating on canvas left) -->
@@ -316,7 +349,12 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
         >
           <OptimizeSidebar v-if="activeMode === 'optimize'" @trigger-file-input="triggerFileInput" @auto-remove-background="handleAutoRemoveBackground" @undo-bg-removal="handleUndoBgRemoval" />
           <EditSidebar v-if="activeMode === 'edit'" @color-select="handlePaletteColorSelect" @color-replace="handlePaletteColorReplace" />
-          <PreviewSidebar v-if="activeMode === 'preview'" @open-palette-editor="showPaletteEditor = true" @download-stats="handleDownloadStats" />
+          <PreviewSidebar
+            v-if="activeMode === 'preview'"
+            :config="ironingConfig"
+            @download-preview="handleDownloadPreview"
+            @update:config="ironingConfig = $event"
+          />
           <FocusSidebar v-if="activeMode === 'focus'" @color-change="handleFocusColorChange" />
         </div>
       </div>

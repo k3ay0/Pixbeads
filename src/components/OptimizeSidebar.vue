@@ -31,7 +31,7 @@ function handleDrop(e: DragEvent) {
 </script>
 
 <template>
-  <div class="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-3">
+  <div class="flex-1 overflow-y-auto scrollbar-hide px-3 py-3 flex flex-col gap-3">
     <!-- Upload card -->
     <div class="bg-white rounded-xl border border-black/10 p-4">
       <h3 class="text-sm font-medium text-black mb-3">图片上传</h3>
@@ -85,11 +85,11 @@ function handleDrop(e: DragEvent) {
       <div>
         <label class="text-xs text-black/45 mb-1 block">
           高度 (纵向格子数)
-          <span v-if="!croppedImageCanvas && !lockAspectRatio" class="text-black/35 font-normal ml-1">裁剪后可调</span>
+          <span v-if="!croppedImageCanvas && !mappedPixelData && !lockAspectRatio" class="text-black/35 font-normal ml-1">裁剪后可调</span>
         </label>
         <div class="flex items-center gap-2">
-          <input v-model.number="granularityY" type="range" min="10" max="300" step="1" :disabled="!croppedImageCanvas || lockAspectRatio" class="flex-1 h-1.5 bg-black/10 rounded-lg appearance-none cursor-pointer accent-black disabled:opacity-40" />
-          <input v-model="granularityYInput" :disabled="!croppedImageCanvas || lockAspectRatio" @blur="granularityY = Math.max(10, Math.min(300, parseInt(granularityYInput) || 0))" @keyup.enter="granularityY = Math.max(10, Math.min(300, parseInt(granularityYInput) || 0))" type="text" :placeholder="granularityY > 0 ? granularityY.toString() : '自动'" class="w-14 px-1.5 py-0.5 text-xs font-mono text-center border border-black/10 rounded focus:outline-none focus:ring-1 focus:ring-black disabled:opacity-40" />
+          <input v-model.number="granularityY" type="range" min="10" max="300" step="1" :disabled="(!croppedImageCanvas && !mappedPixelData) || lockAspectRatio" class="flex-1 h-1.5 bg-black/10 rounded-lg appearance-none cursor-pointer accent-black disabled:opacity-40" />
+          <input v-model="granularityYInput" :disabled="(!croppedImageCanvas && !mappedPixelData) || lockAspectRatio" @blur="granularityY = Math.max(10, Math.min(300, parseInt(granularityYInput) || 0))" @keyup.enter="granularityY = Math.max(10, Math.min(300, parseInt(granularityYInput) || 0))" type="text" :placeholder="granularityY > 0 ? granularityY.toString() : '自动'" class="w-14 px-1.5 py-0.5 text-xs font-mono text-center border border-black/10 rounded focus:outline-none focus:ring-1 focus:ring-black disabled:opacity-40" />
         </div>
       </div>
 
