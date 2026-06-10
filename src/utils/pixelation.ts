@@ -420,3 +420,140 @@ export function recalculateColorStats(
   })
   return { colorCounts, totalCount }
 }
+
+// ========== 区域主色提取 ==========
+
+export interface DominantColorOptions {
+  blackMax?: number;
+  whiteMin?: number;
+  ratioThreshold?: number;
+  forceIgnoreBlackWhite?: boolean;
+}
+
+export function getDominantColorByArea(
+  imageData: ImageData,
+  borderTrim: number = 0,
+  options: DominantColorOptions = {}
+): string {
+  const {
+    blackMax = 60,
+    whiteMin = 200,
+    ratioThreshold = 0.2,
+    forceIgnoreBlackWhite = false,
+  } = options;
+
+  const data = imageData.data;
+  const width = imageData.width;
+  const height = imageData.height;
+
+  const startX = Math.max(0, Math.floor(borderTrim));
+  const startY = Math.max(0, Math.floor(borderTrim));
+  const endX = Math.min(width, Math.ceil(width - borderTrim));
+  const endY = Math.min(height, Math.ceil(height - borderTrim));
+
+  // Step 1: Count black/white pixels and total valid pixels
+  let totalPixels = 0;
+  let blackWhitePixels = 0;
+
+  for (let y = startY; y < endY; y++) {
+    for (let x = startX; x < endX; x++) {
+      const i = (y * width + x) * 4;
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      const a = data[i + 3];
+
+      if (a < 128) continue;
+      totalPixels++;
+
+      const isBlack = r <= blackMax && g <= blackMax && b <= blackMax;
+      const isWhite = r >= whiteMin && g >= whiteMin && b >= whiteMin;
+      if (isBlack || isWhite) {
+        blackWhitePixels++;
+      }
+    }
+  }
+
+  if (totalPixels === 0) {
+    return "rgb(0, 0, 0)";
+  }
+
+  // Step 2: Determine whether to ignore black/white pixels
+  const blackWhiteRatio = blackWhitePixels / totalPixels;
+  const shouldIgnoreBlackWhite = forceIgnoreBlackWhite || blackWhiteRatio < ratioThreshold;
+
+  // Step 3: Count colors with quantization (step 16)
+  const step = 16;
+  const colorMap = new Map<string, number>();
+
+  for (let y = startY; y < endY; y++) {
+    for (let x = startX; x < endX; x++) {
+      const i = (y * width + x) * 4;
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      const a = data[i + 3];
+
+      if (a < 128) continue;
+
+      if (shouldIgnoreBlackWhite) {
+        const isBlack = r <= blackMax && g <= blackMax && b <= blackMax;
+        const isWhite = r >= whiteMin && g >= whiteMin && b >= whiteMin;
+        if (isBlack || isWhite) continue;
+      }
+
+      const qr = Math.min(255, Math.round(r / step) * step);
+      const qg = Math.min(255, Math.round(g / step) * step);
+      const qb = Math.min(255, Math.round(b / step) * step);
+      const key = `${qr},${qg},${qb}`;
+
+      colorMap.set(key, (colorMap.get(key) || 0) + 1);
+    }
+  }
+
+  // Step 3.5: Merge similar colors in Oklab space
+  const mergeThreshold = 0.25;
+  const entries = Array.from(colorMap.entries());
+  const mergedMap = new Map<string, number>();
+  const labCache = new Map<string, { l: number; a: number; b: number }>();
+
+  for (const [key, count] of entries) {
+    const [cr, cg, cb] = key.split(',').map(Number);
+    const rgb = { r: cr, g: cg, b: cb };
+    const lab = rgbToOklab(rgb);
+    let mergedKey = key;
+    for (const [existingKey] of mergedMap) {
+      const existingLab = labCache.get(existingKey)!;
+      const dl = lab.l - existingLab.l;
+      const da = lab.a - existingLab.a;
+      const db = lab.b - existingLab.b;
+      const dist = Math.sqrt(dl * dl + da * da + db * db);
+      if (dist < mergeThreshold) {
+        mergedKey = existingKey;
+        break;
+      }
+    }
+    if (mergedKey === key) {
+      labCache.set(key, lab);
+    }
+    mergedMap.set(mergedKey, (mergedMap.get(mergedKey) || 0) + count);
+  }
+
+  // Step 4: Find the most frequent color in merged map
+  let maxCount = 0;
+  let dominantColor = "0,0,0";
+
+  for (const [color, count] of mergedMap.entries()) {
+    if (count > maxCount) {
+      maxCount = count;
+      dominantColor = color;
+    }
+  }
+
+  if (maxCount === 0) {
+    return "rgb(0, 0, 0)";
+  }
+
+  const [r, g, b] = dominantColor.split(",").map(Number);
+  return `rgb(${r}, ${g}, ${b})`;
+}

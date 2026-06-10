@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, defineAsyncComponent, toRaw } from 'vue'
 import { storeToRefs } from 'pinia'
 
 // Stores
@@ -25,11 +25,13 @@ import { useStatePersistence } from './composables/useStatePersistence'
 
 // Utils
 import { getColorKeyByHex, sortColorsByHue } from './utils/colorSystemUtils'
+import { recalculateColorStats, findClosestPaletteColor } from './utils/pixelation'
 import { MODES } from './constants/modeConstants'
 import type { AppMode } from './constants/modeConstants'
 import type { PbdsImportResult } from './utils/downloader'
 import type { IroningPreviewConfig } from './utils/ironingPreview'
 import { DEFAULT_IRONING_CONFIG } from './utils/ironingPreview'
+import type { MappedPixel } from './types'
 
 // Components
 import DownloadSettingsModal from './components/DownloadSettingsModal.vue'
@@ -187,6 +189,51 @@ function handleImportConfirmFromDialog(data: any) { fileIO.handleImportConfirm(d
 function handleImportCancel() { uiStore.showImportDialog = false; pendingPbdsData.value = null }
 function handleCropConfirm(canvas: HTMLCanvasElement) { fileIO.handleCropConfirm(canvas); processImage() }
 function handleCropSkip() { fileIO.handleCropSkip(); processImage() }
+function handleGridConfirm(data: { canvas: HTMLCanvasElement, cols: number, rows: number, pixelColors: string[][] }) {
+  // 设置裁剪后的画布
+  beadStore.setCroppedCanvas(data.canvas)
+  beadStore.showCropper = false
+  
+  // 设置网格维度
+  beadStore.updateGranularity(data.cols)
+  beadStore.updateGranularityY(data.rows)
+  
+  // 将 RGB 字符串解析为 RgbColor 对象
+  const parseRgb = (rgbStr: string): { r: number, g: number, b: number } => {
+    const match = rgbStr.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/)
+    if (match) {
+      return { r: parseInt(match[1]), g: parseInt(match[2]), b: parseInt(match[3]) }
+    }
+    return { r: 0, g: 0, b: 0 }
+  }
+  
+  // 获取当前色板
+  const palette = toRaw(paletteStore.activeBeadPalette).map(c => ({
+    key: c.key,
+    hex: c.hex,
+    rgb: { r: c.rgb.r, g: c.rgb.g, b: c.rgb.b }
+  }))
+  
+  // Oklab 色彩匹配 - 将每个 RGB 颜色映射到最近的拼豆颜色
+  const mappedPixelData: MappedPixel[][] = data.pixelColors.map(row =>
+    row.map(color => {
+      const rgb = parseRgb(color)
+      const closest = findClosestPaletteColor(rgb, palette)
+      return { key: closest.key, color: closest.hex }
+    })
+  )
+  
+  // 设置像素数据
+  beadStore.setPixelData(mappedPixelData, { N: data.cols, M: data.rows })
+  
+  // 更新颜色统计
+  const stats = recalculateColorStats(mappedPixelData)
+  beadStore.updateColorStats(stats)
+  
+  // 清除编辑历史并保存快照
+  editorStore.clearHistory()
+  editorStore.saveSnapshot(mappedPixelData)
+}
 function handleGlobalClick(e: MouseEvent) { if (!(e.target as HTMLElement).closest('.relative')) uiStore.closeAllMenus() }
 function handlePaletteEditorSave(s: Record<string, boolean>) { paletteStore.updateSelections(s); uiStore.showPaletteEditor = false }
 function handlePaletteEditorClose() { uiStore.showPaletteEditor = false }
@@ -294,6 +341,7 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
     v-if="showCropper && originalImageSrc"
     :image-src="originalImageSrc"
     @confirm="handleCropConfirm"
+    @grid-confirm="handleGridConfirm"
     @skip="handleCropSkip"
   />
 
