@@ -22,6 +22,9 @@ export const usePaletteStore = defineStore('palette', () => {
   const excludedColorKeys = ref<Set<string>>(new Set())
   const showExcludedColors = ref(false)
 
+  // ========== 颜色替换映射（原始颜色 → 替换后的颜色） ==========
+  const colorReplacementMap = ref<Map<string, string>>(new Map())
+
   // ========== Getters ==========
 
   const activeBeadPalette = computed(() => {
@@ -75,6 +78,15 @@ export const usePaletteStore = defineStore('palette', () => {
   function restoreAllExcluded() {
     excludedColorKeys.value = new Set()
     showExcludedColors.value = false
+    colorReplacementMap.value = new Map()
+  }
+
+  function setColorReplacement(originalHex: string, replacedHex: string) {
+    colorReplacementMap.value.set(originalHex, replacedHex)
+  }
+
+  function deleteColorReplacement(originalHex: string) {
+    colorReplacementMap.value.delete(originalHex)
   }
 
   function saveSelections() {
@@ -99,6 +111,7 @@ export const usePaletteStore = defineStore('palette', () => {
     customPaletteSelections,
     excludedColorKeys,
     showExcludedColors,
+    colorReplacementMap,
     // Getters
     activeBeadPalette,
     // Actions
@@ -106,6 +119,8 @@ export const usePaletteStore = defineStore('palette', () => {
     initDefaultPalette,
     toggleExcludeColor,
     restoreAllExcluded,
+    setColorReplacement,
+    deleteColorReplacement,
     saveSelections,
     loadSelections,
     updateSelections,

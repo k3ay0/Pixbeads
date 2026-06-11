@@ -26,6 +26,7 @@ export default {
         error: 'var(--color-error)',
         info: 'var(--color-info)',
         brand: {
+          400: '#60a5fa',
           500: '#3b82f6',
         },
       },

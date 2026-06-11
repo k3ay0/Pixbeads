@@ -49,13 +49,13 @@ import FocusSidebar from './components/FocusSidebar.vue'
 
 // Async components
 const MagnifierTool = defineAsyncComponent(() =>
-  import('./components/MagnifierTool.vue').catch(() => ({ render: () => null }))
+  import('./components/MagnifierTool.vue').catch(() => ({ render: () => null } as any))
 )
 const DonationModal = defineAsyncComponent(() =>
-  import('./components/DonationModal.vue').catch(() => ({ render: () => null }))
+  import('./components/DonationModal.vue').catch(() => ({ render: () => null } as any))
 )
 const CustomPaletteEditor = defineAsyncComponent(() =>
-  import('./components/CustomPaletteEditor.vue').catch(() => ({ render: () => null }))
+  import('./components/CustomPaletteEditor.vue').catch(() => ({ render: () => null } as any))
 )
 
 // ========== Stores ==========
@@ -193,11 +193,11 @@ function handleGridConfirm(data: { canvas: HTMLCanvasElement, cols: number, rows
   // 设置裁剪后的画布
   beadStore.setCroppedCanvas(data.canvas)
   beadStore.showCropper = false
-  
+
   // 设置网格维度
   beadStore.updateGranularity(data.cols)
   beadStore.updateGranularityY(data.rows)
-  
+
   // 将 RGB 字符串解析为 RgbColor 对象
   const parseRgb = (rgbStr: string): { r: number, g: number, b: number } => {
     const match = rgbStr.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/)
@@ -206,14 +206,14 @@ function handleGridConfirm(data: { canvas: HTMLCanvasElement, cols: number, rows
     }
     return { r: 0, g: 0, b: 0 }
   }
-  
+
   // 获取当前色板
   const palette = toRaw(paletteStore.activeBeadPalette).map(c => ({
     key: c.key,
     hex: c.hex,
     rgb: { r: c.rgb.r, g: c.rgb.g, b: c.rgb.b }
   }))
-  
+
   // Oklab 色彩匹配 - 将每个 RGB 颜色映射到最近的拼豆颜色
   const mappedPixelData: MappedPixel[][] = data.pixelColors.map(row =>
     row.map(color => {
@@ -222,14 +222,14 @@ function handleGridConfirm(data: { canvas: HTMLCanvasElement, cols: number, rows
       return { key: closest.key, color: closest.hex }
     })
   )
-  
+
   // 设置像素数据
   beadStore.setPixelData(mappedPixelData, { N: data.cols, M: data.rows })
-  
+
   // 更新颜色统计
   const stats = recalculateColorStats(mappedPixelData)
   beadStore.updateColorStats(stats)
-  
+
   // 清除编辑历史并保存快照
   editorStore.clearHistory()
   editorStore.saveSnapshot(mappedPixelData)
@@ -246,7 +246,7 @@ function handleDownloadPreview() { ironingPreviewRef.value?.download() }
 function loadPbds(file: File) { fileIO.loadPbds(file).then(result => { if (result) { pendingPbdsData.value = result; uiStore.showImportDialog = true } }) }
 function handleAutoRemoveBackground() { bgRemoval.handleAutoRemoveBackground() }
 function handleUndoBgRemoval() { bgRemoval.handleUndoBgRemoval() }
-function handleFocusColorChange(color: string) { focusLogic.handleColorChange(color) }
+function handleFocusColorChange(color: string) { focusLogic.handleFocusColorChange(color) }
 
 function switchMode(mode: AppMode) {
   if (activeMode.value === 'edit') editorStore.exitManualMode()
@@ -337,26 +337,15 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
 
 <template>
   <!-- 裁剪工具 -->
-  <ImageCropper
-    v-if="showCropper && originalImageSrc"
-    :image-src="originalImageSrc"
-    @confirm="handleCropConfirm"
-    @grid-confirm="handleGridConfirm"
-    @skip="handleCropSkip"
-  />
+  <ImageCropper v-if="showCropper && originalImageSrc" :image-src="originalImageSrc" @confirm="handleCropConfirm"
+    @grid-confirm="handleGridConfirm" @skip="handleCropSkip" />
 
   <!-- 主布局 -->
   <div class="h-screen flex flex-col bg-white overflow-hidden font-sans">
     <!-- Header -->
-    <AppHeader
-      @switch-mode="switchMode"
-      @trigger-file-input="triggerFileInput"
-      @trigger-pbds-input="triggerPbdsInput"
-      @open-palette-editor="showPaletteEditor = true"
-      @export-pbds="handleExportPbds"
-      @download-image="handleDownloadImage"
-      @download-stats="handleDownloadStats"
-    />
+    <AppHeader @switch-mode="switchMode" @trigger-file-input="triggerFileInput" @trigger-pbds-input="triggerPbdsInput"
+      @open-palette-editor="showPaletteEditor = true" @export-pbds="handleExportPbds"
+      @download-image="handleDownloadImage" @download-stats="handleDownloadStats" />
 
     <input ref="fileInput" type="file" accept="image/*" class="hidden" @change="handleFileChange" />
     <input ref="pbdsFileInput" type="file" accept=".pbds" class="hidden" @change="handlePbdsFileChange" />
@@ -365,44 +354,27 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
     <div class="relative flex-1 min-h-0 flex">
       <div class="mx-auto w-full flex-1 min-h-0 flex">
         <!-- Canvas area -->
-        <CanvasArea
-          v-show="activeMode !== 'preview'"
-          ref="canvasAreaRef"
-          @trigger-file-input="triggerFileInput"
-          @file-drop="handleFileDrop"
-          @canvas-click="handleCanvasClick"
-          @canvas-hover="handleCanvasHover"
-          @canvas-mousedown="handleCanvasMouseDown"
-          @canvas-mouseup="handleCanvasMouseUp"
-        />
+        <CanvasArea v-show="activeMode !== 'preview'" ref="canvasAreaRef" @trigger-file-input="triggerFileInput"
+          @file-drop="handleFileDrop" @canvas-click="handleCanvasClick" @canvas-hover="handleCanvasHover"
+          @canvas-mousedown="handleCanvasMouseDown" @canvas-mouseup="handleCanvasMouseUp" />
 
         <!-- Ironing preview canvas -->
-        <IroningPreview
-          v-if="activeMode === 'preview' && mappedPixelData"
-          ref="ironingPreviewRef"
-          :config="ironingConfig"
-        />
+        <IroningPreview v-if="activeMode === 'preview' && mappedPixelData" ref="ironingPreviewRef"
+          :config="ironingConfig" />
 
         <!-- Edit toolbar (floating on canvas left) -->
-        <EditToolbar
-          v-if="activeMode === 'edit' && mappedPixelData"
-          @toggle-palette="showPaletteEditor = true"
-        />
+        <EditToolbar v-if="activeMode === 'edit' && mappedPixelData" @toggle-palette="showPaletteEditor = true" />
 
         <!-- Right sidebar -->
-        <div
-          v-if="mappedPixelData"
+        <div v-if="mappedPixelData"
           class="absolute top-0 bottom-0 right-0 z-30 flex flex-col bg-white border-l border-black/10"
-          style="width: 320px;"
-        >
-          <OptimizeSidebar v-if="activeMode === 'optimize'" @trigger-file-input="triggerFileInput" @auto-remove-background="handleAutoRemoveBackground" @undo-bg-removal="handleUndoBgRemoval" />
-          <EditSidebar v-if="activeMode === 'edit'" @color-select="handlePaletteColorSelect" @color-replace="handlePaletteColorReplace" />
-          <PreviewSidebar
-            v-if="activeMode === 'preview'"
-            :config="ironingConfig"
-            @download-preview="handleDownloadPreview"
-            @update:config="ironingConfig = $event"
-          />
+          style="width: 320px;">
+          <OptimizeSidebar v-if="activeMode === 'optimize'" @trigger-file-input="triggerFileInput"
+            @auto-remove-background="handleAutoRemoveBackground" @undo-bg-removal="handleUndoBgRemoval" />
+          <EditSidebar v-if="activeMode === 'edit'" @color-select="handlePaletteColorSelect"
+            @color-replace="handlePaletteColorReplace" />
+          <PreviewSidebar v-if="activeMode === 'preview'" :config="ironingConfig"
+            @download-preview="handleDownloadPreview" @update:config="ironingConfig = $event" />
           <FocusSidebar v-if="activeMode === 'focus'" @color-change="handleFocusColorChange" />
         </div>
       </div>
@@ -420,59 +392,37 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
 
   <!-- Magnifier tool -->
   <Teleport to="body">
-    <MagnifierTool
-      v-if="isMagnifierActive && mappedPixelData && gridDimensions"
-      :pixel-data="mappedPixelData"
-      :grid-dimensions="gridDimensions"
-      :selected-color="selectedEditColor"
-      :is-erase-mode="isEraseMode"
-      @selection="handleMagnifierSelection"
-      @pixel-edit="handleMagnifierPixelEdit"
-      @close="exitMagnifierMode"
-    />
+    <MagnifierTool v-if="isMagnifierActive && mappedPixelData && gridDimensions" :pixel-data="mappedPixelData"
+      :grid-dimensions="gridDimensions" :selected-color="selectedEditColor" :is-erase-mode="isEraseMode"
+      @selection="handleMagnifierSelection" @pixel-edit="handleMagnifierPixelEdit"
+      @close="editorStore.exitMagnifierMode" />
   </Teleport>
 
   <!-- Download modal -->
-  <DownloadSettingsModal
-    :is-open="showDownloadModal"
-    :options="downloadOptions"
-    @update:options="downloadOptions = $event"
-    @download-grid="handleDownloadGridWithOptions"
-    @close="showDownloadModal = false"
-  />
+  <DownloadSettingsModal :is-open="showDownloadModal" :options="downloadOptions"
+    @update:options="downloadOptions = $event" @download-grid="handleDownloadGridWithOptions"
+    @close="showDownloadModal = false" />
 
   <!-- Import convert dialog -->
-  <ImportConvertDialog
-    :is-open="showImportDialog"
-    :import-data="pendingPbdsData"
-    :current-color-system="selectedColorSystem"
-    :full-palette="fullBeadPalette"
-    @confirm="handleImportConfirmFromDialog"
-    @close="handleImportCancel"
-  />
+  <ImportConvertDialog :is-open="showImportDialog" :import-data="pendingPbdsData"
+    :current-color-system="selectedColorSystem" :full-palette="fullBeadPalette" @confirm="handleImportConfirmFromDialog"
+    @close="handleImportCancel" />
 
   <!-- Custom palette editor -->
-  <CustomPaletteEditor
-    v-if="showPaletteEditor"
-    :all-colors="fullBeadPalette"
-    :current-selections="customPaletteSelections"
-    :selected-color-system="selectedColorSystem"
-    @save="handlePaletteEditorSave"
-    @close="handlePaletteEditorClose"
-    @update:color-system="paletteStore.selectedColorSystem = $event"
-  />
+  <CustomPaletteEditor v-if="showPaletteEditor" :all-colors="fullBeadPalette"
+    :current-selections="customPaletteSelections" :selected-color-system="selectedColorSystem"
+    @save="handlePaletteEditorSave" @close="handlePaletteEditorClose"
+    @update:color-system="paletteStore.selectedColorSystem = $event" />
 
   <!-- Donation modal -->
   <Teleport to="body">
-    <DonationModal
-      v-if="showDonationModal"
-      @close="showDonationModal = false"
-    />
+    <DonationModal v-if="showDonationModal" @close="showDonationModal = false" />
   </Teleport>
 
   <!-- Toast -->
   <Teleport to="body">
-    <div v-if="toastMessage" class="fixed bottom-4 left-1/2 -translate-x-1/2 bg-black text-white text-sm px-4 py-2 rounded-lg shadow-lg z-50">
+    <div v-if="toastMessage"
+      class="fixed bottom-4 left-1/2 -translate-x-1/2 bg-black text-white text-sm px-4 py-2 rounded-lg shadow-lg z-50">
       {{ toastMessage }}
     </div>
   </Teleport>

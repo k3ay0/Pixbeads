@@ -465,5 +465,6 @@ export const useEditorStore = defineStore('editor', () => {
     updateSelectionDragOffset,
     endSelectionDrag,
     toggleMoveToolMode,
+    resetColorReplaceState,
   }
 })

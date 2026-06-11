@@ -311,15 +311,16 @@ function handleDeleteSelection() {
 }
 
 const currentGridColors = computed(() => {
-  if (!mappedPixelData.value) return []
-  const map = new Map()
-  mappedPixelData.value.flat().forEach((cell: any) => {
-    if (cell && cell.color && !cell.isExternal) {
-      const hex = cell.color.toUpperCase()
-      if (!map.has(hex)) map.set(hex, { key: cell.key, color: cell.color })
-    }
-  })
-  return sortColorsByHue(Array.from(map.values()).map((c: any) => ({ key: getColorKeyByHex(c.color, selectedColorSystem.value), color: c.color })))
+  if (!mappedPixelData.value || !colorCounts.value) return []
+  const list = Object.entries(colorCounts.value)
+    .filter(([, data]) => data.count > 0)
+    .filter(([hex]) => !excludedColorKeys.value.has(hex.toUpperCase()))
+    .map(([hex]) => ({
+      key: getColorKeyByHex(hex, selectedColorSystem.value),
+      color: hex,
+      count: colorCounts.value![hex]?.count || 0,
+    }))
+  return sortColorsByHue(list)
 })
 
 // 展示用颜色列表（支持色相排序）
@@ -729,7 +730,7 @@ const toolNameMap: Record<string, string> = {
         >
           <div class="w-5 h-5 rounded-md border border-black/10 flex-shrink-0" :style="{ backgroundColor: item.color }"></div>
           <span class="text-xs font-mono flex-1" :class="excludedColorKeys.has(item.color.toUpperCase()) ? 'text-red-500 line-through' : 'text-black'">{{ item.key }}</span>
-          <span class="text-xs text-black/35">{{ colorCounts[item.color.toUpperCase()]?.count || 0 }}</span>
+          <span class="text-xs text-black/35">{{ item.count }}</span>
           <button
             @click.stop="toggleExcludeColor(item.color.toUpperCase())"
             class="text-xs text-red-400 hover:text-red-600"
