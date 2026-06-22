@@ -1,18 +1,29 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import type { MappedPixel, GridDimensions } from '../types'
 
-const props = defineProps({
- mappedPixelData: { type: Array, required: true },
- gridDimensions: { type: Object, required: true },
- currentColor: { type: String, default: '' },
- completedCells: { type: Object, default: () => new Set() },
- recommendedCell: { type: Object, default: null },
- recommendedRegion: { type: Array, default: null },
- canvasScale: { type: Number, default: 1 },
- canvasOffset: { type: Object, default: () => ({ x: 0, y: 0 }) },
- gridSectionInterval: { type: Number, default: 10 },
- showSectionLines: { type: Boolean, default: true },
- sectionLineColor: { type: String, default: '#007acc' },
+const props = withDefaults(defineProps<{
+  mappedPixelData: MappedPixel[][] | null
+  gridDimensions: GridDimensions | null
+  currentColor?: string
+  completedCells?: Set<string>
+  recommendedCell?: { row: number; col: number } | null
+  recommendedRegion?: Array<{ row: number; col: number }> | null
+  canvasScale?: number
+  canvasOffset?: { x: number; y: number }
+  gridSectionInterval?: number
+  showSectionLines?: boolean
+  sectionLineColor?: string
+}>(), {
+  currentColor: '',
+  completedCells: () => new Set(),
+  recommendedCell: null,
+  recommendedRegion: null,
+  canvasScale: 1,
+  canvasOffset: () => ({ x: 0, y: 0 }),
+  gridSectionInterval: 10,
+  showSectionLines: true,
+  sectionLineColor: '#007acc',
 })
 
 const emit = defineEmits(['cellClick', 'scaleChange', 'offsetChange'])
@@ -78,6 +89,7 @@ function getDarkComplementaryColor(hex: string): string {
 
 // 计算格子大小
 const cellSize = computed(() => {
+ if (!props.gridDimensions) return 15
  return Math.max(15, Math.min(40, 300 / Math.max(props.gridDimensions.N, props.gridDimensions.M)))
 })
 
@@ -95,7 +107,7 @@ const recommendedRegionSet = computed(() => {
 // ========== 渲染画布 ==========
 function renderCanvas() {
  const canvas = canvasRef.value
- if (!canvas || !props.mappedPixelData) return
+ if (!canvas || !props.mappedPixelData || !props.gridDimensions) return
 
  const ctx = canvas.getContext('2d')
  if (!ctx) return
@@ -295,6 +307,7 @@ function getEventPosition(event) {
 }
 
 function getGridPosition(x, y) {
+ if (!props.gridDimensions) return null
  const cs = cellSize.value
  const col = Math.floor(x / cs)
  const row = Math.floor(y / cs)

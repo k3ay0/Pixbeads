@@ -32,7 +32,7 @@ function exitFloodFillEraseMode() { editorStore.exitFloodFillEraseMode() }
 function setHighlight(color: string) { editorStore.setHighlight(color) }
 function toggleColorReplaceMode() { editorStore.toggleColorReplaceMode() }
 function toggleExcludeColor(hex: string) { paletteStore.toggleExcludeColor(hex) }
-function restoreAllExcludedColors() { paletteStore.restoreAllExcludedColors() }
+function restoreAllExcludedColors() { paletteStore.restoreAllExcluded() }
 function selectEditColor(color: any) { emit('color-select', color) }
 function handleColorReplace() { emit('color-replace', colorReplaceState.value.sourceColor, selectedEditColor.value) }
 function clearSelection() { editorStore.clearSelection() }

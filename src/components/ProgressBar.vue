@@ -1,10 +1,22 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, type PropType } from 'vue'
+
+interface RecommendedCell {
+  row: number
+  col: number
+}
+
+interface ColorInfo {
+  color: string
+  name: string
+  completed: number
+  total: number
+}
 
 const props = defineProps({
   progressPercentage: { type: Number, default: 0 },
-  recommendedCell: { type: Object, default: null },
-  colorInfo: { type: Object, default: null },
+  recommendedCell: { type: Object as PropType<RecommendedCell | null>, default: null },
+  colorInfo: { type: Object as PropType<ColorInfo | null>, default: null },
 })
 
 const progressDots = computed(() => {

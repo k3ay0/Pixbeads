@@ -1,25 +1,31 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import type { MappedPixel, GridDimensions } from '../types'
 
-const props = defineProps({
- isVisible: { type: Boolean, default: false },
- mappedPixelData: { type: Array, default: null },
- gridDimensions: { type: Object, default: null },
- totalElapsedTime: { type: Number, default: 0 },
+const props = withDefaults(defineProps<{
+ isVisible?: boolean
+ mappedPixelData?: MappedPixel[][] | null
+ gridDimensions?: GridDimensions | null
+ totalElapsedTime?: number
+}>(), {
+ isVisible: false,
+ mappedPixelData: null,
+ gridDimensions: null,
+ totalElapsedTime: 0,
 })
 
 const emit = defineEmits(['close'])
 
-const userPhoto = ref(null)
+const userPhoto = ref<string | null>(null)
 const isCapturing = ref(false)
 const cameraError = ref(false)
-const videoRef = ref(null)
-const canvasRef = ref(null)
-const cardCanvasRef = ref(null)
+const videoRef = ref<HTMLVideoElement | null>(null)
+const canvasRef = ref<HTMLCanvasElement | null>(null)
+const cardCanvasRef = ref<HTMLCanvasElement | null>(null)
 
 // 计算总豆子数（排除透明区域）
 const totalBeads = computed(() => {
- if (!props.mappedPixelData) return 0
+ if (!props.mappedPixelData || !props.gridDimensions) return 0
  let count = 0
  for (let row = 0; row < props.gridDimensions.M; row++) {
  for (let col = 0; col < props.gridDimensions.N; col++) {
@@ -36,7 +42,7 @@ const totalBeads = computed(() => {
 })
 
 // 格式化时间
-function formatTime(seconds) {
+function formatTime(seconds: number) {
  const hours = Math.floor(seconds / 3600)
  const minutes = Math.floor((seconds % 3600) / 60)
  const secs = seconds % 60
@@ -49,7 +55,7 @@ function formatTime(seconds) {
 
 // 生成原图缩略图
 function generateThumbnail() {
- if (!props.mappedPixelData) return null
+ if (!props.mappedPixelData || !props.gridDimensions) return null
  const canvas = document.createElement('canvas')
  const ctx = canvas.getContext('2d')
  if (!ctx) return null
@@ -113,8 +119,8 @@ function takePhoto() {
  userPhoto.value = photoDataURL
 
  // 停止相机
- const stream = video.srcObject
- if (stream) stream.getTracks().forEach(track => track.stop())
+ const stream = video.srcObject as MediaStream | null
+ if (stream) stream.getTracks().forEach((track: MediaStreamTrack) => track.stop())
  isCapturing.value = false
 }
 
@@ -129,22 +135,23 @@ function skipPhoto() {
 // 取消拍照
 function cancelCapture() {
  if (videoRef.value) {
- const stream = videoRef.value.srcObject
- if (stream) stream.getTracks().forEach(track => track.stop())
+ const stream = videoRef.value.srcObject as MediaStream | null
+ if (stream) stream.getTracks().forEach((track: MediaStreamTrack) => track.stop())
  }
  isCapturing.value = false
 }
 
 // 生成打卡图
-function generateCompletionCard() {
+function generateCompletionCard(): Promise<string | null> | null {
  if (!userPhoto.value || !cardCanvasRef.value) return null
 
+ const photoSrc = userPhoto.value
  const canvas = cardCanvasRef.value
  const ctx = canvas.getContext('2d')
  if (!ctx) return null
 
  const thumbnailDataURL = generateThumbnail()
- const isUsingPixelArt = userPhoto.value === thumbnailDataURL
+ const isUsingPixelArt = photoSrc === thumbnailDataURL
 
  // 设置画布尺寸 (3:4比例，适合分享)
  const cardWidth = 720
@@ -152,7 +159,7 @@ function generateCompletionCard() {
  canvas.width = cardWidth
  canvas.height = cardHeight
 
- return new Promise((resolve) => {
+ return new Promise<string | null>((resolve) => {
  const userImg = new Image()
  userImg.onload = () => {
  if (isUsingPixelArt) {
@@ -333,7 +340,7 @@ function generateCompletionCard() {
  }
  }
  }
- userImg.src = userPhoto.value
+ userImg.src = photoSrc
  })
 }
 

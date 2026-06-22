@@ -12,6 +12,9 @@ const emit = defineEmits<{
   (e: 'trigger-file-input'): void
   (e: 'trigger-pbds-input'): void
   (e: 'open-palette-editor'): void
+  (e: 'export-pbds'): void
+  (e: 'download-image'): void
+  (e: 'download-stats'): void
 }>()
 
 const beadStore = useBeadStore()

@@ -1,16 +1,40 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, type PropType } from 'vue'
 import { getColorKeyByHex } from '../utils/colorSystemUtils'
+import type { MappedPixel, GridDimensions, ColorSystem } from '../types'
+
+interface SelectedColor {
+ key: string
+ color: string
+ isExternal?: boolean
+}
+
+interface SelectionArea {
+ startRow: number
+ startCol: number
+ endRow: number
+ endCol: number
+}
+
+interface Coords {
+ x: number
+ y: number
+}
+
+interface GridCell {
+ row: number
+ col: number
+}
 
 const props = defineProps({
  isActive: { type: Boolean, default: false },
- mappedPixelData: { type: Array, default: null },
- gridDimensions: { type: Object, default: null },
- selectedColor: { type: Object, default: null },
- selectedColorSystem: { type: String, default: 'MARD' },
- onPixelEdit: { type: Function, default: () => {} },
- highlightColorKey: { type: String, default: null },
- previewCanvasRef: { type: Object, default: null },
+ mappedPixelData: { type: Array as PropType<MappedPixel[][] | null>, default: null },
+ gridDimensions: { type: Object as PropType<GridDimensions | null>, default: null },
+ selectedColor: { type: Object as PropType<SelectedColor | null>, default: null },
+ selectedColorSystem: { type: String as PropType<ColorSystem>, default: 'MARD' },
+ onPixelEdit: { type: Function as PropType<(row: number, col: number, color: SelectedColor) => void>, default: () => {} },
+ highlightColorKey: { type: String as PropType<string | null>, default: null },
+ previewCanvasRef: { type: Object as PropType<HTMLCanvasElement | null>, default: null },
 })
 
 const emit = defineEmits(['toggle', 'selectionComplete', 'clearSelection', 'activateFloating'])
@@ -24,24 +48,24 @@ const getInitialPosition = () => ({
 const magnifierPosition = ref(getInitialPosition())
 const isDragging = ref(false)
 const dragOffset = ref({ x: 0, y: 0 })
-const magnifierRef = ref(null)
-const canvasRef = ref(null)
+const magnifierRef = ref<HTMLElement | null>(null)
+const canvasRef = ref<HTMLCanvasElement | null>(null)
 const isFloatingActive = ref(false)
 
 // ===== 选区状态 =====
-const selectionArea = ref(null)
+const selectionArea = ref<SelectionArea | null>(null)
 const isSelecting = ref(false)
-const selectionStart = ref(null)
-const selectionEnd = ref(null)
-const overlayRef = ref(null)
+const selectionStart = ref<Coords | null>(null)
+const selectionEnd = ref<Coords | null>(null)
+const overlayRef = ref<HTMLElement | null>(null)
 
 // 滚动禁用状态
 const scrollDisabled = ref(false)
 const savedScrollPosition = ref(0)
 
 // ===== 放大镜窗口拖拽 =====
-function handleTitleBarMouseDown(event) {
- const target = event.target
+function handleTitleBarMouseDown(event: MouseEvent) {
+ const target = event.target as HTMLElement
  if (target.tagName === 'BUTTON' || target.closest('button')) return
  if (magnifierRef.value) {
  const rect = magnifierRef.value.getBoundingClientRect()
@@ -54,8 +78,8 @@ function handleTitleBarMouseDown(event) {
  event.preventDefault()
 }
 
-function handleTitleBarTouchStart(event) {
- const target = event.target
+function handleTitleBarTouchStart(event: TouchEvent) {
+ const target = event.target as HTMLElement
  if (target.tagName === 'BUTTON' || target.closest('button')) return
  const touch = event.touches[0]
  if (!touch) return
@@ -70,7 +94,7 @@ function handleTitleBarTouchStart(event) {
  event.preventDefault()
 }
 
-function handleMouseMove(event) {
+function handleMouseMove(event: MouseEvent) {
  if (isDragging.value) {
  event.preventDefault()
  event.stopPropagation()
@@ -86,7 +110,7 @@ function handleMouseUp() {
  document.body.style.overflow = ''
 }
 
-function handleTouchMove(event) {
+function handleTouchMove(event: TouchEvent) {
  if (isDragging.value) {
  event.preventDefault()
  event.stopPropagation()
@@ -127,7 +151,7 @@ watch(() => props.isActive, (val) => {
 })
 
 // ===== 选区覆盖层 - 鼠标事件 =====
-function preventScrolling(e) {
+function preventScrolling(e: Event) {
  e.preventDefault()
  e.stopPropagation()
 }
@@ -151,7 +175,7 @@ function enableScroll() {
  scrollDisabled.value = false
 }
 
-function getCanvasCoordinates(clientX, clientY) {
+function getCanvasCoordinates(clientX: number, clientY: number): Coords | null {
  if (!props.previewCanvasRef) return null
  const canvas = props.previewCanvasRef
  const rect = canvas.getBoundingClientRect()
@@ -165,7 +189,7 @@ function getCanvasCoordinates(clientX, clientY) {
  }
 }
 
-function pixelToGrid(x, y) {
+function pixelToGrid(x: number, y: number): GridCell | null {
  if (!props.gridDimensions || !props.previewCanvasRef) return null
  const canvasWidth = props.previewCanvasRef.width
  const canvasHeight = props.previewCanvasRef.height
@@ -180,7 +204,7 @@ function pixelToGrid(x, y) {
 }
 
 // 选区覆盖层鼠标/触摸事件
-function handleOverlayMouseDown(event) {
+function handleOverlayMouseDown(event: MouseEvent) {
  if (!props.isActive || selectionArea.value) return
  const coords = getCanvasCoordinates(event.clientX, event.clientY)
  if (!coords) return
@@ -191,7 +215,7 @@ function handleOverlayMouseDown(event) {
  event.preventDefault()
 }
 
-function handleOverlayMouseMove(event) {
+function handleOverlayMouseMove(event: MouseEvent) {
  if (!isSelecting.value || !selectionStart.value) return
  const coords = getCanvasCoordinates(event.clientX, event.clientY)
  if (!coords) return
@@ -220,7 +244,7 @@ function handleOverlayMouseUp() {
  enableScroll()
 }
 
-function handleOverlayTouchStart(event) {
+function handleOverlayTouchStart(event: TouchEvent) {
  if (!props.isActive || selectionArea.value) return
  event.preventDefault()
  event.stopPropagation()
@@ -234,7 +258,7 @@ function handleOverlayTouchStart(event) {
  disableScroll()
 }
 
-function handleOverlayTouchMove(event) {
+function handleOverlayTouchMove(event: TouchEvent) {
  if (!isSelecting.value || !selectionStart.value) return
  event.preventDefault()
  event.stopPropagation()
@@ -299,10 +323,10 @@ const selectionBoxStyle = computed(() => {
  top: rect.top + minY + 'px',
  width: (maxX - minX) + 'px',
  height: (maxY - minY) + 'px',
- position: 'fixed',
+ position: 'fixed' as const,
  border: '2px solid #10b981',
  backgroundColor: 'rgba(16, 185, 129, 0.1)',
- pointerEvents: 'none',
+ pointerEvents: 'none' as const,
  zIndex: 1000,
  }
 })
@@ -357,7 +381,7 @@ function renderMagnifiedView() {
  }
 }
 
-function handleMagnifiedClick(event) {
+function handleMagnifiedClick(event: MouseEvent) {
  if (!selectionArea.value || !props.mappedPixelData || !props.selectedColor || !canvasRef.value) return
  const canvas = canvasRef.value
  const rect = canvas.getBoundingClientRect()

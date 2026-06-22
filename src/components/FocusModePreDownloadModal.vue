@@ -1,11 +1,13 @@
 <script setup lang="ts">
+import { type PropType } from 'vue'
 import { exportCsv } from '../utils/downloader'
+import type { MappedPixel, GridDimensions, ColorSystem } from '../types'
 
 const props = defineProps({
  isOpen: { type: Boolean, default: false },
- mappedPixelData: { type: Array, default: null },
- gridDimensions: { type: Object, default: null },
- selectedColorSystem: { type: String, default: 'MARD' },
+ mappedPixelData: { type: Array as PropType<MappedPixel[][]>, default: null },
+ gridDimensions: { type: Object as PropType<GridDimensions>, default: null },
+ selectedColorSystem: { type: String as PropType<ColorSystem>, default: 'MARD' },
 })
 
 const emit = defineEmits(['close', 'proceed'])

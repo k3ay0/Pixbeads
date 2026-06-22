@@ -201,40 +201,27 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { getColorKeyByHex } from '../utils/colorSystemUtils'
+import type { ColorSystem, ColorReplaceState } from '../types'
 
-const props = defineProps({
- colors: {
- type: Array,
- required: true
- },
- selectedColor: {
- type: Object,
- default: null
- },
- transparentKey: {
- type: String,
- default: undefined
- },
- selectedColorSystem: {
- type: String,
- default: undefined
- },
- isEraseMode: {
- type: Boolean,
- default: false
- },
- fullPaletteColors: {
- type: Array,
- default: undefined
- },
- showFullPalette: {
- type: Boolean,
- default: false
- },
- colorReplaceState: {
- type: Object,
- default: undefined
- }
+interface ColorData {
+ key: string
+ color: string
+ isExternal?: boolean
+}
+
+const props = withDefaults(defineProps<{
+ colors: ColorData[]
+ selectedColor?: ColorData | null
+ transparentKey?: string
+ selectedColorSystem?: ColorSystem
+ isEraseMode?: boolean
+ fullPaletteColors?: ColorData[]
+ showFullPalette?: boolean
+ colorReplaceState?: ColorReplaceState
+}>(), {
+ selectedColor: null,
+ isEraseMode: false,
+ showFullPalette: false,
 })
 
 const emit = defineEmits([
@@ -247,19 +234,19 @@ const emit = defineEmits([
 ])
 
 // Provide handlers as props for parent use
-const onColorSelect = (colorData) => emit('color-select', colorData)
+const onColorSelect = (colorData: ColorData) => emit('color-select', colorData)
 const onEraseToggle = computed(() => props.isEraseMode !== undefined ? () => emit('erase-toggle') : undefined)
-const onHighlightColor = (hex) => emit('highlight-color', hex)
+const onHighlightColor = (hex: string) => emit('highlight-color', hex)
 const onToggleFullPalette = computed(() => props.fullPaletteColors ? () => emit('toggle-full-palette') : undefined)
 const onColorReplaceToggle = computed(() => props.colorReplaceState ? () => emit('color-replace-toggle') : undefined)
-const onColorReplace = (source, target) => emit('color-replace', source, target)
+const onColorReplace = (source: ColorData, target: ColorData) => emit('color-replace', source, target)
 
 // Helpers
-const isTransparent = (colorData) => {
+const isTransparent = (colorData: ColorData) => {
  return !!(props.transparentKey && colorData.key === props.transparentKey)
 }
 
-const getContrastColor = (hex) => {
+const getContrastColor = (hex: string) => {
  const r = parseInt(hex.slice(1, 3), 16)
  const g = parseInt(hex.slice(3, 5), 16)
  const b = parseInt(hex.slice(5, 7), 16)
@@ -267,7 +254,7 @@ const getContrastColor = (hex) => {
  return luma > 0.5 ? '#000000' : '#FFFFFF'
 }
 
-const getDisplayKey = (colorData) => {
+const getDisplayKey = (colorData: ColorData) => {
  if (isTransparent(colorData)) return ''
  if (props.selectedColorSystem) {
  return getColorKeyByHex(colorData.color, props.selectedColorSystem)
@@ -288,7 +275,7 @@ const colorsToShow = computed(() => {
  return props.colors
 })
 
-const handleColorClick = (colorData) => {
+const handleColorClick = (colorData: ColorData) => {
  // 颜色替换模式下的特殊处理
  if (
  props.colorReplaceState?.isActive &&

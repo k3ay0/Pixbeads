@@ -38,10 +38,10 @@ export const gridLineColorOptions = [
  </label>
  <label class="relative inline-flex items-center cursor-pointer">
  <input
- type="checkbox"
- class="sr-only peer"
- :checked="tempOptions.showGrid"
- @change="handleOptionChange('showGrid', $event.target.checked)"
+  type="checkbox"
+  class="sr-only peer"
+  :checked="tempOptions.showGrid"
+  @change="handleOptionChange('showGrid', getChecked($event))"
  />
  <div class="w-11 h-6 bg-black/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-black/10 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-black"></div>
  </label>
@@ -56,13 +56,13 @@ export const gridLineColorOptions = [
  </label>
  <div class="flex items-center justify-between space-x-3">
  <input
- type="range"
- min="5"
- max="20"
- step="1"
- :value="tempOptions.gridInterval"
- @input="handleOptionChange('gridInterval', parseInt($event.target.value))"
- class="w-full h-2 bg-black/10 rounded-lg appearance-none cursor-pointer "
+  type="range"
+  min="5"
+  max="20"
+  step="1"
+  :value="tempOptions.gridInterval"
+  @input="handleOptionChange('gridInterval', parseInt(getValue($event)))"
+  class="w-full h-2 bg-black/10 rounded-lg appearance-none cursor-pointer "
  />
  <span class="flex items-center justify-center min-w-[40px] text-sm font-medium text-black ">
  {{ tempOptions.gridInterval }}
@@ -103,10 +103,10 @@ export const gridLineColorOptions = [
  </label>
  <label class="relative inline-flex items-center cursor-pointer">
  <input
- type="checkbox"
- class="sr-only peer"
- :checked="tempOptions.showCoordinates"
- @change="handleOptionChange('showCoordinates', $event.target.checked)"
+  type="checkbox"
+  class="sr-only peer"
+  :checked="tempOptions.showCoordinates"
+  @change="handleOptionChange('showCoordinates', getChecked($event))"
  />
  <div class="w-11 h-6 bg-black/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-black/10 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-black"></div>
  </label>
@@ -119,10 +119,10 @@ export const gridLineColorOptions = [
  </label>
  <label class="relative inline-flex items-center cursor-pointer">
  <input
- type="checkbox"
- class="sr-only peer"
- :checked="!tempOptions.showCellNumbers"
- @change="handleOptionChange('showCellNumbers', !($event.target.checked))"
+  type="checkbox"
+  class="sr-only peer"
+  :checked="!tempOptions.showCellNumbers"
+  @change="handleOptionChange('showCellNumbers', !getChecked($event))"
  />
  <div class="w-11 h-6 bg-black/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-black/10 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-black"></div>
  </label>
@@ -135,10 +135,10 @@ export const gridLineColorOptions = [
  </label>
  <label class="relative inline-flex items-center cursor-pointer">
  <input
- type="checkbox"
- class="sr-only peer"
- :checked="tempOptions.includeStats"
- @change="handleOptionChange('includeStats', $event.target.checked)"
+  type="checkbox"
+  class="sr-only peer"
+  :checked="tempOptions.includeStats"
+  @change="handleOptionChange('includeStats', getChecked($event))"
  />
  <div class="w-11 h-6 bg-black/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-black/10 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-black"></div>
  </label>
@@ -156,10 +156,10 @@ export const gridLineColorOptions = [
  </div>
  <label class="relative inline-flex items-center cursor-pointer">
  <input
- type="checkbox"
- class="sr-only peer"
- :checked="tempOptions.exportPbds"
- @change="handleOptionChange('exportPbds', $event.target.checked)"
+  type="checkbox"
+  class="sr-only peer"
+  :checked="tempOptions.exportPbds"
+  @change="handleOptionChange('exportPbds', getChecked($event))"
  />
  <div class="w-11 h-6 bg-black/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-black/10 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-black"></div>
  </label>
@@ -188,11 +188,12 @@ export const gridLineColorOptions = [
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import type { GridDownloadOptions } from '../types'
 
-const props = defineProps({
- isOpen: Boolean,
- options: Object,
-})
+const props = defineProps<{
+ isOpen: boolean
+ options: GridDownloadOptions
+}>()
 
 const emit = defineEmits(['update:options', 'download-grid', 'close'])
 
@@ -216,12 +217,15 @@ watch(
  }
 )
 
-const handleOptionChange = (key, value) => {
+const handleOptionChange = (key: string, value: any) => {
  tempOptions.value = {
- ...tempOptions.value,
- [key]: value,
+  ...tempOptions.value,
+  [key]: value,
  }
 }
+
+const getChecked = (e: Event): boolean => (e.target as HTMLInputElement).checked
+const getValue = (e: Event): string => (e.target as HTMLInputElement).value
 
 const handleSave = () => {
  emit('update:options', { ...tempOptions.value })

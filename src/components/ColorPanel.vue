@@ -113,16 +113,17 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 
-const props = defineProps({
-  colors: {
-    type: Array,
-    required: true
-  },
-  currentColor: {
-    type: String,
-    default: ''
-  }
-})
+interface ColorInfo {
+  color: string
+  name: string
+  total: number
+  completed: number
+}
+
+const props = defineProps<{
+  colors: ColorInfo[]
+  currentColor?: string
+}>()
 
 const emit = defineEmits(['select', 'close'])
 

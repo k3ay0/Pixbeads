@@ -17,18 +17,24 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 
+interface BeforeInstallPromptEvent extends Event {
+  prompt(): Promise<void>
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>
+}
+
 const supportsPWA = ref(false)
-const promptInstall = ref(null)
+const promptInstall = ref<BeforeInstallPromptEvent | null>(null)
 const isInstalled = ref(false)
 
-let handler = null
+let handler: EventListener | null = null
 
 onMounted(() => {
   handler = (e) => {
-    e.preventDefault()
+    const event = e as BeforeInstallPromptEvent
+    event.preventDefault()
     console.log('PWA 安装提示已准备')
     supportsPWA.value = true
-    promptInstall.value = e
+    promptInstall.value = event
   }
 
   window.addEventListener('beforeinstallprompt', handler)
@@ -45,7 +51,7 @@ onUnmounted(() => {
   }
 })
 
-const onClick = async (evt) => {
+const onClick = async (evt: MouseEvent) => {
   evt.preventDefault()
   if (!promptInstall.value) {
     return

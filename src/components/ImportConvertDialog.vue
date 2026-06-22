@@ -49,7 +49,7 @@ function getColorStats() {
   }
 
   return {
-    totalColors: uniqueColors.length,
+    totalColors: uniqueColors.size,
     convertibleCount,
     approximatableCount: 0
   }

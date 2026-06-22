@@ -5,6 +5,7 @@ import { usePaletteStore } from '../stores/paletteStore'
 import { useCanvasStore } from '../stores/canvasStore'
 import { useEditorStore } from '../stores/editorStore'
 import { useUiStore } from '../stores/uiStore'
+import { usePixelEditing } from '../composables/usePixelEditing'
 
 const emit = defineEmits<{
   (e: 'color-select', color: any): void
@@ -16,6 +17,7 @@ const paletteStore = usePaletteStore()
 const canvasStore = useCanvasStore()
 const editorStore = useEditorStore()
 const uiStore = useUiStore()
+const { undoEdit, redoEdit, enterColorReplaceMode, exitColorReplaceMode } = usePixelEditing()
 
 const { mappedPixelData } = storeToRefs(beadStore)
 const { selectedColorSystem } = storeToRefs(paletteStore)
@@ -38,14 +40,10 @@ const currentGridColors = computed(() => {
 import { computed } from 'vue'
 import { getColorKeyByHex, sortColorsByHue } from '../utils/colorSystemUtils'
 
-function togglePaletteCollapse() { editorStore.togglePaletteCollapse() }
+function togglePaletteCollapse() { floatingPalette.value.collapsed = !floatingPalette.value.collapsed }
 function toggleEraseMode() { editorStore.toggleEraseMode() }
 function enterFloodFillEraseMode() { editorStore.enterFloodFillEraseMode() }
 function exitFloodFillEraseMode() { editorStore.exitFloodFillEraseMode() }
-function enterColorReplaceMode() { editorStore.enterColorReplaceMode() }
-function exitColorReplaceMode() { editorStore.exitColorReplaceMode() }
-function undoEdit() { editorStore.undoEdit() }
-function redoEdit() { editorStore.redoEdit() }
 function selectEditColor(color: any) { emit('color-select', color) }
 
 let dragOffset = { x: 0, y: 0 }

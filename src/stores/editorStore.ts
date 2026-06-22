@@ -197,6 +197,26 @@ export const useEditorStore = defineStore('editor', () => {
     }
   }
 
+  /** 设置高亮颜色 */
+  function setHighlight(colorHex: string) {
+    highlightColorKey.value = colorHex
+  }
+
+  /** 切换颜色替换模式 */
+  function toggleColorReplaceMode() {
+    if (colorReplaceState.value.isActive) {
+      resetColorReplaceState()
+      highlightColorKey.value = null
+    } else {
+      isEraseMode.value = false
+      selectedEditColor.value = null
+      colorReplaceState.value = {
+        isActive: true,
+        step: 'select-source',
+      }
+    }
+  }
+
   // 撤销/重做
   function saveSnapshot(data: MappedPixel[][]) {
     if (editHistoryIndex.value < editHistory.value.length - 1) {
@@ -466,5 +486,7 @@ export const useEditorStore = defineStore('editor', () => {
     endSelectionDrag,
     toggleMoveToolMode,
     resetColorReplaceState,
+    setHighlight,
+    toggleColorReplaceMode,
   }
 })
