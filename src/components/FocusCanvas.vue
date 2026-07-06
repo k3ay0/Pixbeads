@@ -28,11 +28,11 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits(['cellClick', 'scaleChange', 'offsetChange'])
 
-const canvasRef = ref(null)
-const containerRef = ref(null)
+const canvasRef = ref<HTMLCanvasElement | null>(null)
+const containerRef = ref<HTMLDivElement | null>(null)
 const isDragging = ref(false)
-const lastPanPoint = ref(null)
-const lastPinchDistance = ref(null)
+const lastPanPoint = ref<{ x: number; y: number } | null>(null)
+const lastPinchDistance = ref<number | null>(null)
 const hasDragged = ref(false)
 
 // 计算互补色
@@ -285,19 +285,23 @@ onMounted(() => {
 })
 
 // ========== 事件处理 ==========
-function getEventPosition(event) {
+function getEventPosition(event: MouseEvent | TouchEvent) {
  const canvas = canvasRef.value
  if (!canvas) return null
 
  const rect = canvas.getBoundingClientRect()
- let clientX, clientY
+ let clientX: number, clientY: number
 
- if (event.touches && event.touches.length > 0) {
+ if ('touches' in event && event.touches.length > 0) {
  clientX = event.touches[0].clientX
  clientY = event.touches[0].clientY
+ } else if ('changedTouches' in event && event.changedTouches.length > 0) {
+ clientX = event.changedTouches[0].clientX
+ clientY = event.changedTouches[0].clientY
  } else {
- clientX = event.clientX
- clientY = event.clientY
+ const me = event as MouseEvent
+ clientX = me.clientX
+ clientY = me.clientY
  }
 
  return {
@@ -306,7 +310,7 @@ function getEventPosition(event) {
  }
 }
 
-function getGridPosition(x, y) {
+function getGridPosition(x: number, y: number) {
  if (!props.gridDimensions) return null
  const cs = cellSize.value
  const col = Math.floor(x / cs)
@@ -318,7 +322,7 @@ function getGridPosition(x, y) {
  return null
 }
 
-function handleClick(event) {
+function handleClick(event: MouseEvent | TouchEvent) {
  if (hasDragged.value) return
 
  const pos = getEventPosition(event)
@@ -330,21 +334,21 @@ function handleClick(event) {
  }
 }
 
-function handleWheel(event) {
+function handleWheel(event: WheelEvent) {
  event.preventDefault()
  const delta = event.deltaY > 0 ? 0.9 : 1.1
  const newScale = Math.max(0.3, Math.min(3, props.canvasScale * delta))
  emit('scaleChange', newScale)
 }
 
-function getTouchDistance(touches) {
+function getTouchDistance(touches: TouchList) {
  if (touches.length < 2) return 0
  const dx = touches[0].clientX - touches[1].clientX
  const dy = touches[0].clientY - touches[1].clientY
  return Math.sqrt(dx * dx + dy * dy)
 }
 
-function handleTouchStart(event) {
+function handleTouchStart(event: TouchEvent) {
  hasDragged.value = false
 
  if (event.touches.length === 1) {
@@ -362,7 +366,7 @@ function handleTouchStart(event) {
  }
 }
 
-function handleTouchMove(event) {
+function handleTouchMove(event: TouchEvent) {
  event.preventDefault()
 
  if (event.touches.length === 1 && isDragging.value && lastPanPoint.value) {
@@ -395,7 +399,7 @@ function handleTouchMove(event) {
  }
 }
 
-function handleTouchEnd(event) {
+function handleTouchEnd(event: TouchEvent) {
  if (event.touches.length === 0) {
  isDragging.value = false
  lastPanPoint.value = null
@@ -419,7 +423,7 @@ function handleTouchEnd(event) {
 }
 
 // 鼠标拖拽
-function handleMouseDown(event) {
+function handleMouseDown(event: MouseEvent) {
  isDragging.value = true
  hasDragged.value = false
  lastPanPoint.value = {
@@ -428,7 +432,7 @@ function handleMouseDown(event) {
  }
 }
 
-function handleMouseMove(event) {
+function handleMouseMove(event: MouseEvent) {
  if (isDragging.value && lastPanPoint.value) {
  const deltaX = event.clientX - lastPanPoint.value.x
  const deltaY = event.clientY - lastPanPoint.value.y
@@ -449,13 +453,13 @@ function handleMouseMove(event) {
  }
 }
 
-function handleMouseUp() {
+function handleMouseUp(event: MouseEvent) {
  isDragging.value = false
  lastPanPoint.value = null
 }
 
 // 阻止触摸默认行为
-function preventDefaultTouch(event) {
+function preventDefaultTouch(event: TouchEvent) {
  event.preventDefault()
 }
 </script>

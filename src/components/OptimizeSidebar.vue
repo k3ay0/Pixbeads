@@ -5,7 +5,8 @@ import { useBeadStore } from '../stores/beadStore'
 import { usePaletteStore } from '../stores/paletteStore'
 import { useEditorStore } from '../stores/editorStore'
 import { colorSystemOptions, getColorKeyByHex, sortColorsByHue } from '../utils/colorSystemUtils'
-import { findClosestPaletteColor, hexToRgb, recalculateColorStats, replaceAllColor } from '../utils/pixelation'
+import { hexToRgb, recalculateColorStats, replaceAllColor } from '../utils/pixelation'
+import { findClosestPaletteColor, isLightColor } from '../utils/colorUtils'
 import { PixelationMode } from '../types'
 import type { ColorSystem } from '../types'
 
@@ -279,17 +280,6 @@ const availableColorsForPicker = computed(() => {
   // 合并：当前图片颜色在前，完整色板颜色在后
   return [...gridColors, ...otherColors]
 })
-
-/**
- * 判断颜色是否为浅色（用于选择合适的文字颜色）
- */
-function isLightColor(hex: string): boolean {
-  const rgb = hexToRgb(hex)
-  if (!rgb) return true
-  // 使用感知亮度公式 (ITU-R BT.709)
-  const luminance = 0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b
-  return luminance > 128
-}
 
 // ========== 拖拽上传 ==========
 

@@ -1,7 +1,8 @@
 import { useBeadStore } from '@/stores/beadStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { recalculateColorStats } from '@/utils/pixelation'
-import { TRANSPARENT_KEY } from '@/types'
+import { TRANSPARENT_KEY, type MappedPixel } from '@/types'
+import { deepCopyGrid, floodFillArea } from '@/utils/gridOperations'
 
 export function useBackgroundRemoval() {
   const beadStore = useBeadStore()
@@ -11,7 +12,7 @@ export function useBackgroundRemoval() {
     if (!beadStore.mappedPixelData || !beadStore.gridDimensions) return
 
     editorStore.setBgRemovalSnapshot({
-      mappedPixelData: beadStore.mappedPixelData.map(r => r.map(c => ({ ...c }))),
+      mappedPixelData: deepCopyGrid(beadStore.mappedPixelData),
       colorCounts: beadStore.colorCounts ? { ...beadStore.colorCounts } : {},
       totalBeadCount: beadStore.totalBeadCount,
     })
@@ -47,37 +48,43 @@ export function useBackgroundRemoval() {
       }
     })
 
-    const newPixelData = beadStore.mappedPixelData.map(r => r.map(c => ({ ...c })))
-    const visited = Array(M).fill(null).map(() => Array(N).fill(false))
-    const stack: Array<{ row: number; col: number }> = []
+    // 从所有匹配的边界格子开始洪水填充
+    const condition = (cell: MappedPixel) => !cell.isExternal && cell.key === targetKey
+    const transform = (): MappedPixel => ({ key: TRANSPARENT_KEY, color: '#FFFFFF', isExternal: true })
 
-    const pushIfTarget = (row: number, col: number) => {
-      if (row < 0 || row >= M || col < 0 || col >= N || visited[row][col]) return
-      const cell = newPixelData[row][col]
-      if (!cell || cell.isExternal || cell.key !== targetKey) return
-      visited[row][col] = true
-      stack.push({ row, col })
-    }
+    let newPixelData: MappedPixel[][] = beadStore.mappedPixelData
+    let hasMatch = false
 
     for (let col = 0; col < N; col++) {
-      pushIfTarget(0, col)
-      if (M > 1) pushIfTarget(M - 1, col)
+      const topCell = newPixelData[0]?.[col]
+      if (topCell && condition(topCell)) {
+        newPixelData = floodFillArea(newPixelData, { N, M }, 0, col, condition, transform)
+        hasMatch = true
+      }
+      if (M > 1) {
+        const bottomCell = newPixelData[M - 1]?.[col]
+        if (bottomCell && condition(bottomCell)) {
+          newPixelData = floodFillArea(newPixelData, { N, M }, M - 1, col, condition, transform)
+          hasMatch = true
+        }
+      }
     }
     for (let row = 1; row < M - 1; row++) {
-      pushIfTarget(row, 0)
-      if (N > 1) pushIfTarget(row, N - 1)
+      const leftCell = newPixelData[row]?.[0]
+      if (leftCell && condition(leftCell)) {
+        newPixelData = floodFillArea(newPixelData, { N, M }, row, 0, condition, transform)
+        hasMatch = true
+      }
+      if (N > 1) {
+        const rightCell = newPixelData[row]?.[N - 1]
+        if (rightCell && condition(rightCell)) {
+          newPixelData = floodFillArea(newPixelData, { N, M }, row, N - 1, condition, transform)
+          hasMatch = true
+        }
+      }
     }
 
-    if (stack.length === 0) return
-
-    while (stack.length > 0) {
-      const { row, col } = stack.pop()!
-      newPixelData[row][col] = { key: TRANSPARENT_KEY, color: '#FFFFFF', isExternal: true }
-      pushIfTarget(row - 1, col)
-      pushIfTarget(row + 1, col)
-      pushIfTarget(row, col - 1)
-      pushIfTarget(row, col + 1)
-    }
+    if (!hasMatch) return
 
     beadStore.setPixelData(newPixelData)
     const stats = recalculateColorStats(newPixelData)

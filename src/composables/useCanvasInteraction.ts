@@ -13,6 +13,7 @@ import { usePaletteStore } from '@/stores/paletteStore'
 import { clientToGridCoords } from '@/utils/canvasUtils'
 import { getColorKeyByHex } from '@/utils/colorSystemUtils'
 import { floodFill } from '@/utils/pixelation'
+import { floodFillArea } from '@/utils/gridOperations'
 import {
   getLinePoints,
   getRectPoints,
@@ -20,7 +21,7 @@ import {
   isPointInSelection,
 } from '@/utils/drawingAlgorithms'
 import type { AppMode } from '@/constants/modeConstants'
-import { TRANSPARENT_KEY } from '@/types'
+import { TRANSPARENT_KEY, type MappedPixel } from '@/types'
 
 export function useCanvasInteraction(
   hoverCell: Ref<{ row: number; col: number } | null>,
@@ -177,17 +178,14 @@ export function useCanvasInteraction(
           // 洪水填充擦除
           const targetColor = cell.color.toUpperCase()
           editorStore.saveSnapshot(mappedPixelData.value)
-          const stack = [{ row, col }]
-          while (stack.length > 0) {
-            const { row: r, col: c } = stack.pop()!
-            const currentCell = mappedPixelData.value[r]?.[c]
-            if (!currentCell || currentCell.isExternal || currentCell.color.toUpperCase() !== targetColor) continue
-            mappedPixelData.value[r][c] = { key: TRANSPARENT_KEY, color: '#FFFFFF', isExternal: true }
-            if (r > 0) stack.push({ row: r - 1, col: c })
-            if (r < gridDimensions.value!.M - 1) stack.push({ row: r + 1, col: c })
-            if (c > 0) stack.push({ row: r, col: c - 1 })
-            if (c < gridDimensions.value!.N - 1) stack.push({ row: r, col: c + 1 })
-          }
+          const newData = floodFillArea(
+            mappedPixelData.value,
+            gridDimensions.value!,
+            row, col,
+            (c) => c.color.toUpperCase() === targetColor && !c.isExternal,
+            () => ({ key: TRANSPARENT_KEY, color: '#FFFFFF', isExternal: true })
+          )
+          beadStore.mappedPixelData = newData
           scheduleRender()
         } else {
           // 单格擦除
@@ -298,6 +296,7 @@ export function useCanvasInteraction(
   function handleCanvasMouseDown(e: MouseEvent) {
     if (activeMode.value !== 'edit' || isDragging.value) return
     const canvas = e.target as HTMLCanvasElement
+    if (!gridDimensions.value) return
     const coords = clientToGridCoords(e.clientX, e.clientY, canvas, gridDimensions.value)
     if (!coords) return
     const { i: col, j: row } = coords
@@ -406,9 +405,9 @@ export function useCanvasInteraction(
           if (!isCopy) editorStore.saveSnapshot(mappedPixelData.value)
 
           // 读取选区内容
-          const cells: (typeof mappedPixelData.value[0][0])[][] = []
+          const cells: (MappedPixel | null)[][] = []
           for (let r = info.startRow; r <= info.endRow; r++) {
-            const rowCells: typeof mappedPixelData.value[0][0][] = []
+            const rowCells: (MappedPixel | null)[] = []
             for (let c = info.startCol; c <= info.endCol; c++) {
               rowCells.push(mappedPixelData.value[r]?.[c] ? { ...mappedPixelData.value[r][c] } : null)
             }

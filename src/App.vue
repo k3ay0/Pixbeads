@@ -22,10 +22,11 @@ import { useMarchingAnts } from './composables/useMarchingAnts'
 import { useCanvasRenderer } from './composables/useCanvasRenderer'
 import { useCanvasInteraction } from './composables/useCanvasInteraction'
 import { useStatePersistence } from './composables/useStatePersistence'
-
+  
 // Utils
 import { getColorKeyByHex, sortColorsByHue } from './utils/colorSystemUtils'
-import { recalculateColorStats, findClosestPaletteColor, hexToRgb } from './utils/pixelation'
+import { recalculateColorStats, hexToRgb } from './utils/pixelation'
+import { findClosestPaletteColor } from './utils/colorUtils'
 import { MODES } from './constants/modeConstants'
 import type { AppMode } from './constants/modeConstants'
 import type { PbdsImportResult } from './utils/downloader'

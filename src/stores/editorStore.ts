@@ -18,12 +18,6 @@ export interface BgRemovalSnapshot {
   totalBeadCount: number
 }
 
-export interface ColorData {
-  key: string
-  color: string
-  isExternal?: boolean
-}
-
 export type ManualTool = 'drag' | 'brush' | 'eraser' | 'picker' | 'fill' | 'line' | 'rect' | 'select' | 'move'
 
 export interface SelectionInfo {
@@ -46,7 +40,7 @@ const MAX_HISTORY = 50
 export const useEditorStore = defineStore('editor', () => {
   // ========== 手动编辑模式 ==========
   const isManualColoringMode = ref(false)
-  const selectedEditColor = ref<ColorData | null>(null)
+  const selectedEditColor = ref<MappedPixel | null>(null)
   const isEraseMode = ref(false)
   const colorReplaceState = ref<ColorReplaceState>({
     isActive: false,
@@ -178,7 +172,7 @@ export const useEditorStore = defineStore('editor', () => {
     }
   }
 
-  function selectEditColor(color: ColorData | null) {
+  function selectEditColor(color: MappedPixel | null) {
     if (!color) return
     if (color.key === TRANSPARENT_KEY && colorReplaceState.value.isActive) {
       resetColorReplaceState()

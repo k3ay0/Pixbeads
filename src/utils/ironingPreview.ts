@@ -366,8 +366,8 @@ export function drawIroningPreview(
       paddedCols,
       cellX,
       cellY,
-      cellWidth,
-      cellHeight,
+      cellW,
+      cellH,
       edgeRadius
     )
   }

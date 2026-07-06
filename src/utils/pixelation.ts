@@ -11,18 +11,13 @@ import {
   transparentColorData,
 } from '@/types'
 import { PixelationMode } from '@/types'
+import { hexToRgb, colorDistance, findClosestPaletteColor } from './colorUtils'
+import { deepCopyGrid, floodFillArea } from './gridOperations'
 
-export function hexToRgb(hex: string): RgbColor | null {
-  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
-  return result
-    ? {
-        r: parseInt(result[1], 16),
-        g: parseInt(result[2], 16),
-        b: parseInt(result[3], 16),
-      }
-    : null
-}
+// 重新导出 hexToRgb，供 paletteStore 等外部模块使用
+export { hexToRgb }
 
+// srgbChannelToLinear 和 rgbToOklab 仅供 getDominantColorByArea 内部使用
 function srgbChannelToLinear(channel: number): number {
   const normalized = channel / 255
   return normalized <= 0.04045
@@ -50,42 +45,6 @@ function rgbToOklab(rgb: RgbColor): { l: number; a: number; b: number } {
   }
 }
 
-const oklabCache: Map<string, { l: number; a: number; b: number }> = new Map()
-
-function getOklabColor(rgb: RgbColor): { l: number; a: number; b: number } {
-  const cacheKey = `${rgb.r},${rgb.g},${rgb.b}`
-  const cached = oklabCache.get(cacheKey)
-  if (cached) return cached
-  const oklab = rgbToOklab(rgb)
-  oklabCache.set(cacheKey, oklab)
-  return oklab
-}
-
-export function colorDistance(rgb1: RgbColor, rgb2: RgbColor): number {
-  const oklab1 = getOklabColor(rgb1)
-  const oklab2 = getOklabColor(rgb2)
-  const dl = oklab1.l - oklab2.l
-  const da = oklab1.a - oklab2.a
-  const db = oklab1.b - oklab2.b
-  return Math.sqrt(dl * dl + da * da + db * db) * 100
-}
-
-export function findClosestPaletteColor(targetRgb: RgbColor, palette: PaletteColor[]): PaletteColor {
-  if (!palette || palette.length === 0) {
-    return { key: 'ERR', hex: '#000000', rgb: { r: 0, g: 0, b: 0 } }
-  }
-  let minDistance = Infinity
-  let closestColor = palette[0]
-  for (const paletteColor of palette) {
-    const distance = colorDistance(targetRgb, paletteColor.rgb)
-    if (distance < minDistance) {
-      minDistance = distance
-      closestColor = paletteColor
-    }
-    if (distance === 0) break
-  }
-  return closestColor
-}
 
 function calculateCellRepresentativeColor(
   imageData: ImageData,
@@ -222,7 +181,7 @@ export function mergeSimilarRegions(
     .sort((a, b) => b[1] - a[1])
     .map(entry => entry[0])
 
-  if (colorsByFrequency.length === 0) return mappedData.map(row => row.map(cell => ({ ...cell })))
+  if (colorsByFrequency.length === 0) return deepCopyGrid(mappedData)
 
   const result: MappedPixel[][] = mappedData.map(row => row.map(cell => ({ ...cell, isExternal: cell.isExternal ?? false })))
 
@@ -272,36 +231,30 @@ export function removeBackground(mappedData: MappedPixel[][], backgroundKeys: st
   if (!mappedData || mappedData.length === 0) return mappedData
   const M = mappedData.length
   const N = mappedData[0].length
-  const result: MappedPixel[][] = mappedData.map(row => row.map(cell => ({ ...cell })))
-  const visited: boolean[][] = Array(M).fill(null).map(() => Array(N).fill(false))
+  const dimensions: GridDimensions = { N, M }
+  const bgSet = new Set(backgroundKeys.map(bk => bk.toUpperCase()))
 
-  const stack: { r: number; c: number }[] = []
+  let result = deepCopyGrid(mappedData)
 
+  // 从所有边界单元格开始洪水填充
   for (let i = 0; i < N; i++) {
-    stack.push({ r: 0, c: i }, { r: M - 1, c: i })
+    result = floodFillArea(result, dimensions, 0, i,
+      (cell) => !cell.isExternal && bgSet.has(cell.color.toUpperCase()),
+      (cell) => ({ ...cell, isExternal: true })
+    )
+    result = floodFillArea(result, dimensions, M - 1, i,
+      (cell) => !cell.isExternal && bgSet.has(cell.color.toUpperCase()),
+      (cell) => ({ ...cell, isExternal: true })
+    )
   }
   for (let j = 0; j < M; j++) {
-    stack.push({ r: j, c: 0 }, { r: j, c: N - 1 })
-  }
-
-  while (stack.length > 0) {
-    const { r, c } = stack.pop()!
-    if (r < 0 || r >= M || c < 0 || c >= N) continue
-    if (visited[r][c]) continue
-
-    const cell = result[r][c]
-    if (!cell || cell.isExternal) continue
-
-    const cellHex = cell.color.toUpperCase()
-    const isBg = backgroundKeys.some(bk => bk.toUpperCase() === cellHex)
-    if (!isBg) continue
-
-    visited[r][c] = true
-    result[r][c] = { ...result[r][c], isExternal: true }
-
-    stack.push(
-      { r: r - 1, c }, { r: r + 1, c },
-      { r, c: c - 1 }, { r, c: c + 1 }
+    result = floodFillArea(result, dimensions, j, 0,
+      (cell) => !cell.isExternal && bgSet.has(cell.color.toUpperCase()),
+      (cell) => ({ ...cell, isExternal: true })
+    )
+    result = floodFillArea(result, dimensions, j, N - 1,
+      (cell) => !cell.isExternal && bgSet.has(cell.color.toUpperCase()),
+      (cell) => ({ ...cell, isExternal: true })
     )
   }
 
@@ -314,7 +267,7 @@ export function replaceAllColor(
   targetKey: string,
   targetColor: string
 ): { result: MappedPixel[][]; count: number } {
-  const result: MappedPixel[][] = mappedData.map(row => row.map(cell => ({ ...cell })))
+  const result: MappedPixel[][] = deepCopyGrid(mappedData)
   const M = result.length
   const N = result[0].length
   let count = 0
@@ -336,7 +289,7 @@ export function paintPixel(
   col: number,
   newColor: MappedPixel
 ): { result: MappedPixel[][]; changed: boolean } {
-  const result: MappedPixel[][] = mappedData.map(r => r.map(c => ({ ...c })))
+  const result: MappedPixel[][] = deepCopyGrid(mappedData)
   const old = result[row]?.[col]
   if (!old) return { result: mappedData, changed: false }
   const changed = old.key !== newColor.key || old.isExternal !== newColor.isExternal
@@ -351,24 +304,14 @@ export function floodFillErase(
   startCol: number,
   targetKey: string
 ): MappedPixel[][] {
-  const { N, M } = gridDimensions
-  const result: MappedPixel[][] = mappedData.map(row => row.map(cell => ({ ...cell })))
-  const visited: boolean[][] = Array(M).fill(null).map(() => Array(N).fill(false))
-  const stack: { row: number; col: number }[] = [{ row: startRow, col: startCol }]
-
-  while (stack.length > 0) {
-    const { row, col } = stack.pop()!
-    if (row < 0 || row >= M || col < 0 || col >= N || visited[row][col]) continue
-    const cell = result[row][col]
-    if (!cell || cell.isExternal || cell.key !== targetKey) continue
-    visited[row][col] = true
-    result[row][col] = { ...transparentColorData }
-    stack.push(
-      { row: row - 1, col }, { row: row + 1, col },
-      { row, col: col - 1 }, { row, col: col + 1 }
-    )
-  }
-  return result
+  return floodFillArea(
+    mappedData,
+    gridDimensions,
+    startRow,
+    startCol,
+    (cell) => cell.key === targetKey && !cell.isExternal,
+    () => ({ ...transparentColorData })
+  )
 }
 
 export function floodFill(
@@ -378,30 +321,20 @@ export function floodFill(
   startCol: number,
   fillColor: { key: string; color: string }
 ): MappedPixel[][] {
-  const { N, M } = gridDimensions
   const startCell = mappedData[startRow]?.[startCol]
   if (!startCell || startCell.isExternal) return mappedData
   const targetColor = startCell.color.toUpperCase()
   // 如果填充色和目标色相同，不做任何事
   if (fillColor.color.toUpperCase() === targetColor) return mappedData
 
-  const result: MappedPixel[][] = mappedData.map(row => row.map(cell => ({ ...cell })))
-  const visited: boolean[][] = Array(M).fill(null).map(() => Array(N).fill(false))
-  const stack: { row: number; col: number }[] = [{ row: startRow, col: startCol }]
-
-  while (stack.length > 0) {
-    const { row, col } = stack.pop()!
-    if (row < 0 || row >= M || col < 0 || col >= N || visited[row][col]) continue
-    const cell = result[row][col]
-    if (!cell || cell.isExternal || cell.color.toUpperCase() !== targetColor) continue
-    visited[row][col] = true
-    result[row][col] = { key: fillColor.key, color: fillColor.color, isExternal: false }
-    stack.push(
-      { row: row - 1, col }, { row: row + 1, col },
-      { row, col: col - 1 }, { row, col: col + 1 }
-    )
-  }
-  return result
+  return floodFillArea(
+    mappedData,
+    gridDimensions,
+    startRow,
+    startCol,
+    (cell) => !cell.isExternal && cell.color.toUpperCase() === targetColor,
+    () => ({ key: fillColor.key, color: fillColor.color, isExternal: false })
+  )
 }
 
 export function recalculateColorStats(

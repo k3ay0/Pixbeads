@@ -5,7 +5,8 @@ import { useBeadStore } from '../stores/beadStore'
 import { usePaletteStore } from '../stores/paletteStore'
 import { useEditorStore } from '../stores/editorStore'
 import { getColorKeyByHex, sortColorsByHue } from '../utils/colorSystemUtils'
-import { hexToRgb, findClosestPaletteColor } from '../utils/pixelation'
+import { hexToRgb } from '../utils/pixelation'
+import { findClosestPaletteColor, isLightColor } from '../utils/colorUtils'
 import { TRANSPARENT_KEY } from '../types'
 
 const emit = defineEmits<{
@@ -310,16 +311,27 @@ function handleDeleteSelection() {
 }
 
 const currentGridColors = computed(() => {
-  if (!mappedPixelData.value || !colorCounts.value) return []
-  const list = Object.entries(colorCounts.value)
-    .filter(([, data]) => data.count > 0)
-    .filter(([hex]) => !excludedColorKeys.value.has(hex.toUpperCase()))
-    .map(([hex]) => ({
-      key: getColorKeyByHex(hex, selectedColorSystem.value),
-      color: hex,
-      count: colorCounts.value![hex]?.count || 0,
-    }))
-  return sortColorsByHue(list)
+  if (!mappedPixelData.value) return []
+  // 实时从像素数据计算颜色统计
+  const colorMap = new Map<string, { key: string; color: string; count: number }>()
+  for (const row of mappedPixelData.value) {
+    for (const cell of row) {
+      if (cell && !cell.isExternal && cell.key !== TRANSPARENT_KEY) {
+        const hex = cell.color.toUpperCase()
+        const existing = colorMap.get(hex)
+        if (existing) {
+          existing.count++
+        } else {
+          colorMap.set(hex, {
+            key: getColorKeyByHex(hex, selectedColorSystem.value),
+            color: hex,
+            count: 1
+          })
+        }
+      }
+    }
+  }
+  return sortColorsByHue(Array.from(colorMap.values()))
 })
 
 // 展示用颜色列表（支持色相排序）
@@ -330,15 +342,6 @@ const displayColors = computed(() => {
   if (hueSortEnabled.value) return sortColorsByHue(colors)
   return colors
 })
-
-// 判断颜色是否为浅色（用于决定文字颜色）
-function isLightColor(hex: string): boolean {
-  const c = hex.replace('#', '')
-  const r = parseInt(c.substring(0, 2), 16)
-  const g = parseInt(c.substring(2, 4), 16)
-  const b = parseInt(c.substring(4, 6), 16)
-  return (r * 299 + g * 587 + b * 114) / 1000 > 128
-}
 
 const toolNameMap: Record<string, string> = {
   drag: '拖拽', brush: '画笔', eraser: '橡皮', picker: '取色',
@@ -714,10 +717,10 @@ const toolNameMap: Record<string, string> = {
     </div>
 
     <!-- Color stats card -->
-    <div v-if="colorCounts" class="bg-white rounded-xl border border-black/10 p-4">
+    <div v-if="mappedPixelData" class="bg-white rounded-xl border border-black/10 p-4">
       <h3 class="text-sm font-medium text-black mb-2">
         颜色统计
-        <span class="text-xs text-black/35 font-normal ml-1">{{ currentGridColors.length }} 种 / {{ totalBeadCount }} 粒</span>
+        <span class="text-xs text-black/35 font-normal ml-1">{{ currentGridColors.length }} 种 / {{ currentGridColors.reduce((sum, c) => sum + c.count, 0) }} 粒</span>
       </h3>
       <div class="max-h-60 overflow-y-auto scrollbar-hide space-y-1">
         <div

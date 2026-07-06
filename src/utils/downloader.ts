@@ -1,23 +1,12 @@
 // 下载导出工具函数
 import { getColorKeyByHex } from './colorSystemUtils'
 import type { MappedPixel, GridDimensions, ColorCounts, ColorSystem, GridDownloadOptions } from '@/types'
-import { TRANSPARENT_KEY } from '@/types'
+import { hexToRgb, colorDistance, findClosestPaletteColor, getContrastColor } from './colorUtils'
+import { triggerImageDownload, triggerBlobDownload } from './downloadUtils'
+import { recalculateColorStats } from './pixelation'
 
-/**
- * 获取对比色（黑/白）
- */
-function getContrastColor(hex: string): string {
-  // 支持简写 hex（#abc → #aabbcc）
-  const shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i
-  const formattedHex = hex.replace(shorthandRegex, (_m, r, g, b) => r + r + g + g + b + b)
-  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(formattedHex)
-  if (!result) return '#000000'
-  const r = parseInt(result[1], 16)
-  const g = parseInt(result[2], 16)
-  const b = parseInt(result[3], 16)
-  const luma = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
-  return luma > 0.5 ? '#000000' : '#FFFFFF'
-}
+// 重新导出 colorDistance 供 ImportConvertDialog 使用
+export { colorDistance }
 
 /**
  * 排序色号键
@@ -263,10 +252,7 @@ export function downloadGridImage({
   ctx.fillText('由 PIXBEADS 生成', downloadWidth / 2, downloadHeight - 8)
 
   // 触发下载
-  const link = document.createElement('a')
-  link.download = `pixbeads-pattern-${N}x${M}.png`
-  link.href = canvas.toDataURL('image/png')
-  link.click()
+  triggerImageDownload(canvas, `pixbeads-pattern-${N}x${M}.png`)
 }
 
 /**
@@ -328,10 +314,7 @@ export function downloadStatsImage({
     ctx.fillText(`${displayKey} — ${colorCounts[hex].count} 粒`, x + swatchSize + 8, y + swatchSize / 2)
   })
 
-  const link = document.createElement('a')
-  link.download = `pixbeads-stats.png`
-  link.href = canvas.toDataURL('image/png')
-  link.click()
+  triggerImageDownload(canvas, `pixbeads-stats.png`)
 }
 
 /**
@@ -364,19 +347,13 @@ export function exportCsv({
   }
 
   const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' })
-  const link = document.createElement('a')
-  link.href = URL.createObjectURL(blob)
-  link.download = `pixbeads-pattern-${N}x${M}-${selectedColorSystem}.csv`
-  link.click()
-  URL.revokeObjectURL(link.href)
+  triggerBlobDownload(blob, `pixbeads-pattern-${N}x${M}-${selectedColorSystem}.csv`)
 }
 
 // ========== .pbds 格式导入导出 ==========
 
 import JSZip from 'jszip'
-import { hexToRgb } from './pixelation'
-import { getColorKeyByHex as getColorKey } from './colorSystemUtils'
-import type { RgbColor, PaletteColor } from '@/types'
+import type { PaletteColor } from '@/types'
 
 export interface PbdsImportResult {
   mappedPixelData: MappedPixel[][]
@@ -387,44 +364,10 @@ export interface PbdsImportResult {
 }
 
 interface ColorEntry {
+  index: number
   hex: string
   key: string
   count: number
-}
-
-/**
- * 计算两个颜色之间的感知距离（加权欧几里得距离）
- */
-export function colorDistance(c1: RgbColor, c2: RgbColor): number {
-  const rMean = (c1.r + c2.r) / 2
-  const dr = c1.r - c2.r
-  const dg = c1.g - c2.g
-  const db = c1.b - c2.b
-  return Math.sqrt(
-    (2 + rMean / 256) * dr * dr +
-    4 * dg * dg +
-    (2 + (255 - rMean) / 256) * db * db
-  )
-}
-
-/**
- * 在可用颜色中找到最接近目标颜色的
- */
-export function findClosestColor(targetHex: string, availableColors: PaletteColor[]): PaletteColor | null {
-  const targetRgb = hexToRgb(targetHex)
-  if (!targetRgb || availableColors.length === 0) return null
-
-  let minDistance = Infinity
-  let closest = availableColors[0]
-
-  for (const color of availableColors) {
-    const distance = colorDistance(targetRgb, color.rgb)
-    if (distance < minDistance) {
-      minDistance = distance
-      closest = color
-    }
-  }
-  return closest
 }
 
 /**
@@ -455,14 +398,15 @@ export function convertToCurrentSystem(
 
   // 为每个颜色建立映射
   for (const hex of uniqueColors) {
-    const targetKey = getColorKey(hex, targetSystem)
+    const targetKey = getColorKeyByHex(hex, targetSystem)
     if (targetKey !== '?') {
       // 直接映射成功
       hexMapping.set(hex, hex)
       convertedCount++
     } else {
       // 找最接近的颜色
-      const closest = findClosestColor(hex, fullPalette)
+      const targetRgb = hexToRgb(hex)
+      const closest = targetRgb ? findClosestPaletteColor(targetRgb, fullPalette) : null
       if (closest) {
         hexMapping.set(hex, closest.hex)
         approximatedCount++
@@ -479,7 +423,7 @@ export function convertToCurrentSystem(
       const mappedHex = hexMapping.get(cell.color.toUpperCase()) || cell.color
       return {
         ...cell,
-        key: getColorKey(mappedHex, targetSystem),
+        key: getColorKeyByHex(mappedHex, targetSystem),
         color: mappedHex
       }
     })
@@ -516,8 +460,8 @@ export async function exportPbds({
   for (const [hex, data] of Object.entries(colorCounts)) {
     const normalizedHex = hex.toUpperCase()
     colorIndexMap.set(normalizedHex, index)
-    const colorKey = getColorKey(normalizedHex, selectedColorSystem)
-    colorList.push({ hex: normalizedHex, key: colorKey, count: data.count })
+    const colorKey = getColorKeyByHex(normalizedHex, selectedColorSystem)
+    colorList.push({ index, hex: normalizedHex, key: colorKey, count: data.count })
     index++
   }
 
@@ -564,11 +508,7 @@ export async function exportPbds({
   zip.file('pattern.csv', patternCsv)
 
   const blob = await zip.generateAsync({ type: 'blob' })
-  const link = document.createElement('a')
-  link.href = URL.createObjectURL(blob)
-  link.download = `pixbeads-${N}x${M}-${selectedColorSystem}.pbds`
-  link.click()
-  URL.revokeObjectURL(link.href)
+  triggerBlobDownload(blob, `pixbeads-${N}x${M}-${selectedColorSystem}.pbds`)
 }
 
 /**
@@ -598,7 +538,7 @@ export async function importPbds(file: File): Promise<PbdsImportResult> {
   return {
     mappedPixelData: pattern,
     gridDimensions: { N: metadata.gridWidth, M: metadata.gridHeight },
-    colorCounts: buildColorCounts(pattern),
+    colorCounts: recalculateColorStats(pattern).colorCounts,
     totalBeadCount: metadata.totalBeads,
     sourceColorSystem: metadata.colorSystem
   }
@@ -664,21 +604,4 @@ function parsePattern(text: string, colorMap: Map<number, string>): MappedPixel[
     result.push(row)
   }
   return result
-}
-
-function buildColorCounts(mappedPixelData: MappedPixel[][]): ColorCounts {
-  const counts: ColorCounts = {}
-
-  for (const row of mappedPixelData) {
-    for (const cell of row) {
-      if (!cell.isExternal && cell.key !== 'ERASE') {
-        const hex = cell.color.toUpperCase()
-        if (!counts[hex]) {
-          counts[hex] = { count: 0, color: hex }
-        }
-        counts[hex].count++
-      }
-    }
-  }
-  return counts
 }

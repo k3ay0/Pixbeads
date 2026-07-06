@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { getColorKeyByHex, colorSystemOptions } from '../utils/colorSystemUtils'
+import { getContrastColor } from '../utils/colorUtils'
 import type { ColorSystem } from '@/types'
 
 const props = defineProps({
@@ -106,15 +107,6 @@ const displayedColors = computed(() => {
     return getColorPrefix(color.hex) === activeCategory.value
   })
 })
-
-// 判断颜色亮度（用于文字颜色）
-function getContrastColor(hex: string): string {
-  const r = parseInt(hex.slice(1, 3), 16)
-  const g = parseInt(hex.slice(3, 5), 16)
-  const b = parseInt(hex.slice(5, 7), 16)
-  const luma = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
-  return luma > 0.5 ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.7)'
-}
 
 function toggleColor(hex: string) {
   const upperHex = hex.toUpperCase()

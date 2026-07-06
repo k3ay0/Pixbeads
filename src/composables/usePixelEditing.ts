@@ -4,15 +4,11 @@ import { usePaletteStore } from '@/stores/paletteStore'
 import { useFocusStore } from '@/stores/focusStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useImageProcessing } from './useImageProcessing'
-import { recalculateColorStats } from '@/utils/pixelation'
+import { recalculateColorStats, floodFillErase, replaceAllColor, paintPixel } from '@/utils/pixelation'
 import { TRANSPARENT_KEY } from '@/types'
 import type { MappedPixel } from '@/types'
-import {
-  floodFillErase,
-  replaceColor,
-  paintSinglePixel,
-} from '@/utils/pixelEditingUtils'
 import { getColorKeyByHex } from '@/utils/colorSystemUtils'
+import { deepCopyGrid } from '@/utils/gridOperations'
 
 export function usePixelEditing() {
   const beadStore = useBeadStore()
@@ -25,15 +21,12 @@ export function usePixelEditing() {
   function performSinglePixelPaint(row: number, col: number, newColor: MappedPixel) {
     if (!beadStore.mappedPixelData || !beadStore.colorCounts) return
 
-    const { newPixelData, previousCell, hasChange } = paintSinglePixel(
-      beadStore.mappedPixelData,
-      row,
-      col,
-      newColor
-    )
+    const previousCell = beadStore.mappedPixelData[row]?.[col] ? { ...beadStore.mappedPixelData[row][col] } : null
+    const { result, changed } = paintPixel(beadStore.mappedPixelData, row, col, newColor)
 
-    if (!hasChange || !previousCell) return
+    if (!changed || !previousCell) return
 
+    const newPixelData = result
     beadStore.setPixelData(newPixelData)
 
     const newColorCounts = { ...beadStore.colorCounts }
@@ -84,12 +77,14 @@ export function usePixelEditing() {
   ): number {
     if (!beadStore.mappedPixelData || !beadStore.gridDimensions) return 0
 
-    const { newPixelData, replaceCount } = replaceColor(
+    const { result, count } = replaceAllColor(
       beadStore.mappedPixelData,
-      beadStore.gridDimensions,
-      sourceColor,
-      targetColor
+      sourceColor.color.toUpperCase(),
+      targetColor.key,
+      targetColor.color.toUpperCase()
     )
+    const newPixelData = result
+    const replaceCount = count
 
     if (replaceCount > 0) {
       beadStore.setPixelData(newPixelData)
@@ -152,14 +147,14 @@ export function usePixelEditing() {
 
     if (editorStore.colorReplaceState.step === 'select-source') {
       editorStore.colorReplaceState.sourceColor = {
-        hex: cell.color.toUpperCase(),
+        color: cell.color.toUpperCase(),
         key: getColorKeyByHex(cell.color.toUpperCase(), paletteStore.selectedColorSystem),
       }
       editorStore.colorReplaceState.step = 'select-target'
     } else if (editorStore.colorReplaceState.step === 'select-target') {
       const targetHex = cell.color.toUpperCase()
       const targetKey = getColorKeyByHex(targetHex, paletteStore.selectedColorSystem)
-      const sourceHex = editorStore.colorReplaceState.sourceColor?.hex
+      const sourceHex = editorStore.colorReplaceState.sourceColor?.color
 
       if (sourceHex === targetHex) {
         exitColorReplaceMode()
@@ -169,7 +164,7 @@ export function usePixelEditing() {
       editorStore.saveSnapshot(beadStore.mappedPixelData)
       const sourceColor = {
         key: editorStore.colorReplaceState.sourceColor!.key,
-        color: editorStore.colorReplaceState.sourceColor!.hex
+        color: editorStore.colorReplaceState.sourceColor!.color
       }
       const targetColor = { key: targetKey, color: targetHex }
       performColorReplace(sourceColor, targetColor)
@@ -181,7 +176,7 @@ export function usePixelEditing() {
     if (!beadStore.mappedPixelData || !beadStore.gridDimensions) return
     editorStore.saveSnapshot(beadStore.mappedPixelData)
 
-    const newData = beadStore.mappedPixelData.map(r => r.map(c => ({ ...c })))
+    const newData = deepCopyGrid(beadStore.mappedPixelData)
     if (color === null) {
       newData[row][col] = { key: TRANSPARENT_KEY, color: '#FFFFFF', isExternal: true }
     } else {

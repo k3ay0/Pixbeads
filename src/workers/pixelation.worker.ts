@@ -9,72 +9,7 @@ import {
   transparentColorData,
 } from '@/types'
 import { PixelationMode } from '@/types'
-
-// ========== 颜色计算函数（从 pixelation.ts 复制） ==========
-
-function srgbChannelToLinear(channel: number): number {
-  const normalized = channel / 255
-  return normalized <= 0.04045
-    ? normalized / 12.92
-    : Math.pow((normalized + 0.055) / 1.055, 2.4)
-}
-
-function rgbToOklab(rgb: RgbColor): { l: number; a: number; b: number } {
-  const r = srgbChannelToLinear(rgb.r)
-  const g = srgbChannelToLinear(rgb.g)
-  const b = srgbChannelToLinear(rgb.b)
-
-  const l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b
-  const m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b
-  const s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b
-
-  const lRoot = Math.cbrt(l)
-  const mRoot = Math.cbrt(m)
-  const sRoot = Math.cbrt(s)
-
-  return {
-    l: 0.2104542553 * lRoot + 0.7936177850 * mRoot - 0.0040720468 * sRoot,
-    a: 1.9779984951 * lRoot - 2.4285922050 * mRoot + 0.4505937099 * sRoot,
-    b: 0.0259040371 * lRoot + 0.7827717662 * mRoot - 0.8086757660 * sRoot,
-  }
-}
-
-const oklabCache: Map<string, { l: number; a: number; b: number }> = new Map()
-
-function getOklabColor(rgb: RgbColor): { l: number; a: number; b: number } {
-  const cacheKey = `${rgb.r},${rgb.g},${rgb.b}`
-  const cached = oklabCache.get(cacheKey)
-  if (cached) return cached
-  const oklab = rgbToOklab(rgb)
-  oklabCache.set(cacheKey, oklab)
-  return oklab
-}
-
-function colorDistance(rgb1: RgbColor, rgb2: RgbColor): number {
-  const oklab1 = getOklabColor(rgb1)
-  const oklab2 = getOklabColor(rgb2)
-  const dl = oklab1.l - oklab2.l
-  const da = oklab1.a - oklab2.a
-  const db = oklab1.b - oklab2.b
-  return Math.sqrt(dl * dl + da * da + db * db) * 100
-}
-
-function findClosestPaletteColor(targetRgb: RgbColor, palette: PaletteColor[]): PaletteColor {
-  if (!palette || palette.length === 0) {
-    return { key: 'ERR', hex: '#000000', rgb: { r: 0, g: 0, b: 0 } }
-  }
-  let minDistance = Infinity
-  let closestColor = palette[0]
-  for (const paletteColor of palette) {
-    const distance = colorDistance(targetRgb, paletteColor.rgb)
-    if (distance < minDistance) {
-      minDistance = distance
-      closestColor = paletteColor
-    }
-    if (distance === 0) break
-  }
-  return closestColor
-}
+import { colorDistance, findClosestPaletteColor, clearOklabCache } from '@/utils/colorUtils'
 
 // ========== 核心处理函数 ==========
 
@@ -287,7 +222,7 @@ self.onmessage = (e: MessageEvent<ProcessMessage>) => {
   const { imageData, imgWidth, imgHeight, N, M, palette, mode, threshold, fallbackColor } = e.data
 
   // 清除缓存
-  oklabCache.clear()
+  clearOklabCache()
 
   let result = calculatePixelGrid(imageData, imgWidth, imgHeight, N, M, palette, mode, fallbackColor)
 
