@@ -25,7 +25,7 @@ import { useStatePersistence } from './composables/useStatePersistence'
 
 // Utils
 import { getColorKeyByHex, sortColorsByHue } from './utils/colorSystemUtils'
-import { recalculateColorStats, findClosestPaletteColor } from './utils/pixelation'
+import { recalculateColorStats, findClosestPaletteColor, hexToRgb } from './utils/pixelation'
 import { MODES } from './constants/modeConstants'
 import type { AppMode } from './constants/modeConstants'
 import type { PbdsImportResult } from './utils/downloader'
@@ -88,7 +88,7 @@ const {
 
 const {
   selectedColorSystem, customPaletteSelections, excludedColorKeys,
-  activeBeadPalette, showExcludedColors, fullBeadPalette,
+  activeBeadPalette, pixelationPalette, showExcludedColors, fullBeadPalette,
 } = storeToRefs(paletteStore)
 
 const {
@@ -251,9 +251,16 @@ function handleFocusColorChange(color: string) { focusLogic.handleFocusColorChan
 function switchMode(mode: AppMode) {
   if (activeMode.value === 'edit') editorStore.exitManualMode()
   if (activeMode.value === 'focus') focusStore.stopTimer()
+  // 离开色彩优化界面时，清空排除颜色状态（保留像素数据中的替换结果）
+  if (activeMode.value === 'optimize') paletteStore.clearExcludedState()
   uiStore.switchMode(mode)
   if (mode === 'edit') editorStore.enterManualMode()
   if (mode === 'focus') focusLogic.initFocusMode()
+  // 进入色彩优化界面时，重新计算颜色计数
+  if (mode === 'optimize' && mappedPixelData.value) {
+    const stats = recalculateColorStats(mappedPixelData.value)
+    beadStore.updateColorStats(stats)
+  }
 }
 
 // 计算属性
@@ -283,8 +290,29 @@ watch(activeMode, (newMode, oldMode) => {
 watch(granularity, v => { beadStore.granularityInput = v.toString(); if (lockAspectRatio.value) { const src = croppedImageCanvas.value || beadStore.originalImage; if (src) { const r = ('height' in src ? src.height : (src as HTMLCanvasElement).height) / ('width' in src ? src.width : (src as HTMLCanvasElement).width); beadStore.updateGranularityY(Math.max(1, Math.round(v * r))) } } })
 watch(granularityY, v => { beadStore.granularityYInput = v.toString() })
 watch(similarityThreshold, v => { beadStore.similarityThresholdInput = v.toString() })
-watch([granularity, granularityY, similarityThreshold, pixelationMode, activeBeadPalette], () => { editorStore.clearBgRemovalSnapshot(); if (beadStore.originalImage || croppedImageCanvas.value) processImage() })
-watch(selectedColorSystem, () => { if (beadStore.originalImage) processImage() })
+watch([granularity, granularityY, similarityThreshold, pixelationMode, pixelationPalette], () => { editorStore.clearBgRemovalSnapshot(); if (beadStore.originalImage || croppedImageCanvas.value) processImage() })
+// 切换色号系统时，更新像素数据中的色号，不重新处理图像
+watch(selectedColorSystem, (newSystem) => {
+  if (!mappedPixelData.value || !colorCounts.value) return
+  
+  const fullPalette = paletteStore.fullBeadPalette
+  const result = mappedPixelData.value.map(row => row.map(cell => {
+    if (!cell || cell.isExternal) return cell
+    const hex = cell.color.toUpperCase()
+    const key = getColorKeyByHex(hex, newSystem)
+    // 如果色号有效，只更新 key
+    if (key !== '?') return { ...cell, key }
+    // 如果颜色不在新色板中，找相近颜色替换
+    const rgb = hexToRgb(hex)
+    if (!rgb) return cell
+    const closest = findClosestPaletteColor(rgb, fullPalette)
+    return { key: closest.key, color: closest.hex, isExternal: false }
+  }))
+  
+  beadStore.setPixelData(result)
+  const stats = recalculateColorStats(result)
+  beadStore.updateColorStats(stats)
+})
 watch(customPaletteSelections, () => paletteStore.saveSelections(), { deep: true })
 
 // Marching ants 动画控制

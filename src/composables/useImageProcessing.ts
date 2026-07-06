@@ -49,7 +49,7 @@ export function useImageProcessing() {
       const ctx = sourceCanvas.getContext('2d')!
       const imageData = ctx.getImageData(0, 0, imgWidth, imgHeight)
 
-      const palette = toRaw(paletteStore.activeBeadPalette).map(c => ({
+      const palette = toRaw(paletteStore.pixelationPalette).map(c => ({
         key: c.key,
         hex: c.hex,
         rgb: { r: c.rgb.r, g: c.rgb.g, b: c.rgb.b }

@@ -4,7 +4,7 @@ import { storeToRefs } from 'pinia'
 import { useBeadStore } from '../stores/beadStore'
 import { usePaletteStore } from '../stores/paletteStore'
 import { useEditorStore } from '../stores/editorStore'
-import { colorSystemOptions, getColorKeyByHex, sortColorsByHue, getDisplayColorKey } from '../utils/colorSystemUtils'
+import { colorSystemOptions, getColorKeyByHex, sortColorsByHue } from '../utils/colorSystemUtils'
 import { findClosestPaletteColor, hexToRgb, recalculateColorStats, replaceAllColor } from '../utils/pixelation'
 import { PixelationMode } from '../types'
 import type { ColorSystem } from '../types'
@@ -20,7 +20,8 @@ const paletteStore = usePaletteStore()
 const editorStore = useEditorStore()
 
 const { originalImageSrc, mappedPixelData, granularity, granularityInput, granularityY, granularityYInput, lockAspectRatio, similarityThreshold, similarityThresholdInput, pixelationMode, croppedImageCanvas, colorCounts, totalBeadCount } = storeToRefs(beadStore)
-const { selectedColorSystem, excludedColorKeys, showExcludedColors, fullBeadPalette, colorReplacementMap } = storeToRefs(paletteStore)
+const { selectedColorSystem, excludedColorKeys, showExcludedColors, fullBeadPalette, colorReplacementMap, replacedCellsMap } = storeToRefs(paletteStore)
+const { setReplacedCells } = paletteStore
 const { bgRemovalSnapshot } = storeToRefs(editorStore)
 
 // ========== Tooltip ==========
@@ -66,7 +67,7 @@ const currentGridColors = computed(() => {
 
 // 已排除的颜色列表（含替换颜色信息）
 const excludedColorsList = computed(() => {
-  return Array.from(excludedColorKeys.value).map(hex => ({
+  const list = Array.from(excludedColorKeys.value).map(hex => ({
     key: getColorKeyByHex(hex, selectedColorSystem.value),
     color: hex,
     replacedBy: colorReplacementMap.value.get(hex.toUpperCase()) || null,
@@ -74,6 +75,7 @@ const excludedColorsList = computed(() => {
       ? getColorKeyByHex(colorReplacementMap.value.get(hex.toUpperCase())!, selectedColorSystem.value)
       : null,
   }))
+  return list
 })
 
 // 颜色选择器状态
@@ -88,13 +90,13 @@ function handleExcludeColor(hex: string) {
 
   const upperHex = hex.toUpperCase()
 
-  // 从当前图片已有的颜色中选择（currentGridColors 已排除已排除颜色）
+  // 从当前图片已有的颜色中选择
   // 再排除当前要排除的颜色
   const availableColors = currentGridColors.value
     .filter(c => c.color.toUpperCase() !== upperHex)
     .map(c => {
       const rgb = hexToRgb(c.color)
-      return { key: c.key, hex: c.color, rgb: rgb || { r: 0, g: 0, b: 0 } }
+      return { key: c.color, hex: c.color, rgb: rgb || { r: 0, g: 0, b: 0 } }
     })
 
   if (availableColors.length === 0) return
@@ -104,17 +106,27 @@ function handleExcludeColor(hex: string) {
   if (!targetRgb) return
   const closestColor = findClosestPaletteColor(targetRgb, availableColors)
 
-  // 执行替换
-  performColorReplace(upperHex, closestColor.hex)
+  performColorReplace(upperHex, closestColor.hex, closestColor.hex)
 }
 
 /**
  * 执行颜色替换
  */
-function performColorReplace(sourceHex: string, targetHex: string) {
+function performColorReplace(sourceHex: string, targetHex: string, targetKey: string) {
   if (!mappedPixelData.value) return
 
-  const targetKey = getDisplayColorKey(targetHex, selectedColorSystem.value)
+  // 记录被替换的像素位置
+  const normalizedSource = sourceHex.toUpperCase()
+  const cellsToReplace: { row: number; col: number }[] = []
+  for (let row = 0; row < mappedPixelData.value.length; row++) {
+    for (let col = 0; col < mappedPixelData.value[row].length; col++) {
+      const cell = mappedPixelData.value[row][col]
+      if (cell && !cell.isExternal && cell.color.toUpperCase() === normalizedSource) {
+        cellsToReplace.push({ row, col })
+      }
+    }
+  }
+
   const { result, count } = replaceAllColor(mappedPixelData.value, sourceHex, targetKey, targetHex)
 
   if (count > 0) {
@@ -123,12 +135,15 @@ function performColorReplace(sourceHex: string, targetHex: string) {
     const stats = recalculateColorStats(result)
     beadStore.updateColorStats(stats)
 
+    // 记录被替换的像素位置
+    setReplacedCells(normalizedSource, cellsToReplace)
+
     // 记录替换映射
-    paletteStore.setColorReplacement(sourceHex, targetHex)
+    paletteStore.setColorReplacement(normalizedSource, targetHex)
 
     // 标记为已排除
-    if (!excludedColorKeys.value.has(sourceHex)) {
-      paletteStore.toggleExcludeColor(sourceHex)
+    if (!excludedColorKeys.value.has(normalizedSource)) {
+      paletteStore.toggleExcludeColor(normalizedSource)
     }
   }
 }
@@ -152,13 +167,25 @@ function selectReplacementColor(newTargetHex: string) {
 
   // 先恢复原始颜色（撤销上次替换）
   if (currentReplacement) {
-    const originalKey = getColorKeyByHex(originalHex, selectedColorSystem.value)
-    const { result: restoreResult } = replaceAllColor(mappedPixelData.value, currentReplacement, originalKey, originalHex)
-    beadStore.setPixelData(restoreResult)
+    // 保存恢复前的快照
+    editorStore.saveSnapshot(mappedPixelData.value)
+
+    // 精准恢复被替换的像素
+    const replacedCells = replacedCellsMap.value.get(originalHex)
+    if (replacedCells && replacedCells.length > 0) {
+      const originalKey = originalHex
+      const restored = mappedPixelData.value.map(row => row.map(cell => ({ ...cell })))
+      for (const { row, col } of replacedCells) {
+        if (restored[row]?.[col]) {
+          restored[row][col] = { key: originalKey, color: originalHex, isExternal: false }
+        }
+      }
+      beadStore.setPixelData(restored)
+    }
   }
 
   // 再用新颜色替换
-  performColorReplace(originalHex, newTargetHex)
+  performColorReplace(originalHex, newTargetHex, newTargetHex)
 
   // 关闭选择器
   showColorPicker.value = false
@@ -170,16 +197,20 @@ function selectReplacementColor(newTargetHex: string) {
  */
 function handleRestoreColor(hex: string) {
   const upperHex = hex.toUpperCase()
-  const replacement = colorReplacementMap.value.get(upperHex)
+  const replacedCells = replacedCellsMap.value.get(upperHex)
 
-  if (replacement && mappedPixelData.value) {
-    // 恢复原始颜色
-    const originalKey = getColorKeyByHex(upperHex, selectedColorSystem.value)
-    const { result } = replaceAllColor(mappedPixelData.value, replacement, originalKey, upperHex)
+  if (replacedCells && replacedCells.length > 0 && mappedPixelData.value) {
+    const originalKey = upperHex
+    const restored = mappedPixelData.value.map(row => row.map(cell => ({ ...cell })))
+    for (const { row, col } of replacedCells) {
+      if (restored[row]?.[col]) {
+        restored[row][col] = { key: originalKey, color: upperHex, isExternal: false }
+      }
+    }
 
     editorStore.saveSnapshot(mappedPixelData.value)
-    beadStore.setPixelData(result)
-    const stats = recalculateColorStats(result)
+    beadStore.setPixelData(restored)
+    const stats = recalculateColorStats(restored)
     beadStore.updateColorStats(stats)
   }
 
@@ -196,38 +227,69 @@ function handleRestoreColor(hex: string) {
  * 一键恢复所有颜色
  */
 function handleRestoreAll() {
-  // 逐个恢复所有被替换的颜色
-  for (const hex of excludedColorKeys.value) {
-    const replacement = colorReplacementMap.value.get(hex)
-    if (replacement && mappedPixelData.value) {
-      const originalKey = getColorKeyByHex(hex, selectedColorSystem.value)
-      const { result } = replaceAllColor(mappedPixelData.value, replacement, originalKey, hex)
-      beadStore.setPixelData(result)
+  if (!mappedPixelData.value) return
+
+  const restored = mappedPixelData.value.map(row => row.map(cell => ({ ...cell })))
+  let hasChanges = false
+
+  for (const [hex, cells] of replacedCellsMap.value) {
+    const originalKey = hex
+    for (const { row, col } of cells) {
+      if (restored[row]?.[col]) {
+        restored[row][col] = { key: originalKey, color: hex, isExternal: false }
+        hasChanges = true
+      }
     }
   }
 
-  // 重新计算统计
-  if (mappedPixelData.value) {
-    const stats = recalculateColorStats(mappedPixelData.value)
+  if (hasChanges) {
+    editorStore.saveSnapshot(mappedPixelData.value)
+    beadStore.setPixelData(restored)
+    const stats = recalculateColorStats(restored)
     beadStore.updateColorStats(stats)
   }
 
-  // 清空状态（restoreAllExcluded 会同时清除 colorReplacementMap）
+  // 清空状态（restoreAllExcluded 会同时清除 colorReplacementMap 和 replacedCellsMap）
   paletteStore.restoreAllExcluded()
 }
 
-// 可选色板（从当前图片已有的颜色中选择，排除当前原始颜色）
-// currentGridColors 已排除已排除颜色
+// 可选色板：完整色板 + 当前图片中的颜色排在最前
 const availableColorsForPicker = computed(() => {
   if (!colorPickerTarget.value) return []
-  return currentGridColors.value
-    .filter(c => c.color.toUpperCase() !== colorPickerTarget.value!.toUpperCase())
+  const targetHex = colorPickerTarget.value.toUpperCase()
+  
+  // 当前图片中已有的颜色（排除目标颜色）
+  const gridColorSet = new Set(currentGridColors.value.map(c => c.color.toUpperCase()))
+  const gridColors = currentGridColors.value
+    .filter(c => c.color.toUpperCase() !== targetHex)
+    .map(c => ({ key: c.key, color: c.color, inGrid: true }))
+  
+  // 完整色板中不在当前图片中的颜色（排除目标颜色和已排除颜色）
+  const otherColors = fullBeadPalette.value
+    .filter(c => {
+      const hex = c.hex.toUpperCase()
+      return hex !== targetHex && !gridColorSet.has(hex) && !excludedColorKeys.value.has(hex)
+    })
     .map(c => ({
-      key: c.key,
-      color: c.color,
+      key: getColorKeyByHex(c.hex, selectedColorSystem.value),
+      color: c.hex,
+      inGrid: false,
     }))
-    .sort((a, b) => a.key.localeCompare(b.key))
+  
+  // 合并：当前图片颜色在前，完整色板颜色在后
+  return [...gridColors, ...otherColors]
 })
+
+/**
+ * 判断颜色是否为浅色（用于选择合适的文字颜色）
+ */
+function isLightColor(hex: string): boolean {
+  const rgb = hexToRgb(hex)
+  if (!rgb) return true
+  // 使用感知亮度公式 (ITU-R BT.709)
+  const luminance = 0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b
+  return luminance > 128
+}
 
 // ========== 拖拽上传 ==========
 
@@ -414,92 +476,110 @@ function handleDrop(e: DragEvent) {
       </div>
 
       <!-- 可滚动内容区域 -->
-      <div class="overflow-y-auto overscroll-contain px-3 pb-2.5" style="max-height: 400px;">
+      <div class="overflow-y-auto overscroll-contain scrollbar-hide px-3 pb-2.5" style="max-height: 400px;">
         <!-- 颜色列表 -->
-        <ul class="space-y-0.5 text-sm">
+        <ul class="text-sm">
           <li
             v-for="item in currentGridColors"
             :key="item.color"
-            class="flex items-center justify-between px-2 py-1.5 rounded-lg cursor-pointer transition-colors min-h-[36px] active:bg-gray-100 dark:active:bg-gray-700"
+            class="group flex items-center justify-between px-2 py-2 rounded-lg cursor-pointer transition-all duration-150 active:scale-[0.98] active:bg-gray-200/70 dark:active:bg-gray-700/70 hover:bg-gray-100/80 dark:hover:bg-gray-800/60"
             @click="handleExcludeColor(item.color)"
           >
-            <div class="flex items-center gap-2">
-              <span
-                class="w-5 h-5 rounded border border-gray-300 dark:border-gray-600 flex-shrink-0"
+            <div class="flex items-center gap-2.5">
+              <button
+                class="w-5 h-5 rounded-md border border-gray-300/80 dark:border-gray-600/80 flex-shrink-0 shadow-sm hover:scale-110 transition-transform"
                 :style="{ backgroundColor: item.color }"
-              ></span>
-              <span class="font-mono text-xs font-medium text-gray-800 dark:text-gray-200">{{ item.key }}</span>
+                @click.stop="handleChangeReplacement(item.color)"
+                title="点击更换颜色"
+              ></button>
+              <span class="font-mono text-xs font-medium text-gray-700 dark:text-gray-300 tracking-wide">{{ item.key }}</span>
             </div>
-            <span class="text-xs tabular-nums text-gray-500 dark:text-gray-400">{{ item.count }}</span>
+            <div class="flex items-center gap-2">
+              <span class="text-[11px] tabular-nums text-gray-400 dark:text-gray-500 font-medium">{{ item.count }}</span>
+              <svg class="w-3 h-3 text-gray-300 dark:text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+              </svg>
+            </div>
           </li>
         </ul>
 
         <!-- 已排除的颜色 -->
-        <div v-if="excludedColorKeys.size > 0" class="mt-3">
+        <div v-if="excludedColorKeys.size > 0" class="mt-3 pt-3 border-t border-gray-200/50 dark:border-gray-700/40">
           <button
             @click="showExcludedColors = !showExcludedColors"
-            class="w-full text-xs py-1.5 px-2 bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-300 active:bg-gray-300 dark:hover:bg-gray-500 dark:active:bg-gray-500 transition-colors flex items-center justify-between"
+            class="w-full text-xs py-2 px-2.5 rounded-lg transition-colors flex items-center justify-between group/toggle hover:bg-gray-100 dark:hover:bg-gray-800/50"
           >
-            <span>已排除的颜色 ({{ excludedColorKeys.size }})</span>
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              class="h-4 w-4 text-gray-500 dark:text-gray-400 transform transition-transform"
-              :class="{ 'rotate-180': showExcludedColors }"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+            <div class="flex items-center gap-1.5">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                class="h-3.5 w-3.5 text-gray-400 dark:text-gray-500 transition-transform duration-200"
+                :class="{ 'rotate-90': showExcludedColors }"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                stroke-width="2"
+              ><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path></svg>
+              <span class="font-medium text-gray-600 dark:text-gray-400">已排除颜色</span>
+              <span class="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-semibold rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400">{{ excludedColorKeys.size }}</span>
+            </div>
+            <svg class="w-3 h-3 text-gray-400 dark:text-gray-500 opacity-0 group-hover/toggle:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+            </svg>
           </button>
 
-          <div v-if="showExcludedColors" class="mt-2 border border-gray-200/60 dark:border-gray-800/50 rounded-md p-2 bg-gray-100 dark:bg-gray-900/80">
-            <ul class="space-y-1">
-              <li
-                v-for="item in excludedColorsList"
-                :key="item.color"
-                class="flex items-center justify-between p-1.5 hover:bg-gray-200 active:bg-gray-200 dark:hover:bg-gray-700 dark:active:bg-gray-700 rounded gap-2"
-              >
-                <!-- 原始颜色 -->
-                <div class="flex items-center gap-1.5 min-w-0">
-                  <span
-                    class="w-4 h-4 rounded border border-gray-400 dark:border-gray-500 flex-shrink-0"
-                    :style="{ backgroundColor: item.color }"
-                  ></span>
-                  <span class="font-mono text-xs text-gray-800 dark:text-gray-200">{{ item.key }}</span>
-                </div>
-
-                <!-- 箭头 + 替换颜色 -->
-                <div class="flex items-center gap-1.5 flex-shrink-0">
-                  <svg class="w-3.5 h-3.5 text-gray-400 dark:text-gray-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                  </svg>
-                  <button
-                    @click.stop="handleChangeReplacement(item.color)"
-                    class="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors"
-                    title="点击更换替换颜色"
-                  >
+          <Transition name="expand">
+            <div v-if="showExcludedColors" class="mt-1.5 rounded-lg border border-gray-200/60 dark:border-gray-800/50 bg-gray-100/60 dark:bg-gray-900/60 overflow-hidden">
+              <ul class="divide-y divide-gray-200/40 dark:divide-gray-800/30">
+                <li
+                  v-for="item in excludedColorsList"
+                  :key="item.color"
+                  class="flex items-center justify-between px-2.5 py-2 hover:bg-gray-200/50 dark:hover:bg-gray-700/50 transition-colors"
+                >
+                  <!-- 原始颜色 -->
+                  <div class="flex items-center gap-2 min-w-0">
                     <span
-                      class="w-3.5 h-3.5 rounded-sm border border-gray-400 dark:border-gray-500 flex-shrink-0"
-                      :style="{ backgroundColor: item.replacedBy || '#ccc' }"
+                      class="w-4 h-4 rounded border border-gray-300 dark:border-gray-600 flex-shrink-0 opacity-50"
+                      :style="{ backgroundColor: item.color }"
                     ></span>
-                    <span class="font-mono text-[10px] text-gray-600 dark:text-gray-300">{{ item.replacedByKey || '?' }}</span>
-                  </button>
-                  <button
-                    @click.stop="handleRestoreColor(item.color)"
-                    class="text-[10px] py-0.5 px-1.5 text-gray-500 dark:text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors"
-                    title="恢复此颜色"
-                  >
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    <span class="font-mono text-[11px] text-gray-500 dark:text-gray-400 line-through decoration-gray-400/50 dark:decoration-gray-500/50">{{ item.key }}</span>
+                  </div>
+
+                  <!-- 箭头 + 替换颜色 + 恢复按钮 -->
+                  <div class="flex items-center gap-1.5 flex-shrink-0">
+                    <svg class="w-3 h-3 text-gray-300 dark:text-gray-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" />
                     </svg>
-                  </button>
-                </div>
-              </li>
-            </ul>
-            <button
-              @click="handleRestoreAll"
-              class="mt-2 w-full text-xs py-1 px-2 bg-brand-500 hover:bg-brand-600 active:bg-brand-600 text-white rounded transition-colors"
-            >一键恢复所有颜色</button>
-          </div>
+                    <button
+                      @click.stop="handleChangeReplacement(item.color)"
+                      class="flex items-center gap-1.5 pl-1.5 pr-2 py-1 rounded-md bg-white dark:bg-gray-800 border border-gray-200/80 dark:border-gray-700/80 hover:border-gray-300 dark:hover:border-gray-600 shadow-xs transition-colors"
+                      title="点击更换替换颜色"
+                    >
+                      <span
+                        class="w-3.5 h-3.5 rounded-sm border border-gray-300 dark:border-gray-600 flex-shrink-0"
+                        :style="{ backgroundColor: item.replacedBy || '#ccc' }"
+                      ></span>
+                      <span class="font-mono text-[10px] font-medium text-gray-700 dark:text-gray-300">{{ item.replacedByKey || '?' }}</span>
+                    </button>
+                    <button
+                      @click.stop="handleRestoreColor(item.color)"
+                      class="p-1 rounded-md text-gray-400 dark:text-gray-500 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors flex-shrink-0"
+                      title="恢复此颜色"
+                    >
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                </li>
+              </ul>
+              <div class="px-2.5 py-2 border-t border-gray-200/40 dark:border-gray-800/30">
+                <button
+                  @click="handleRestoreAll"
+                  class="w-full text-[11px] font-medium py-1.5 px-3 rounded-md border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 active:bg-gray-100 dark:active:bg-gray-700 transition-colors"
+                >一键恢复所有颜色</button>
+              </div>
+            </div>
+          </Transition>
         </div>
       </div>
     </div>
@@ -531,7 +611,7 @@ function handleDrop(e: DragEvent) {
           class="fixed inset-0 z-[9998] flex items-center justify-center bg-black/30"
           @click.self="showColorPicker = false"
         >
-          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 w-64 max-h-80 flex flex-col overflow-hidden">
+          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 w-80 max-h-96 flex flex-col overflow-hidden">
             <div class="px-3 py-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
               <span class="text-xs font-medium text-gray-700 dark:text-gray-200">选择替换颜色</span>
               <button @click="showColorPicker = false" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
@@ -540,20 +620,44 @@ function handleDrop(e: DragEvent) {
                 </svg>
               </button>
             </div>
-            <ul class="flex-1 overflow-y-auto overscroll-contain p-1.5 space-y-0.5">
-              <li
-                v-for="color in availableColorsForPicker"
-                :key="color.color"
-                @click="selectReplacementColor(color.color)"
-                class="flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-              >
-                <span
-                  class="w-5 h-5 rounded border border-gray-300 dark:border-gray-600 flex-shrink-0"
-                  :style="{ backgroundColor: color.color }"
-                ></span>
-                <span class="font-mono text-xs text-gray-800 dark:text-gray-200">{{ color.key }}</span>
-              </li>
-            </ul>
+            <div class="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-1">
+              <!-- 当前图片中的颜色 -->
+              <div v-if="availableColorsForPicker.some(c => c.inGrid)" class="mb-1">
+                <div class="px-2 py-1 text-[10px] text-gray-400 dark:text-gray-500 font-medium">当前图片</div>
+                <div class="flex flex-wrap gap-1 content-start">
+                  <button
+                    v-for="color in availableColorsForPicker.filter(c => c.inGrid)"
+                    :key="color.color"
+                    @click="selectReplacementColor(color.color)"
+                    class="relative w-11 h-11 rounded-lg transition-all duration-100 flex items-center justify-center flex-shrink-0 border-2 border-transparent hover:border-gray-300 dark:hover:border-gray-600"
+                    :style="{ backgroundColor: color.color }"
+                  >
+                    <span
+                      class="text-[9px] font-bold leading-none select-none"
+                      :style="{ color: isLightColor(color.color) ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.7)' }"
+                    >{{ color.key }}</span>
+                  </button>
+                </div>
+              </div>
+              <!-- 完整色板中的其他颜色 -->
+              <div v-if="availableColorsForPicker.some(c => !c.inGrid)">
+                <div class="px-2 py-1 text-[10px] text-gray-400 dark:text-gray-500 font-medium">完整色板</div>
+                <div class="flex flex-wrap gap-1 content-start">
+                  <button
+                    v-for="color in availableColorsForPicker.filter(c => !c.inGrid)"
+                    :key="color.color"
+                    @click="selectReplacementColor(color.color)"
+                    class="relative w-11 h-11 rounded-lg transition-all duration-100 flex items-center justify-center flex-shrink-0 border-2 border-transparent hover:border-gray-300 dark:hover:border-gray-600"
+                    :style="{ backgroundColor: color.color }"
+                  >
+                    <span
+                      class="text-[9px] font-bold leading-none select-none"
+                      :style="{ color: isLightColor(color.color) ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.7)' }"
+                    >{{ color.key }}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </Transition>
@@ -580,5 +684,29 @@ function handleDrop(e: DragEvent) {
 .modal-fade-enter-from,
 .modal-fade-leave-to {
   opacity: 0;
+}
+
+.expand-enter-active {
+  transition: all 0.2s ease-out;
+  overflow: hidden;
+}
+
+.expand-leave-active {
+  transition: all 0.15s ease-in;
+  overflow: hidden;
+}
+
+.expand-enter-from,
+.expand-leave-to {
+  opacity: 0;
+  max-height: 0;
+  transform: translateY(-4px);
+}
+
+.expand-enter-to,
+.expand-leave-from {
+  opacity: 1;
+  max-height: 500px;
+  transform: translateY(0);
 }
 </style>

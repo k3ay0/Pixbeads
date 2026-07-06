@@ -56,6 +56,7 @@ export function useCanvasRenderer(
     canvas.width = N * CELL_SIZE; canvas.height = M * CELL_SIZE
     const ctx = canvas.getContext('2d'); ctx!.imageSmoothingEnabled = false
     ctx!.clearRect(0, 0, canvas.width, canvas.height)
+
     for (let j = 0; j < M; j++) for (let i = 0; i < N; i++) {
       const cell = mappedPixelData.value[j]?.[i]; if (!cell) continue
       const x = i * CELL_SIZE, y = j * CELL_SIZE
