@@ -1,5 +1,5 @@
 // 色号系统工具函数
-import type { PaletteColor, ColorSystem, ColorSystemMappingEntry } from '@/types'
+import type { ColorSystem, ColorSystemMappingEntry } from '@/types'
 import colorSystemMappingJson from '../data/colorSystemMapping.json'
 
 const colorSystemMapping = colorSystemMappingJson as unknown as Record<string, ColorSystemMappingEntry>
@@ -14,13 +14,6 @@ export const colorSystemOptions = [
 ]
 
 /**
- * 获取所有可用的 hex 值
- */
-export function getAllHexValues(): string[] {
-  return Object.keys(colorSystemMapping)
-}
-
-/**
  * 获取所有 MARD 色号到 hex 的映射
  */
 export function getMardToHexMapping(): Record<string, string> {
@@ -33,54 +26,6 @@ export function getMardToHexMapping(): Record<string, string> {
 }
 
 /**
- * 从 colorSystemMapping.json 加载完整的颜色映射数据
- */
-export function loadFullColorMapping(): Map<string, ColorSystemMappingEntry> {
-  const mapping = new Map<string, ColorSystemMappingEntry>()
-  Object.entries(colorSystemMapping).forEach(([baseKey, colorData]) => {
-    mapping.set(baseKey, colorData)
-  })
-  return mapping
-}
-
-/**
- * 将色板转换到指定色号系统
- */
-export function convertPaletteToColorSystem(palette: PaletteColor[], colorSystem: ColorSystem): PaletteColor[] {
-  return palette.map(color => {
-    const mapping = colorSystemMapping[color.hex]
-    if (mapping && mapping[colorSystem]) {
-      return { ...color, key: mapping[colorSystem] }
-    }
-    return color
-  })
-}
-
-/**
- * 获取指定色号系统的显示键 - 基于 hex 值的简化版本
- * 处理特殊键（ERASE、?、空字符串）
- */
-export function getDisplayColorKey(hexValue: string, colorSystem: ColorSystem): string {
-  if (hexValue === 'ERASE' || hexValue.length === 0 || hexValue === '?') {
-    return hexValue
-  }
-  const normalizedHex = hexValue.toUpperCase()
-  const colorMapping = colorSystemMapping[normalizedHex]
-  if (colorMapping && colorMapping[colorSystem]) {
-    return colorMapping[colorSystem]
-  }
-  return '?'
-}
-
-/**
- * 验证颜色在指定系统中是否有效
- */
-export function isValidColorInSystem(hexValue: string, colorSystem: ColorSystem): boolean {
-  const mapping = colorSystemMapping[hexValue]
-  return mapping && mapping[colorSystem] !== undefined
-}
-
-/**
  * 通过 hex 值获取指定色号系统的色号
  */
 export function getColorKeyByHex(hexValue: string, colorSystem: ColorSystem): string {
@@ -88,19 +33,6 @@ export function getColorKeyByHex(hexValue: string, colorSystem: ColorSystem): st
   const mapping = colorSystemMapping[normalizedHex]
   if (mapping && mapping[colorSystem]) return mapping[colorSystem]
   return '?'
-}
-
-/**
- * 将色号键转换到 hex 值
- */
-export function convertColorKeyToHex(displayKey: string, colorSystem: ColorSystem): string {
-  if (displayKey.startsWith('#') && displayKey.length === 7) {
-    return displayKey.toUpperCase()
-  }
-  for (const [hex, mapping] of Object.entries(colorSystemMapping)) {
-    if (mapping[colorSystem] === displayKey) return hex
-  }
-  return displayKey
 }
 
 /**

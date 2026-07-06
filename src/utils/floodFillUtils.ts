@@ -86,13 +86,6 @@ export function isRegionCompleted(region: GridPoint[], completedCells: Set<strin
 }
 
 /**
- * 检查区域是否部分已完成
- */
-export function isRegionPartiallyCompleted(region: GridPoint[], completedCells: Set<string>): boolean {
-  return region.some(({ row, col }) => completedCells.has(`${row},${col}`))
-}
-
-/**
  * 获取区域的中心点（用于定位和显示）
  */
 export function getRegionCenter(region: GridPoint[]): GridPoint {

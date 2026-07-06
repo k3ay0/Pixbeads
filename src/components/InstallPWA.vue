@@ -32,7 +32,6 @@ onMounted(() => {
   handler = (e) => {
     const event = e as BeforeInstallPromptEvent
     event.preventDefault()
-    console.log('PWA 安装提示已准备')
     supportsPWA.value = true
     promptInstall.value = event
   }

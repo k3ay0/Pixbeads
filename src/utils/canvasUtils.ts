@@ -3,7 +3,7 @@
  * Ported from perler-beads React project
  */
 
-import type { GridDimensions, Point } from '@/types'
+import type { GridDimensions } from '@/types'
 import { CELL_SIZE, AXIS_WIDTH, AXIS_HEIGHT, AXIS_MIN_PIXEL_GAP } from '@/constants/canvasConstants'
 
 /**
@@ -34,19 +34,6 @@ export function clientToGridCoords(
   }
 
   return null
-}
-
-/**
- * 检查触摸是否被认为是移动而不是点击
- */
-export function isTouchMove(
-  startPos: Point,
-  currentPos: Point,
-  threshold: number = 10
-): boolean {
-  const dx = Math.abs(currentPos.x - startPos.x)
-  const dy = Math.abs(currentPos.y - startPos.y)
-  return dx > threshold || dy > threshold
 }
 
 /**

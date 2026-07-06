@@ -52,14 +52,12 @@ function debounceSave(state: PersistedState): void {
       const sizeInMB = new Blob([jsonStr]).size / (1024 * 1024)
 
       if (sizeInMB > 4) {
-        console.warn(`状态数据过大 (${sizeInMB.toFixed(2)} MB)，跳过保存`)
         return
       }
 
       localStorage.setItem(STORAGE_KEY, jsonStr)
-      console.debug('状态已保存到 localStorage')
-    } catch (error) {
-      console.error('保存状态失败:', error)
+    } catch {
+      // 忽略保存失败
     }
   }, AUTO_SAVE_DELAY)
 }
@@ -76,21 +74,18 @@ function loadPersistedState(): PersistedState | null {
 
     // 验证数据完整性
     if (!state.savedAt || typeof state.savedAt !== 'number') {
-      console.warn('无效的持久化状态，忽略')
       return null
     }
 
     // 检查数据是否过期（7天）
     const maxAge = 7 * 24 * 60 * 60 * 1000
     if (Date.now() - state.savedAt > maxAge) {
-      console.debug('持久化状态已过期，清除')
       localStorage.removeItem(STORAGE_KEY)
       return null
     }
 
     return state
-  } catch (error) {
-    console.error('加载持久化状态失败:', error)
+  } catch {
     localStorage.removeItem(STORAGE_KEY)
     return null
   }
@@ -101,7 +96,6 @@ function loadPersistedState(): PersistedState | null {
  */
 export function clearPersistedState(): void {
   localStorage.removeItem(STORAGE_KEY)
-  console.debug('持久化状态已清除')
 }
 
 /**
@@ -195,13 +189,6 @@ export function useStatePersistence(): {
       return false
     }
 
-    console.debug('正在恢复持久化状态...', {
-      hasImageData: !!state.originalImageSrc,
-      hasPixelData: !!state.mappedPixelData,
-      gridSize: state.gridDimensions ? `${state.gridDimensions.N}x${state.gridDimensions.M}` : 'none',
-      savedAt: new Date(state.savedAt).toLocaleString(),
-    })
-
     // 恢复图片数据
     if (state.originalImageSrc) {
       beadStore.setImage(state.originalImageSrc)
@@ -257,10 +244,6 @@ export function useStatePersistence(): {
       uiStore.switchMode(state.activeMode as any)
     }
 
-    console.debug('状态恢复完成')
-    return true
-
-    console.debug('状态恢复完成')
     return true
   }
 

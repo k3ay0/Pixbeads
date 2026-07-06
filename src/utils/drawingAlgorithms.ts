@@ -3,7 +3,8 @@
  * 包含画线、矩形、颜色应用等核心绘制逻辑
  */
 
-import type { MappedPixel, SelectionInfo } from '@/types'
+import type { MappedPixel } from '@/types'
+import type { SelectionInfo } from '@/stores/editorStore'
 import { TRANSPARENT_KEY } from '@/types'
 
 /** Bresenham 画线算法：返回两点间所有格子坐标 */

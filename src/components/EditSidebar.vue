@@ -57,7 +57,6 @@ function handleCopy() {
 
 function handleCut() {
   handleCopy()
-  // TODO: clear the selected area
 }
 
 // 色板面板本地状态

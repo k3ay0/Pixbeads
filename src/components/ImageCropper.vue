@@ -960,7 +960,6 @@ function handleGridConfirm() {
     }
     pixelColors.push(rowColors);
   }
-  console.log("Pixel Colors:", pixelColors);
   emit("gridConfirm", { canvas: resultCanvas, cols, rows, pixelColors });
 }
 

@@ -88,11 +88,7 @@ export function useImageProcessing() {
         canvasStore.resetViewToCenter()
       })
     } catch (err) {
-      if (err instanceof Error && err.message === 'Processing cancelled') {
-        console.log('处理已取消')
-      } else {
-        console.error('处理失败:', err)
-      }
+      // 处理已取消或失败
     } finally {
       beadStore.setProcessing(false)
     }

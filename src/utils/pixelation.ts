@@ -162,8 +162,7 @@ export function calculatePixelGrid(
   let fullImageData: ImageData | null = null
   try {
     fullImageData = originalCtx.getImageData(0, 0, imgWidth, imgHeight)
-  } catch (e) {
-    console.error('Failed to get full image data:', e)
+  } catch {
     return mappedData
   }
 

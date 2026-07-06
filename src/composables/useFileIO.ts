@@ -47,9 +47,7 @@ export function useFileIO() {
     try {
       const result = await importPbds(file)
       return result
-    } catch (error) {
-      console.error('PBDS导入失败:', error)
-      alert(`PBDS导入失败：${error}`)
+    } catch {
       return null
     }
   }

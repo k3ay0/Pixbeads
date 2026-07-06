@@ -85,15 +85,6 @@ export interface GridDownloadOptions {
   exportPbds: boolean
 }
 
-// ========== 裁剪相关 ==========
-
-export interface CropRect {
-  x: number
-  y: number
-  width: number
-  height: number
-}
-
 // ========== 像素编辑相关 ==========
 
 export const TRANSPARENT_KEY = 'ERASE'

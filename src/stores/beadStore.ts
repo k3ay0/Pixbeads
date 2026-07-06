@@ -31,8 +31,6 @@ export const useBeadStore = defineStore('bead', () => {
   // ========== 处理状态 ==========
   const isProcessing = ref(false)
   const processingProgress = ref<ProcessProgress | null>(null)
-  const isCropProcessing = ref(false)
-
   // ========== Actions ==========
 
   function setImage(src: string, img: HTMLImageElement | null = null) {
@@ -70,10 +68,6 @@ export const useBeadStore = defineStore('bead', () => {
   function setProcessing(processing: boolean, progress: ProcessProgress | null = null) {
     isProcessing.value = processing
     processingProgress.value = progress
-  }
-
-  function setCropProcessing(processing: boolean) {
-    isCropProcessing.value = processing
   }
 
   function updateColorStats(stats: { colorCounts: ColorCounts; totalCount: number }) {
@@ -114,7 +108,6 @@ export const useBeadStore = defineStore('bead', () => {
     pixelationMode,
     isProcessing,
     processingProgress,
-    isCropProcessing,
     // Actions
     setImage,
     setCroppedCanvas,
@@ -123,7 +116,6 @@ export const useBeadStore = defineStore('bead', () => {
     updateGranularityY,
     updateSimilarityThreshold,
     setProcessing,
-    setCropProcessing,
     updateColorStats,
     reset,
   }

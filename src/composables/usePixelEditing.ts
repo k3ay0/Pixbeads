@@ -2,6 +2,7 @@ import { useBeadStore } from '@/stores/beadStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { usePaletteStore } from '@/stores/paletteStore'
 import { useFocusStore } from '@/stores/focusStore'
+import { useUiStore } from '@/stores/uiStore'
 import { useImageProcessing } from './useImageProcessing'
 import { recalculateColorStats } from '@/utils/pixelation'
 import { TRANSPARENT_KEY } from '@/types'
@@ -18,6 +19,7 @@ export function usePixelEditing() {
   const editorStore = useEditorStore()
   const paletteStore = usePaletteStore()
   const focusStore = useFocusStore()
+  const uiStore = useUiStore()
   const { processImage } = useImageProcessing()
 
   function performSinglePixelPaint(row: number, col: number, newColor: MappedPixel) {
@@ -197,7 +199,7 @@ export function usePixelEditing() {
       beadStore.setPixelData(snapshot)
       const stats = recalculateColorStats(snapshot)
       beadStore.updateColorStats(stats)
-      editorStore.showToast('已撤回上一步')
+      uiStore.showToast('已撤回上一步')
     }
   }
 
@@ -207,7 +209,7 @@ export function usePixelEditing() {
       beadStore.setPixelData(snapshot)
       const stats = recalculateColorStats(snapshot)
       beadStore.updateColorStats(stats)
-      editorStore.showToast('已重做上一步')
+      uiStore.showToast('已重做上一步')
     }
   }
 
