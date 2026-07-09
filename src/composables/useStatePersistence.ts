@@ -8,6 +8,7 @@ import { storeToRefs } from 'pinia'
 import { useBeadStore } from '@/stores/beadStore'
 import { usePaletteStore } from '@/stores/paletteStore'
 import { useUiStore } from '@/stores/uiStore'
+import { useCanvasStore } from '@/stores/canvasStore'
 import type { MappedPixel, GridDimensions, ColorCounts, PixelationMode, ColorSystem } from '@/types'
 
 const STORAGE_KEY = 'pixbeads_app_state'
@@ -32,6 +33,9 @@ interface PersistedState {
   excludedColorKeys: string[]
   // 模式
   activeMode: string
+  // 画布视图
+  canvasZoom: number
+  canvasTranslate: { x: number; y: number }
   // 时间戳
   savedAt: number
 }
@@ -108,6 +112,7 @@ export function useStatePersistence(): {
   const beadStore = useBeadStore()
   const paletteStore = usePaletteStore()
   const uiStore = useUiStore()
+  const canvasStore = useCanvasStore()
 
   const {
     originalImageSrc,
@@ -129,6 +134,8 @@ export function useStatePersistence(): {
 
   const { activeMode } = storeToRefs(uiStore)
 
+  const { canvasZoom, canvasTranslate } = storeToRefs(canvasStore)
+
   /**
    * 设置自动保存 watchers
    */
@@ -149,6 +156,8 @@ export function useStatePersistence(): {
         customPaletteSelections,
         excludedColorKeys,
         activeMode,
+        canvasZoom,
+        canvasTranslate,
       ],
       () => {
         // 只在有数据时保存
@@ -170,6 +179,8 @@ export function useStatePersistence(): {
           customPaletteSelections: customPaletteSelections.value,
           excludedColorKeys: Array.from(excludedColorKeys.value),
           activeMode: activeMode.value,
+          canvasZoom: canvasZoom.value,
+          canvasTranslate: canvasTranslate.value,
           savedAt: Date.now(),
         }
 
@@ -242,6 +253,14 @@ export function useStatePersistence(): {
     // 恢复模式（但不恢复focus模式，因为需要重新初始化）
     if (state.activeMode && state.activeMode !== 'focus') {
       uiStore.switchMode(state.activeMode as any)
+    }
+
+    // 恢复画布视图
+    if (state.canvasZoom !== undefined && state.canvasZoom !== null) {
+      canvasStore.canvasZoom = state.canvasZoom
+    }
+    if (state.canvasTranslate !== undefined && state.canvasTranslate !== null) {
+      canvasStore.canvasTranslate = state.canvasTranslate
     }
 
     return true

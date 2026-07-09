@@ -13,7 +13,6 @@ export const useUiStore = defineStore('ui', () => {
 
   // ========== 弹窗状态 ==========
   const showDownloadModal = ref(false)
-  const showDonationModal = ref(false)
   const showImportDialog = ref(false)
   const showPaletteEditor = ref(false)
 
@@ -27,7 +26,7 @@ export const useUiStore = defineStore('ui', () => {
     gridInterval: 10,
     showCoordinates: true,
     showCellNumbers: true,
-    gridLineColor: '#CCCCCC',
+    gridLineColor: '#555555',
     includeStats: true,
     exportPbds: false,
   })
@@ -73,7 +72,6 @@ export const useUiStore = defineStore('ui', () => {
     showImportMenu,
     showExportMenu,
     showDownloadModal,
-    showDonationModal,
     showImportDialog,
     showPaletteEditor,
     toastMessage,

@@ -23,7 +23,7 @@ const uiStore = useUiStore()
 
 const { mappedPixelData } = storeToRefs(beadStore)
 const { selectedColorSystem, customPaletteSelections } = storeToRefs(paletteStore)
-const { activeMode, showImportMenu, showExportMenu, showDonationModal } = storeToRefs(uiStore)
+const { activeMode, showImportMenu, showExportMenu } = storeToRefs(uiStore)
 
 const modes = MODES
 

@@ -49,3 +49,12 @@ export function floodFillArea(
   }
   return result
 }
+
+/**
+ * 水平镜像 — 将每行的像素顺序反转（左右翻转）
+ * @param grid - 原始网格数据
+ * @returns 翻转后的新网格（不修改原数据）
+ */
+export function mirrorHorizontal(grid: MappedPixel[][]): MappedPixel[][] {
+  return grid.map(row => [...row].reverse())
+}

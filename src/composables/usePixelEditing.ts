@@ -8,7 +8,7 @@ import { recalculateColorStats, floodFillErase, replaceAllColor, paintPixel } fr
 import { TRANSPARENT_KEY } from '@/types'
 import type { MappedPixel } from '@/types'
 import { getColorKeyByHex } from '@/utils/colorSystemUtils'
-import { deepCopyGrid } from '@/utils/gridOperations'
+import { deepCopyGrid, mirrorHorizontal } from '@/utils/gridOperations'
 
 export function usePixelEditing() {
   const beadStore = useBeadStore()
@@ -188,6 +188,18 @@ export function usePixelEditing() {
     beadStore.updateColorStats(stats)
   }
 
+  function performMirrorHorizontal() {
+    if (!beadStore.mappedPixelData) return
+
+    editorStore.saveSnapshot(beadStore.mappedPixelData)
+
+    const mirrored = mirrorHorizontal(beadStore.mappedPixelData)
+    beadStore.setPixelData(mirrored)
+
+    const stats = recalculateColorStats(mirrored)
+    beadStore.updateColorStats(stats)
+  }
+
   function undoEdit() {
     const snapshot = editorStore.undo()
     if (snapshot) {
@@ -212,6 +224,7 @@ export function usePixelEditing() {
     performSinglePixelPaint,
     performFloodFillErase,
     performColorReplace,
+    performMirrorHorizontal,
     selectEditColor,
     handlePaletteColorSelect,
     handlePaletteColorReplace,

@@ -53,9 +53,7 @@ import FocusSidebar from './components/FocusSidebar.vue'
 const MagnifierTool = defineAsyncComponent(() =>
   import('./components/MagnifierTool.vue').catch(() => ({ render: () => null } as any))
 )
-const DonationModal = defineAsyncComponent(() =>
-  import('./components/DonationModal.vue').catch(() => ({ render: () => null } as any))
-)
+
 const CustomPaletteEditor = defineAsyncComponent(() =>
   import('./components/CustomPaletteEditor.vue').catch(() => ({ render: () => null } as any))
 )
@@ -112,7 +110,7 @@ const {
 
 const {
   activeMode, showDownloadModal,
-  showDonationModal, showImportDialog,
+  showImportDialog,
   toastMessage, downloadOptions, showPaletteEditor
 } = storeToRefs(uiStore)
 
@@ -272,6 +270,7 @@ function handlePaletteEditorSave(s: Record<string, boolean>) { paletteStore.upda
 function handlePaletteEditorClose() { uiStore.showPaletteEditor = false }
 function handlePaletteColorSelect(c: any) { pixelEditing.selectEditColor(c) }
 function handlePaletteColorReplace(s: any, t: any) { editorStore.saveSnapshot(beadStore.mappedPixelData || []); pixelEditing.performColorReplace(s, t); editorStore.resetColorReplaceState() }
+function handleMirrorHorizontal() { pixelEditing.performMirrorHorizontal() }
 function handleExportPbds() { fileIO.handleExportPbds() }
 function handleDownloadImage() { fileIO.handleDownloadImage() }
 function handleDownloadStats() { fileIO.handleDownloadStats() }
@@ -433,7 +432,7 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
           <OptimizeSidebar v-if="activeMode === 'optimize'" @trigger-file-input="triggerFileInput"
             @auto-remove-background="handleAutoRemoveBackground" @undo-bg-removal="handleUndoBgRemoval" />
           <EditSidebar v-if="activeMode === 'edit'" @color-select="handlePaletteColorSelect"
-            @color-replace="handlePaletteColorReplace" />
+            @color-replace="handlePaletteColorReplace" @mirror-horizontal="handleMirrorHorizontal" />
           <PreviewSidebar v-if="activeMode === 'preview'" :config="ironingConfig"
             @download-preview="handleDownloadPreview" @update:config="ironingConfig = $event" />
           <FocusSidebar v-if="activeMode === 'focus'" @color-change="handleFocusColorChange" />
@@ -474,11 +473,6 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
     :current-selections="customPaletteSelections" :selected-color-system="selectedColorSystem"
     @save="handlePaletteEditorSave" @close="handlePaletteEditorClose"
     @update:color-system="paletteStore.selectedColorSystem = $event" />
-
-  <!-- Donation modal -->
-  <Teleport to="body">
-    <DonationModal v-if="showDonationModal" @close="showDonationModal = false" />
-  </Teleport>
 
   <!-- Toast -->
   <Teleport to="body">

@@ -295,25 +295,6 @@ function handleDrop(e: DragEvent) {
 
 <template>
   <div class="flex-1 overflow-y-auto scrollbar-hide px-3 py-3 flex flex-col gap-3">
-    <!-- Upload card -->
-    <div class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 p-4 shadow-sm">
-      <h3 class="text-xs font-semibold text-gray-800 dark:text-gray-200 mb-3">图片上传</h3>
-      <div
-        @click="emit('trigger-file-input')"
-        @dragover.prevent
-        @drop="handleDrop"
-        class="border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-lg p-4 text-center cursor-pointer active:bg-gray-100 dark:active:bg-gray-800 transition-colors"
-      >
-        <img v-if="originalImageSrc" :src="originalImageSrc" class="max-h-24 mx-auto rounded mb-2" alt="预览" />
-        <div v-else class="space-y-1">
-          <svg class="w-8 h-8 mx-auto text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 6v12m6-6H6" />
-          </svg>
-          <p class="text-xs text-gray-500 dark:text-gray-400">点击或拖放图片</p>
-        </div>
-      </div>
-    </div>
-
     <!-- Parameter controls card -->
     <div class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 shadow-sm overflow-visible">
       <div class="divide-y divide-gray-200/60 dark:divide-gray-800/40">

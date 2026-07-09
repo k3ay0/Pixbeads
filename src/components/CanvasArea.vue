@@ -76,7 +76,7 @@ function handleCellClick(row: number, col: number) { focusStore.handleCellClick(
     <main class="relative flex flex-col flex-1 min-h-0 min-w-0">
       <!-- Welcome screen -->
       <div
-        v-if="!originalImageSrc"
+        v-if="!originalImageSrc && !mappedPixelData"
         @click="$emit('trigger-file-input')"
         @dragover.prevent
         @drop="$emit('file-drop', $event)"

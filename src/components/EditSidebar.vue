@@ -12,6 +12,7 @@ import { TRANSPARENT_KEY } from '../types'
 const emit = defineEmits<{
   (e: 'color-select', color: any): void
   (e: 'color-replace', source: any, target: any): void
+  (e: 'mirror-horizontal'): void
 }>()
 
 const beadStore = useBeadStore()
@@ -524,6 +525,16 @@ const toolNameMap: Record<string, string> = {
       <template v-if="manualTool === 'drag'">
         <p class="text-xs text-gray-400 py-1">拖拽画布进行平移</p>
       </template>
+    </div>
+
+    <!-- Global operations -->
+    <div class="bg-white rounded-xl border border-black/10 shadow-sm px-4 py-3 space-y-2">
+      <div class="text-sm font-bold text-gray-700">全局操作</div>
+      <button
+        @click="emit('mirror-horizontal')"
+        class="px-2.5 py-1.5 text-xs rounded-lg border transition-colors bg-gray-50 text-gray-600 border-gray-200 active:bg-gray-200 hover:bg-gray-100 w-full"
+        title="水平翻转整个图纸"
+      >↔ 水平镜像</button>
     </div>
 
     <!-- Color palette card -->

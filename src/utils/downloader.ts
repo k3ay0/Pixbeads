@@ -48,7 +48,7 @@ export function downloadGridImage({
     gridInterval = 10,
     showCoordinates = true,
     showCellNumbers = true,
-    gridLineColor = '#CCCCCC',
+    gridLineColor = '#555555',
     includeStats = true,
   } = options
 
@@ -132,60 +132,74 @@ export function downloadGridImage({
     ctx.textBaseline = 'middle'
 
     for (let i = 0; i < N; i++) {
-      if ((i + 1) % gridInterval === 0 || i === 0 || i === N - 1) {
-        const x = gridOffsetX + i * cellSize + cellSize / 2
-        ctx.fillText((i + 1).toString(), x, 80 + axisLabelSize / 2)
-        ctx.fillText((i + 1).toString(), x, 80 + axisLabelSize + gridHeight + axisLabelSize / 2)
-      }
+      const x = gridOffsetX + i * cellSize + cellSize / 2
+      ctx.fillText((i + 1).toString(), x, 80 + axisLabelSize / 2)
+      ctx.fillText((i + 1).toString(), x, 80 + axisLabelSize + gridHeight + axisLabelSize / 2)
     }
     for (let j = 0; j < M; j++) {
-      if ((j + 1) % gridInterval === 0 || j === 0 || j === M - 1) {
-        const y = gridOffsetY + j * cellSize + cellSize / 2
-        ctx.textAlign = 'center'
-        ctx.fillText((j + 1).toString(), axisLabelSize / 2, y)
-        ctx.fillText((j + 1).toString(), axisLabelSize + gridWidth + axisLabelSize / 2, y)
-      }
+      const y = gridOffsetY + j * cellSize + cellSize / 2
+      ctx.textAlign = 'center'
+      ctx.fillText((j + 1).toString(), axisLabelSize / 2, y)
+      ctx.fillText((j + 1).toString(), axisLabelSize + gridWidth + axisLabelSize / 2, y)
     }
   }
 
-  // 绘制网格
+  // 绘制网格（颜色、细网格线、色号文字）
   const fontSize = Math.max(8, Math.floor(cellSize * 0.35))
   for (let j = 0; j < M; j++) {
     for (let i = 0; i < N; i++) {
       const cell = mappedPixelData[j]?.[i]
-      if (!cell || cell.isExternal) continue
-
       const x = gridOffsetX + i * cellSize
       const y = gridOffsetY + j * cellSize
 
-      ctx.fillStyle = cell.color
-      ctx.fillRect(x, y, cellSize, cellSize)
+      // 填充单元格颜色（仅非外部单元格）
+      if (cell && !cell.isExternal) {
+        ctx.fillStyle = cell.color
+        ctx.fillRect(x, y, cellSize, cellSize)
 
-      // 基础单元格边框（始终绘制）
-      ctx.strokeStyle = '#DDDDDD'
-      ctx.lineWidth = 0.5
-      ctx.strokeRect(x, y, cellSize, cellSize)
-
-      // 网格线（在基础边框之上）
-      if (showGrid) {
-        ctx.strokeStyle = gridLineColor
-        ctx.lineWidth = 0.5
-        ctx.strokeRect(x, y, cellSize, cellSize)
-      }
-
-      // 色号文字
-      if (showCellNumbers) {
-        const displayKey = getDisplayKey(cell, selectedColorSystem)
-        if (displayKey && displayKey !== '?') {
-          ctx.fillStyle = getContrastColor(cell.color)
-          ctx.font = `${fontSize}px sans-serif`
-          ctx.textAlign = 'center'
-          ctx.textBaseline = 'middle'
-          ctx.fillText(displayKey, x + cellSize / 2, y + cellSize / 2)
+        // 色号文字
+        if (showCellNumbers) {
+          const displayKey = getDisplayKey(cell, selectedColorSystem)
+          if (displayKey && displayKey !== '?') {
+            ctx.fillStyle = getContrastColor(cell.color)
+            ctx.font = `${fontSize}px sans-serif`
+            ctx.textAlign = 'center'
+            ctx.textBaseline = 'middle'
+            ctx.fillText(displayKey, x + cellSize / 2, y + cellSize / 2)
+          }
         }
       }
+
+      // 绘制细网格线（每个单元格）
+      ctx.strokeStyle = '#DDDDDD'
+      ctx.lineWidth = 0.2
+      ctx.strokeRect(x, y, cellSize, cellSize)
     }
   }
+
+  // 绘制用户设定的粗网格线（每 N 格画一条，不含边界）
+  if (showGrid) {
+    ctx.strokeStyle = gridLineColor
+    ctx.lineWidth = 1.5
+    // 竖线（从第 N 格开始，到第 (M-1)*N 格结束）
+    for (let i = gridInterval; i < N; i += gridInterval) {
+      const x = gridOffsetX + i * cellSize
+      ctx.beginPath()
+      ctx.moveTo(x, gridOffsetY)
+      ctx.lineTo(x, gridOffsetY + gridHeight)
+      ctx.stroke()
+    }
+    // 横线（从第 N 格开始，到第 (M-1)*N 格结束）
+    for (let j = gridInterval; j < M; j += gridInterval) {
+      const y = gridOffsetY + j * cellSize
+      ctx.beginPath()
+      ctx.moveTo(gridOffsetX, y)
+      ctx.lineTo(gridOffsetX + gridWidth, y)
+      ctx.stroke()
+    }
+  }
+
+
 
   // 网格外边框
   ctx.strokeStyle = '#000000'
@@ -565,22 +579,23 @@ function parseMetadata(text: string): {
   }
 }
 
-function parseColorMap(text: string): Map<number, string> {
+function parseColorMap(text: string): Map<number, { hex: string; key: string }> {
   const lines = text.trim().split('\n')
-  const colorMap = new Map<number, string>()
+  const colorMap = new Map<number, { hex: string; key: string }>()
 
   for (let i = 1; i < lines.length; i++) {
     const parts = lines[i].split(',')
     if (parts.length >= 2) {
       const idx = parseInt(parts[0], 10)
       const hex = parts[1].trim().toUpperCase()
-      colorMap.set(idx, hex)
+      const key = parts.length >= 3 ? parts[2].trim() : hex
+      colorMap.set(idx, { hex, key: key || hex })
     }
   }
   return colorMap
 }
 
-function parsePattern(text: string, colorMap: Map<number, string>): MappedPixel[][] {
+function parsePattern(text: string, colorMap: Map<number, { hex: string; key: string }>): MappedPixel[][] {
   const lines = text.trim().split('\n')
   const result: MappedPixel[][] = []
 
@@ -593,9 +608,9 @@ function parsePattern(text: string, colorMap: Map<number, string>): MappedPixel[
       if (idx === -1 || isNaN(idx)) {
         row.push({ key: 'ERASE', color: '#FFFFFF', isExternal: true })
       } else {
-        const hex = colorMap.get(idx)
-        if (hex) {
-          row.push({ key: hex, color: hex, isExternal: false })
+        const entry = colorMap.get(idx)
+        if (entry) {
+          row.push({ key: entry.key, color: entry.hex, isExternal: false })
         } else {
           row.push({ key: 'ERASE', color: '#FFFFFF', isExternal: true })
         }
