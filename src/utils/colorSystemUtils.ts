@@ -36,6 +36,16 @@ export function getColorKeyByHex(hexValue: string, colorSystem: ColorSystem): st
 }
 
 /**
+ * 获取显示用色号，优先使用 OCR 识别结果
+ */
+export function getDisplayKey(
+  cell: { key: string; color: string; ocrKey?: string },
+  colorSystem: ColorSystem
+): string {
+  return cell.ocrKey || getColorKeyByHex(cell.color, colorSystem)
+}
+
+/**
  * 将 hex 颜色转换为 HSL
  */
 function hexToHsl(hex: string): { h: number; s: number; l: number } {

@@ -22,6 +22,7 @@ import { useMarchingAnts } from './composables/useMarchingAnts'
 import { useCanvasRenderer } from './composables/useCanvasRenderer'
 import { useCanvasInteraction } from './composables/useCanvasInteraction'
 import { useStatePersistence } from './composables/useStatePersistence'
+import { useOcrRecognition } from './composables/useOcrRecognition'
   
 // Utils
 import { getColorKeyByHex, sortColorsByHue } from './utils/colorSystemUtils'
@@ -77,6 +78,7 @@ const canvasTransform = useCanvasTransform()
 const focusLogic = useFocusModeLogic()
 const { marchingAntsOffset, startMarchingAnts, stopMarchingAnts } = useMarchingAnts()
 const { restoreState, clearState: clearPersistedState } = useStatePersistence()
+const ocrRecognition = useOcrRecognition()
 
 // ========== 从 Store 映射状态 ==========
 const {
@@ -138,6 +140,10 @@ const canvasAreaRef = ref<any>(null)
 const ironingPreviewRef = ref<InstanceType<typeof IroningPreview> | null>(null)
 const ironingConfig = ref<IroningPreviewConfig>(DEFAULT_IRONING_CONFIG)
 
+// OCR 状态
+const ocrProgress = ref<{ phase: string; percent?: number } | null>(null)
+const ocrError = ref<string | null>(null)
+
 // ========== 初始化 Composables ==========
 const { scheduleRender, renderCanvas, renderPreviewOverlay, clearPreviewOverlay } = useCanvasRenderer(
   canvasAreaRef,
@@ -190,7 +196,7 @@ function handleImportConfirmFromDialog(data: any) { fileIO.handleImportConfirm(d
 function handleImportCancel() { uiStore.showImportDialog = false; pendingPbdsData.value = null }
 function handleCropConfirm(canvas: HTMLCanvasElement) { fileIO.handleCropConfirm(canvas); processImage() }
 function handleCropSkip() { fileIO.handleCropSkip(); processImage() }
-function handleGridConfirm(data: { canvas: HTMLCanvasElement, cols: number, rows: number, pixelColors: string[][] }) {
+async function handleGridConfirm(data: { canvas: HTMLCanvasElement, cols: number, rows: number, pixelColors: string[][]; ocrEnabled: boolean }) {
   // 设置裁剪后的画布
   beadStore.setCroppedCanvas(data.canvas)
   beadStore.showCropper = false
@@ -223,6 +229,32 @@ function handleGridConfirm(data: { canvas: HTMLCanvasElement, cols: number, rows
       return { key: closest.key, color: closest.hex }
     })
   )
+
+  // OCR 识别色号
+  if (data.ocrEnabled) {
+    try {
+      ocrProgress.value = { phase: 'loading', percent: 0 }
+      console.log('[OCR] 开始识别, canvas:', data.canvas.width, 'x', data.canvas.height, 'grid:', data.cols, 'x', data.rows)
+      const ocrResults = await ocrRecognition.recognizeGrid(
+        data.canvas, data.cols, data.rows,
+        (info) => { ocrProgress.value = info }
+      )
+      console.log('[OCR] 识别完成, 结果数量:', ocrResults.length)
+      for (const result of ocrResults) {
+        console.log(`[OCR] cell[${result.row},${result.col}] = "${result.text}" (confidence: ${result.confidence.toFixed(3)})`)
+        if (mappedPixelData[result.row] && mappedPixelData[result.row][result.col]) {
+          mappedPixelData[result.row][result.col].ocrKey = result.text
+          mappedPixelData[result.row][result.col].ocrConfidence = result.confidence
+        }
+      }
+      ocrProgress.value = null
+    } catch (err) {
+      ocrProgress.value = null
+      ocrError.value = 'OCR 识别失败，已使用颜色匹配结果'
+      console.error('[OCR] recognition failed:', err)
+      setTimeout(() => { ocrError.value = null }, 3000)
+    }
+  }
 
   // 设置像素数据
   beadStore.setPixelData(mappedPixelData, { N: data.cols, M: data.rows })
@@ -453,6 +485,28 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
     <div v-if="toastMessage"
       class="fixed bottom-4 left-1/2 -translate-x-1/2 bg-black text-white text-sm px-4 py-2 rounded-lg shadow-lg z-50">
       {{ toastMessage }}
+    </div>
+  </Teleport>
+
+  <!-- OCR Loading 遮罩 -->
+  <Teleport to="body">
+    <div v-if="ocrProgress" class="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center">
+      <div class="bg-gray-900 rounded-xl p-6 flex flex-col items-center gap-3 min-w-[240px]">
+        <div class="w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin"></div>
+        <p class="text-white text-sm">
+          {{ ocrProgress.phase === 'loading' ? '正在加载 OCR 模型…' : '正在识别色号…' }}
+        </p>
+        <p v-if="ocrProgress.percent != null" class="text-white/60 text-xs">
+          {{ ocrProgress.percent }}%
+        </p>
+      </div>
+    </div>
+  </Teleport>
+
+  <!-- OCR 错误提示 -->
+  <Teleport to="body">
+    <div v-if="ocrError" class="fixed top-4 left-1/2 -translate-x-1/2 z-[80] bg-red-600 text-white px-4 py-2 rounded-lg shadow-lg text-sm">
+      {{ ocrError }}
     </div>
   </Teleport>
 

@@ -11,7 +11,7 @@ import { useEditorStore } from '@/stores/editorStore'
 import { useUiStore } from '@/stores/uiStore'
 import { usePaletteStore } from '@/stores/paletteStore'
 import { clientToGridCoords } from '@/utils/canvasUtils'
-import { getColorKeyByHex } from '@/utils/colorSystemUtils'
+import { getColorKeyByHex, getDisplayKey } from '@/utils/colorSystemUtils'
 import { floodFill } from '@/utils/pixelation'
 import { floodFillArea } from '@/utils/gridOperations'
 import {
@@ -273,7 +273,7 @@ export function useCanvasInteraction(
       const cell = mappedPixelData.value[row][col]
       if (manualTool.value === 'picker' && cell && !cell.isExternal) {
         const rect = canvas.getBoundingClientRect()
-        canvasStore.setTooltip({ x: e.clientX - rect.left + 15, y: e.clientY - rect.top - 10, key: getColorKeyByHex(cell.color, selectedColorSystem.value), color: cell.color, row: row + 1, col: col + 1 })
+        canvasStore.setTooltip({ x: e.clientX - rect.left + 15, y: e.clientY - rect.top - 10, key: getDisplayKey(cell, selectedColorSystem.value), color: cell.color, row: row + 1, col: col + 1 })
       } else {
         canvasStore.clearTooltip()
       }

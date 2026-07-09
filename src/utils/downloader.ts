@@ -1,5 +1,5 @@
 // 下载导出工具函数
-import { getColorKeyByHex } from './colorSystemUtils'
+import { getColorKeyByHex, getDisplayKey } from './colorSystemUtils'
 import type { MappedPixel, GridDimensions, ColorCounts, ColorSystem, GridDownloadOptions } from '@/types'
 import { hexToRgb, colorDistance, findClosestPaletteColor, getContrastColor } from './colorUtils'
 import { triggerImageDownload, triggerBlobDownload } from './downloadUtils'
@@ -175,7 +175,7 @@ export function downloadGridImage({
 
       // 色号文字
       if (showCellNumbers) {
-        const displayKey = getColorKeyByHex(cell.color, selectedColorSystem)
+        const displayKey = getDisplayKey(cell, selectedColorSystem)
         if (displayKey && displayKey !== '?') {
           ctx.fillStyle = getContrastColor(cell.color)
           ctx.font = `${fontSize}px sans-serif`

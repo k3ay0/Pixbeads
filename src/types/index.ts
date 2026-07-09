@@ -25,6 +25,8 @@ export interface MappedPixel {
   key: string
   color: string
   isExternal?: boolean
+  ocrKey?: string        // OCR 识别的原始文本（如 "E6"）
+  ocrConfidence?: number // OCR 置信度 (0-1)
 }
 
 // ========== 网格相关 ==========

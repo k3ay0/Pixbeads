@@ -14,6 +14,7 @@ const emit = defineEmits<{
       cols: number;
       rows: number;
       pixelColors: string[][];
+      ocrEnabled: boolean;
     }
   ];
   skip: [];
@@ -46,6 +47,7 @@ const mode = ref<"crop" | "grid">("crop");
 // Grid alignment state
 const gridCols = ref(10);
 const gridRows = ref(10);
+const ocrEnabled = ref(false);
 
 // Canvas view transform (for grid mode panning and zooming)
 const canvasTranslateX = ref(0);
@@ -960,7 +962,7 @@ function handleGridConfirm() {
     }
     pixelColors.push(rowColors);
   }
-  emit("gridConfirm", { canvas: resultCanvas, cols, rows, pixelColors });
+  emit("gridConfirm", { canvas: resultCanvas, cols, rows, pixelColors, ocrEnabled: ocrEnabled.value });
 }
 
 // Skip crop (use original)
@@ -1062,6 +1064,14 @@ onUnmounted(() => {
             class="w-16 px-2 py-1 bg-gray-800 text-white text-center rounded border border-gray-600 focus:border-brand-500 focus:outline-none"
           />
           <span class="text-white/60 text-sm">格</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input
+            v-model="ocrEnabled"
+            type="checkbox"
+            class="w-4 h-4 rounded border-gray-600 bg-gray-800 text-brand-500 focus:ring-brand-500 focus:ring-offset-0 focus:ring-1"
+          />
+          <span class="text-white/60 text-sm select-none">智能识别（OCR）</span>
         </label>
       </div>
     </div>
