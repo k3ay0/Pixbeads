@@ -52,7 +52,7 @@ export function downloadGridImage({
     includeStats = true,
   } = options
 
-  const cellSize = 30
+  const cellSize = 60
   const axisLabelSize = showCoordinates ? 30 : 0
   const gridWidth = N * cellSize
   const gridHeight = M * cellSize
@@ -72,201 +72,205 @@ export function downloadGridImage({
   const canvas = document.createElement('canvas')
   canvas.width = downloadWidth
   canvas.height = downloadHeight
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return
+  const ctx = canvas.getContext('2d')!
 
   ctx.imageSmoothingEnabled = false
   ctx.fillStyle = '#FFFFFF'
   ctx.fillRect(0, 0, downloadWidth, downloadHeight)
 
   // 标题栏
-  ctx.fillStyle = '#1F2937'
+  ctx.fillStyle = '#0F172A'
   ctx.fillRect(0, 0, downloadWidth, 80)
 
   // 品牌色块
   const brandWidth = 64
   const gradient = ctx.createLinearGradient(0, 0, brandWidth, 80)
-  gradient.addColorStop(0, '#6366F1')
-  gradient.addColorStop(1, '#8B5CF6')
+  gradient.addColorStop(0, '#3B82F6')
+  gradient.addColorStop(1, '#60A5FA')
   ctx.fillStyle = gradient
   ctx.fillRect(0, 0, brandWidth, 80)
 
-  // Logo: 拼豆抽象
-  ctx.fillStyle = '#FFFFFF'
-  const beadSize = 8
-  const beadSpacing = beadSize * 1.2
-  for (let row = 0; row < 3; row++) {
-    for (let col = 0; col < 3; col++) {
-      const bx = 32 - beadSize * 1.5 + col * beadSpacing
-      const by = 40 - beadSize * 1.5 + row * beadSpacing
-      ctx.beginPath()
-      ctx.roundRect(bx, by, beadSize, beadSize, beadSize * 0.2)
-      ctx.fill()
-    }
-  }
+  // Logo: 加载 favicon 图标
+  const logoImg = new Image()
+  logoImg.src = '/logos/android-chrome-512x512.png'
 
-  // 标题文字
-  ctx.fillStyle = '#FFFFFF'
-  ctx.font = '600 20px system-ui, sans-serif'
-  ctx.textAlign = 'left'
-  ctx.textBaseline = 'middle'
-  ctx.fillText('PIXBEADS', brandWidth + 16, 35)
-  ctx.fillStyle = 'rgba(255,255,255,0.8)'
-  ctx.font = '400 12px system-ui, sans-serif'
-  ctx.fillText('拼豆图纸生成工具', brandWidth + 16, 55)
-
-  // 网格坐标
-  const gridOffsetX = axisLabelSize
-  const gridOffsetY = 80 + axisLabelSize
-
-  if (showCoordinates) {
-    ctx.fillStyle = '#F5F5F5'
-    ctx.fillRect(gridOffsetX, 80, gridWidth, axisLabelSize)
-    ctx.fillRect(gridOffsetX, 80 + axisLabelSize + gridHeight, gridWidth, axisLabelSize)
-    ctx.fillRect(0, gridOffsetY, axisLabelSize, gridHeight)
-    ctx.fillRect(gridOffsetX + gridWidth, gridOffsetY, axisLabelSize, gridHeight)
-
-    ctx.fillStyle = '#333333'
-    ctx.font = '12px sans-serif'
-    ctx.textAlign = 'center'
+  function drawRest() {
+    if (!mappedPixelData) return
+    // 标题文字
+    ctx.fillStyle = '#FFFFFF'
+    ctx.font = '600 20px system-ui, sans-serif'
+    ctx.textAlign = 'left'
     ctx.textBaseline = 'middle'
+    ctx.fillText('PIXBEADS', brandWidth + 16, 35)
+    ctx.fillStyle = 'rgba(255,255,255,0.8)'
+    ctx.font = '400 12px system-ui, sans-serif'
+    ctx.fillText('拼豆图纸生成工具', brandWidth + 16, 55)
 
-    for (let i = 0; i < N; i++) {
-      const x = gridOffsetX + i * cellSize + cellSize / 2
-      ctx.fillText((i + 1).toString(), x, 80 + axisLabelSize / 2)
-      ctx.fillText((i + 1).toString(), x, 80 + axisLabelSize + gridHeight + axisLabelSize / 2)
-    }
-    for (let j = 0; j < M; j++) {
-      const y = gridOffsetY + j * cellSize + cellSize / 2
+    // 网格坐标
+    const gridOffsetX = axisLabelSize
+    const gridOffsetY = 80 + axisLabelSize
+
+    if (showCoordinates) {
+      ctx.fillStyle = '#F5F5F5'
+      ctx.fillRect(gridOffsetX, 80, gridWidth, axisLabelSize)
+      ctx.fillRect(gridOffsetX, 80 + axisLabelSize + gridHeight, gridWidth, axisLabelSize)
+      ctx.fillRect(0, gridOffsetY, axisLabelSize, gridHeight)
+      ctx.fillRect(gridOffsetX + gridWidth, gridOffsetY, axisLabelSize, gridHeight)
+
+      ctx.fillStyle = '#333333'
+      ctx.font = '12px sans-serif'
       ctx.textAlign = 'center'
-      ctx.fillText((j + 1).toString(), axisLabelSize / 2, y)
-      ctx.fillText((j + 1).toString(), axisLabelSize + gridWidth + axisLabelSize / 2, y)
+      ctx.textBaseline = 'middle'
+
+      for (let i = 0; i < N; i++) {
+        const x = gridOffsetX + i * cellSize + cellSize / 2
+        ctx.fillText((i + 1).toString(), x, 80 + axisLabelSize / 2)
+        ctx.fillText((i + 1).toString(), x, 80 + axisLabelSize + gridHeight + axisLabelSize / 2)
+      }
+      for (let j = 0; j < M; j++) {
+        const y = gridOffsetY + j * cellSize + cellSize / 2
+        ctx.textAlign = 'center'
+        ctx.fillText((j + 1).toString(), axisLabelSize / 2, y)
+        ctx.fillText((j + 1).toString(), axisLabelSize + gridWidth + axisLabelSize / 2, y)
+      }
     }
-  }
 
-  // 绘制网格（颜色、细网格线、色号文字）
-  const fontSize = Math.max(8, Math.floor(cellSize * 0.35))
-  for (let j = 0; j < M; j++) {
-    for (let i = 0; i < N; i++) {
-      const cell = mappedPixelData[j]?.[i]
-      const x = gridOffsetX + i * cellSize
-      const y = gridOffsetY + j * cellSize
+    // 绘制网格（颜色、细网格线、色号文字）
+    const fontSize = Math.max(8, Math.floor(cellSize * 0.35))
+    for (let j = 0; j < M; j++) {
+      for (let i = 0; i < N; i++) {
+        const cell = mappedPixelData[j]?.[i]
+        const x = gridOffsetX + i * cellSize
+        const y = gridOffsetY + j * cellSize
 
-      // 填充单元格颜色（仅非外部单元格）
-      if (cell && !cell.isExternal) {
-        ctx.fillStyle = cell.color
-        ctx.fillRect(x, y, cellSize, cellSize)
+        // 填充单元格颜色（仅非外部单元格）
+        if (cell && !cell.isExternal) {
+          ctx.fillStyle = cell.color
+          ctx.fillRect(x, y, cellSize, cellSize)
 
-        // 色号文字
-        if (showCellNumbers) {
-          const displayKey = getDisplayKey(cell, selectedColorSystem)
-          if (displayKey && displayKey !== '?') {
-            ctx.fillStyle = getContrastColor(cell.color)
-            ctx.font = `${fontSize}px sans-serif`
-            ctx.textAlign = 'center'
-            ctx.textBaseline = 'middle'
-            ctx.fillText(displayKey, x + cellSize / 2, y + cellSize / 2)
+          // 色号文字
+          if (showCellNumbers) {
+            const displayKey = getDisplayKey(cell, selectedColorSystem)
+            if (displayKey && displayKey !== '?') {
+              ctx.fillStyle = getContrastColor(cell.color)
+              ctx.font = `${fontSize}px sans-serif`
+              ctx.textAlign = 'center'
+              ctx.textBaseline = 'middle'
+              ctx.fillText(displayKey, x + cellSize / 2, y + cellSize / 2)
+            }
           }
         }
+
+        // 绘制细网格线（每个单元格）
+        ctx.strokeStyle = '#DDDDDD'
+        ctx.lineWidth = 0.2
+        ctx.strokeRect(x, y, cellSize, cellSize)
       }
-
-      // 绘制细网格线（每个单元格）
-      ctx.strokeStyle = '#DDDDDD'
-      ctx.lineWidth = 0.2
-      ctx.strokeRect(x, y, cellSize, cellSize)
     }
-  }
 
-  // 绘制用户设定的粗网格线（每 N 格画一条，不含边界）
-  if (showGrid) {
-    ctx.strokeStyle = gridLineColor
+    // 绘制用户设定的粗网格线（每 N 格画一条，不含边界）
+    if (showGrid) {
+      ctx.strokeStyle = gridLineColor
+      ctx.lineWidth = 1.5
+      // 竖线（从第 N 格开始，到第 (M-1)*N 格结束）
+      for (let i = gridInterval; i < N; i += gridInterval) {
+        const x = gridOffsetX + i * cellSize
+        ctx.beginPath()
+        ctx.moveTo(x, gridOffsetY)
+        ctx.lineTo(x, gridOffsetY + gridHeight)
+        ctx.stroke()
+      }
+      // 横线（从第 N 格开始，到第 (M-1)*N 格结束）
+      for (let j = gridInterval; j < M; j += gridInterval) {
+        const y = gridOffsetY + j * cellSize
+        ctx.beginPath()
+        ctx.moveTo(gridOffsetX, y)
+        ctx.lineTo(gridOffsetX + gridWidth, y)
+        ctx.stroke()
+      }
+    }
+
+    // 网格外边框
+    ctx.strokeStyle = '#000000'
     ctx.lineWidth = 1.5
-    // 竖线（从第 N 格开始，到第 (M-1)*N 格结束）
-    for (let i = gridInterval; i < N; i += gridInterval) {
-      const x = gridOffsetX + i * cellSize
+    ctx.strokeRect(gridOffsetX, gridOffsetY, gridWidth, gridHeight)
+
+    // 统计区域
+    if (includeStats && colorCounts) {
+      const statsY = gridOffsetY + gridHeight + axisLabelSize * 2
+      ctx.fillStyle = '#F9FAFB'
+      ctx.fillRect(0, statsY, downloadWidth, statsHeight)
+      ctx.strokeStyle = '#E5E7EB'
+      ctx.lineWidth = 1
       ctx.beginPath()
-      ctx.moveTo(x, gridOffsetY)
-      ctx.lineTo(x, gridOffsetY + gridHeight)
+      ctx.moveTo(0, statsY)
+      ctx.lineTo(downloadWidth, statsY)
       ctx.stroke()
-    }
-    // 横线（从第 N 格开始，到第 (M-1)*N 格结束）
-    for (let j = gridInterval; j < M; j += gridInterval) {
-      const y = gridOffsetY + j * cellSize
-      ctx.beginPath()
-      ctx.moveTo(gridOffsetX, y)
-      ctx.lineTo(gridOffsetX + gridWidth, y)
-      ctx.stroke()
-    }
-  }
 
-
-
-  // 网格外边框
-  ctx.strokeStyle = '#000000'
-  ctx.lineWidth = 1.5
-  ctx.strokeRect(gridOffsetX, gridOffsetY, gridWidth, gridHeight)
-
-  // 统计区域
-  if (includeStats && colorCounts) {
-    const statsY = gridOffsetY + gridHeight + axisLabelSize * 2
-    ctx.fillStyle = '#F9FAFB'
-    ctx.fillRect(0, statsY, downloadWidth, statsHeight)
-    ctx.strokeStyle = '#E5E7EB'
-    ctx.lineWidth = 1
-    ctx.beginPath()
-    ctx.moveTo(0, statsY)
-    ctx.lineTo(downloadWidth, statsY)
-    ctx.stroke()
-
-    ctx.fillStyle = '#374151'
-    ctx.font = '600 14px system-ui, sans-serif'
-    ctx.textAlign = 'left'
-    ctx.textBaseline = 'top'
-    ctx.fillText(`颜色统计 — 共 ${Object.keys(colorCounts).length} 种颜色，${totalBeadCount} 粒`, 20, statsY + 12)
-
-    // 总计行
-    ctx.fillStyle = '#6B7280'
-    ctx.font = '400 12px system-ui, sans-serif'
-    ctx.textAlign = 'right'
-    ctx.textBaseline = 'top'
-    ctx.fillText(`总计: ${totalBeadCount} 颗`, downloadWidth - 20, statsY + 12)
-
-    const sortedKeys = Object.keys(colorCounts).sort(sortColorKeys)
-    const numColumns = Math.max(1, Math.min(4, Math.floor((gridWidth - 40) / 250)))
-    const colWidth = (gridWidth - 40) / numColumns
-    const swatchSize = 16
-    const rowHeight = 24
-    const startY = statsY + 40
-
-    sortedKeys.forEach((hex, idx) => {
-      const col = idx % numColumns
-      const row = Math.floor(idx / numColumns)
-      const x = 20 + col * colWidth
-      const y = startY + row * rowHeight
-
-      ctx.fillStyle = hex
-      ctx.beginPath()
-      ctx.roundRect(x, y, swatchSize, swatchSize, 3)
-      ctx.fill()
-
-      const displayKey = getColorKeyByHex(hex, selectedColorSystem)
       ctx.fillStyle = '#374151'
-      ctx.font = '12px sans-serif'
+      ctx.font = '600 14px system-ui, sans-serif'
       ctx.textAlign = 'left'
-      ctx.textBaseline = 'middle'
-      ctx.fillText(`${displayKey} (${colorCounts[hex].count})`, x + swatchSize + 6, y + swatchSize / 2)
-    })
+      ctx.textBaseline = 'top'
+      ctx.fillText(`颜色统计 — 共 ${Object.keys(colorCounts).length} 种颜色，${totalBeadCount} 粒`, 20, statsY + 12)
+
+      // 总计行
+      ctx.fillStyle = '#6B7280'
+      ctx.font = '400 12px system-ui, sans-serif'
+      ctx.textAlign = 'right'
+      ctx.textBaseline = 'top'
+      ctx.fillText(`总计: ${totalBeadCount} 颗`, downloadWidth - 20, statsY + 12)
+
+      const sortedKeys = Object.keys(colorCounts).sort(sortColorKeys)
+      const numColumns = Math.max(1, Math.min(4, Math.floor((gridWidth - 40) / 250)))
+      const colWidth = (gridWidth - 40) / numColumns
+      const swatchSize = 16
+      const rowHeight = 24
+      const startY = statsY + 40
+
+      sortedKeys.forEach((hex, idx) => {
+        const col = idx % numColumns
+        const row = Math.floor(idx / numColumns)
+        const x = 20 + col * colWidth
+        const y = startY + row * rowHeight
+
+        ctx.fillStyle = hex
+        ctx.beginPath()
+        ctx.roundRect(x, y, swatchSize, swatchSize, 3)
+        ctx.fill()
+
+        const displayKey = getColorKeyByHex(hex, selectedColorSystem)
+        ctx.fillStyle = '#374151'
+        ctx.font = '12px sans-serif'
+        ctx.textAlign = 'left'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(`${displayKey} (${colorCounts[hex].count})`, x + swatchSize + 6, y + swatchSize / 2)
+      })
+    }
+
+    // 底部标识
+    ctx.fillStyle = '#9CA3AF'
+    ctx.font = '10px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'bottom'
+    ctx.fillText('由 PIXBEADS 生成', downloadWidth / 2, downloadHeight - 8)
+
+    // 触发下载
+    triggerImageDownload(canvas, `pixbeads-pattern-${N}x${M}.png`)
   }
 
-  // 小红书标识
-  ctx.fillStyle = '#9CA3AF'
-  ctx.font = '10px sans-serif'
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'bottom'
-  ctx.fillText('由 PIXBEADS 生成', downloadWidth / 2, downloadHeight - 8)
-
-  // 触发下载
-  triggerImageDownload(canvas, `pixbeads-pattern-${N}x${M}.png`)
+  logoImg.onload = () => {
+    ctx.drawImage(logoImg, 12, 16, 40, 40)
+    drawRest()
+  }
+  logoImg.onerror = () => {
+    // 图标加载失败时使用备用文字
+    ctx.fillStyle = '#FFFFFF'
+    ctx.font = '700 24px system-ui, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('P', brandWidth / 2, 40)
+    drawRest()
+  }
 }
 
 /**
@@ -294,8 +298,7 @@ export function downloadStatsImage({
   const canvas = document.createElement('canvas')
   canvas.width = numColumns * colWidth + padding * 2
   canvas.height = 80 + numRows * rowHeight + padding * 2
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return
+  const ctx = canvas.getContext('2d')!
 
   ctx.fillStyle = '#FFFFFF'
   ctx.fillRect(0, 0, canvas.width, canvas.height)

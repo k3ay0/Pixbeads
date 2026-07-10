@@ -1,0 +1,19 @@
+{
+    "background_color": "#ffffff",
+    "display": "standalone",
+    "icons": [
+        {
+            "sizes": "192x192",
+            "src": "/logos/android-chrome-192x192.png",
+            "type": "image/png"
+        },
+        {
+            "sizes": "512x512",
+            "src": "/logos/android-chrome-512x512.png",
+            "type": "image/png"
+        }
+    ],
+    "name": "Pixbeads",
+    "short_name": "Pixbeads",
+    "theme_color": "#ffffff"
+}

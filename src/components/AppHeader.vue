@@ -59,12 +59,7 @@ function handleDownloadStats() {
     <div class="mx-auto w-full h-full px-2 sm:px-4 flex items-center gap-2 sm:gap-3">
       <!-- Logo -->
       <div class="flex items-center gap-2 flex-shrink-0">
-        <div class="grid grid-cols-2 gap-0.5 p-1.5 rounded-md bg-black/[0.04] border border-black/[0.06]">
-          <span class="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
-          <span class="w-1.5 h-1.5 rounded-full bg-pink-400"></span>
-          <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
-          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-        </div>
+        <img src="/logos/favicon.ico" alt="Pixbeads" class="w-7 h-7 rounded-md" />
         <span class="hidden md:inline text-sm font-semibold text-black">PIXBEADS</span>
       </div>
 
