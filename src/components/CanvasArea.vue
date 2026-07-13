@@ -7,8 +7,7 @@ import { useEditorStore } from '../stores/editorStore'
 import { useUiStore } from '../stores/uiStore'
 import { useFocusStore } from '../stores/focusStore'
 import { useCanvasTransform } from '../composables/useCanvasTransform'
-import { calculateVisibleColumns, calculateVisibleRows } from '../utils/canvasUtils'
-import { CELL_SIZE, AXIS_WIDTH, AXIS_HEIGHT, MIN_ZOOM, MAX_ZOOM } from '../constants/canvasConstants'
+import { CELL_SIZE, MIN_ZOOM, MAX_ZOOM } from '../constants/canvasConstants'
 import FocusCanvas from './FocusCanvas.vue'
 import FocusToolBar from './FocusToolBar.vue'
 import FocusColorRing from './FocusColorRing.vue'
@@ -38,17 +37,7 @@ const { activeMode } = storeToRefs(uiStore)
 const previewOverlayCanvas = ref<HTMLCanvasElement | null>(null)
 
 defineExpose({ previewOverlayCanvas })
-const { currentColor, completedCells, recommendedCell, recommendedRegion, canvasScale, canvasOffset, gridSectionInterval, showSectionLines, sectionLineColor, availableColors, showCelebration, celebrationData } = storeToRefs(focusStore)
-
-const visibleColumns = computed(() => {
-  if (!gridDimensions.value || !canvasContainer.value) return []
-  return calculateVisibleColumns(gridDimensions.value.N, canvasContainer.value.clientWidth, canvasTranslate.value.x, canvasZoom.value)
-})
-
-const visibleRows = computed(() => {
-  if (!gridDimensions.value || !canvasContainer.value) return []
-  return calculateVisibleRows(gridDimensions.value.M, canvasContainer.value.clientHeight, canvasTranslate.value.y, canvasZoom.value)
-})
+const { currentColor, completedCells, recommendedCell, recommendedRegion, canvasScale, canvasOffset, gridSectionInterval, showSectionLines, sectionLineColor, showCoordinates, availableColors, showCelebration, celebrationData } = storeToRefs(focusStore)
 
 function handleCanvasWheel(e: WheelEvent) { canvasTransform.handleCanvasWheel(e) }
 function handleCanvasDragStart(e: MouseEvent) {
@@ -118,34 +107,13 @@ function handleCellClick(row: number, col: number) { focusStore.handleCellClick(
           @mouseup="handleCanvasDragEnd"
           @mouseleave="handleCanvasDragEnd"
         >
-          <!-- Top row axis -->
-          <div class="absolute top-0 left-0 right-0 bg-white border-b border-black/10 z-10 flex" :style="{ height: AXIS_HEIGHT + 'px' }">
-            <div :style="{ width: AXIS_WIDTH + 'px' }" class="flex-shrink-0"></div>
-            <div class="flex-1 relative overflow-hidden">
-              <div class="absolute" :style="{ transform: `translateX(${canvasTranslate.x}px)`, width: `${(gridDimensions?.N || 0) * CELL_SIZE * canvasZoom}px`, height: '100%' }">
-                <div v-for="col in visibleColumns" :key="'col-' + col" class="absolute text-[10px] text-black/50" :style="{ left: (col - 1) * CELL_SIZE * canvasZoom + 'px' }">{{ col }}</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Left column axis -->
-          <div class="absolute top-0 left-0 bottom-0 bg-white border-r border-black/10 z-10" :style="{ width: AXIS_WIDTH + 'px', top: AXIS_HEIGHT + 'px' }">
-            <div class="relative overflow-hidden h-full">
-              <div class="absolute" :style="{ transform: `translateY(${canvasTranslate.y}px)`, width: '100%', height: `${(gridDimensions?.M || 0) * CELL_SIZE * canvasZoom}px` }">
-                <div v-for="row in visibleRows" :key="'row-' + row" class="absolute text-[10px] text-black/50 text-right pr-1" :style="{ top: (row - 1) * CELL_SIZE * canvasZoom + 'px', width: AXIS_WIDTH + 'px' }">{{ row }}</div>
-              </div>
-            </div>
-          </div>
-
           <!-- Canvas -->
-          <div class="absolute overflow-hidden" :style="{ top: AXIS_HEIGHT + 'px', left: AXIS_WIDTH + 'px', right: 0, bottom: 0, backgroundColor: '#F0F0F0', backgroundImage: 'linear-gradient(45deg, #FFFFFF 25%, transparent 25%), linear-gradient(-45deg, #FFFFFF 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #FFFFFF 75%), linear-gradient(-45deg, transparent 75%, #FFFFFF 75%)', backgroundSize: '16px 16px', backgroundPosition: '0 0, 0 8px, 8px -8px, -8px 0px' }">
+          <div class="absolute overflow-hidden inset-0" :style="{ backgroundColor: '#F0F0F0', backgroundImage: 'linear-gradient(45deg, #FFFFFF 25%, transparent 25%), linear-gradient(-45deg, #FFFFFF 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #FFFFFF 75%), linear-gradient(-45deg, transparent 75%, #FFFFFF 75%)', backgroundSize: '16px 16px', backgroundPosition: '0 0, 0 8px, 8px -8px, -8px 0px' }">
             <canvas
               ref="previewCanvas"
               class="block"
               :style="{
                 imageRendering: 'pixelated',
-                transform: `translate(${canvasTranslate.x}px, ${canvasTranslate.y}px) scale(${canvasZoom})`,
-                transformOrigin: '0 0',
                 cursor: isDragging ? 'grabbing' : (
                   activeMode === 'edit' ? (
                     manualTool === 'picker' ? 'crosshair' :
@@ -172,10 +140,6 @@ function handleCellClick(row: number, col: number) { focusStore.handleCellClick(
               class="block pointer-events-none absolute top-0 left-0"
               :style="{
                 imageRendering: 'pixelated',
-                transform: `translate(${canvasTranslate.x}px, ${canvasTranslate.y}px) scale(${canvasZoom})`,
-                transformOrigin: '0 0',
-                width: previewCanvas ? previewCanvas.width + 'px' : '0',
-                height: previewCanvas ? previewCanvas.height + 'px' : '0',
               }"
             ></canvas>
           </div>
@@ -213,6 +177,7 @@ function handleCellClick(row: number, col: number) { focusStore.handleCellClick(
           :grid-section-interval="gridSectionInterval"
           :show-section-lines="showSectionLines"
           :section-line-color="sectionLineColor"
+          :show-coordinates="showCoordinates"
           @cell-click="handleCellClick"
           @scale-change="(s) => (canvasScale = s)"
           @offset-change="(o) => (canvasOffset = o)"

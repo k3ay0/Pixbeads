@@ -31,6 +31,9 @@ export const useFocusStore = defineStore('focus', () => {
   const gridSectionInterval = ref(10)
   const showSectionLines = ref(true)
   const sectionLineColor = ref('#007acc')
+  const showCoordinates = ref(true)
+  const coordinateInterval = ref(1)
+  const showColorCodes = ref(true)
   const availableColors = ref<Array<{ color: string; name: string; total: number; completed: number }>>([])
   const showSettings = ref(false)
   const showConfetti = ref(true)
@@ -225,6 +228,12 @@ export const useFocusStore = defineStore('focus', () => {
         : c
     )
 
+    // 只有点击的是当前推荐区域才重新计算推荐区域（跳转到下一个未完成区域）
+    const isCurrentRecommended = recommendedRegion.value?.some(c => c.row === row && c.col === col)
+    if (isCurrentRecommended) {
+      calculateRecommendedRegion(mappedPixelData)
+    }
+
     if (newProgress[currentColor.value]?.completed >= newProgress[currentColor.value]?.total) {
       // 触发庆祝动画
       if (showConfetti.value) {
@@ -357,6 +366,9 @@ export const useFocusStore = defineStore('focus', () => {
     gridSectionInterval,
     showSectionLines,
     sectionLineColor,
+    showCoordinates,
+    coordinateInterval,
+    showColorCodes,
     availableColors,
     showSettings,
     showConfetti,
