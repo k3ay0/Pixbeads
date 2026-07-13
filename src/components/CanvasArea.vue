@@ -37,7 +37,7 @@ const { activeMode } = storeToRefs(uiStore)
 const previewOverlayCanvas = ref<HTMLCanvasElement | null>(null)
 
 defineExpose({ previewOverlayCanvas })
-const { currentColor, completedCells, recommendedCell, recommendedRegion, canvasScale, canvasOffset, gridSectionInterval, showSectionLines, sectionLineColor, showCoordinates, availableColors, showCelebration, celebrationData } = storeToRefs(focusStore)
+const { currentColor, completedCells, recommendedCell, recommendedRegion, canvasScale, canvasOffset, gridSectionInterval, showSectionLines, sectionLineColor, showCoordinates, coordinateInterval, showColorCodes, availableColors, showCelebration, celebrationData } = storeToRefs(focusStore)
 
 function handleCanvasWheel(e: WheelEvent) { canvasTransform.handleCanvasWheel(e) }
 function handleCanvasDragStart(e: MouseEvent) {
@@ -178,6 +178,8 @@ function handleCellClick(row: number, col: number) { focusStore.handleCellClick(
           :show-section-lines="showSectionLines"
           :section-line-color="sectionLineColor"
           :show-coordinates="showCoordinates"
+          :coordinate-interval="coordinateInterval"
+          :show-color-codes="showColorCodes"
           @cell-click="handleCellClick"
           @scale-change="(s) => (canvasScale = s)"
           @offset-change="(o) => (canvasOffset = o)"

@@ -186,7 +186,7 @@ function setSectionLineColor(color: string) {
             class="flex-1 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none accent-green-500"
             type="range"
           />
-          <span class="text-xs text-gray-500 dark:text-gray-400 tabular-nums w-7 text-right">{{ coordinateInterval }}</span>
+          <span class="text-xs text-gray-500 dark:text-gray-400 tabular-nums w-7 text-right">{{ coordinateInterval === 1 ? '连续' : coordinateInterval }}</span>
         </div>
       </div>
 

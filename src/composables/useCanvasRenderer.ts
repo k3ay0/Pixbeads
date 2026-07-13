@@ -3,7 +3,7 @@
  * 提供主画布和预览覆盖层的渲染逻辑
  */
 
-import { ref, type Ref } from 'vue'
+import { ref, watch, type Ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useBeadStore } from '@/stores/beadStore'
 import { useCanvasStore } from '@/stores/canvasStore'
@@ -42,6 +42,11 @@ export function useCanvasRenderer(
   const { activeMode } = storeToRefs(uiStore)
   const { showCoordinates, coordinateInterval, showColorCodes } = storeToRefs(focusStore)
   const { selectedColorSystem } = storeToRefs(paletteStore)
+
+  // 监听显示设置变化，触发重绘
+  watch([showCoordinates, coordinateInterval, showColorCodes], () => {
+    scheduleRender()
+  })
 
   let renderScheduled = false
 
@@ -110,7 +115,7 @@ export function useCanvasRenderer(
       if (showColorCodes.value) {
         const displayKey = getDisplayKey(cell, selectedColorSystem.value)
         if (displayKey && displayKey !== '?') {
-          const fontSize = Math.max(6, Math.floor(CELL_SIZE * 0.5))
+          const fontSize = Math.max(4, Math.floor(CELL_SIZE * 0.45))
           ctx.fillStyle = getContrastColor(cell.color)
           ctx.font = `${fontSize}px sans-serif`
           ctx.textAlign = 'center'
@@ -124,10 +129,10 @@ export function useCanvasRenderer(
 
     // 绘制坐标标签（四周显示）
     if (showCoordinates.value) {
-      const fontSize = Math.max(9, Math.min(12, Math.floor(CELL_SIZE * 0.7)))
+      const fontSize = Math.max(6, Math.min(9, Math.floor(CELL_SIZE * 0.6)))
       const maxNum = Math.max(N, M)
       const digits = maxNum.toString().length
-      const al = Math.max(fontSize + 4, Math.floor(digits * fontSize * 0.6 + 4))
+      const al = Math.max(fontSize + 3, Math.floor(digits * fontSize * 0.6 + 3))
       ctx.fillStyle = '#F5F5F5'
       // 上方列号背景
       ctx.fillRect(0, -al, gridW, al)
@@ -143,22 +148,24 @@ export function useCanvasRenderer(
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
 
-      // 使用用户设定的间隔
-      const interval = Math.max(1, coordinateInterval.value)
-
+      // 间隔逻辑：n=1 连续显示，n>1 时第一格(index0)始终显示，之后每隔n格显示
+      const n = coordinateInterval.value
       // 列号（上方和下方）
-      for (let i = 0; i < N; i += interval) {
-        const x = i * CELL_SIZE + CELL_SIZE / 2
-        ctx.fillText((i + 1).toString(), x, -al / 2)
-        ctx.fillText((i + 1).toString(), x, gridH + al / 2)
+      let ci = 0
+      while (ci < N) {
+        const x = ci * CELL_SIZE + CELL_SIZE / 2
+        ctx.fillText((ci + 1).toString(), x, -al / 2)
+        ctx.fillText((ci + 1).toString(), x, gridH + al / 2)
+        ci = n <= 1 ? ci + 1 : (ci === 0 ? n - 1 : ci + n)
       }
-
       // 行号（左侧和右侧）
-      for (let j = 0; j < M; j += interval) {
-        const y = j * CELL_SIZE + CELL_SIZE / 2
+      let cj = 0
+      while (cj < M) {
+        const y = cj * CELL_SIZE + CELL_SIZE / 2
         ctx.textAlign = 'center'
-        ctx.fillText((j + 1).toString(), -al / 2, y)
-        ctx.fillText((j + 1).toString(), gridW + al / 2, y)
+        ctx.fillText((cj + 1).toString(), -al / 2, y)
+        ctx.fillText((cj + 1).toString(), gridW + al / 2, y)
+        cj = n <= 1 ? cj + 1 : (cj === 0 ? n - 1 : cj + n)
       }
     }
 

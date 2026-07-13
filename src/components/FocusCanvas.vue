@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import type { MappedPixel, GridDimensions } from '../types'
+import { getDisplayKey } from '../utils/colorSystemUtils'
+import { getContrastColor } from '../utils/colorUtils'
 
 const props = withDefaults(defineProps<{
   mappedPixelData: MappedPixel[][] | null
@@ -15,6 +17,8 @@ const props = withDefaults(defineProps<{
   showSectionLines?: boolean
   sectionLineColor?: string
   showCoordinates?: boolean
+  coordinateInterval?: number
+  showColorCodes?: boolean
 }>(), {
   currentColor: '',
   completedCells: () => new Set(),
@@ -26,6 +30,8 @@ const props = withDefaults(defineProps<{
   showSectionLines: true,
   sectionLineColor: '#007acc',
   showCoordinates: true,
+  coordinateInterval: 1,
+  showColorCodes: true,
 })
 
 const emit = defineEmits(['cellClick', 'scaleChange', 'offsetChange'])
@@ -208,17 +214,25 @@ function renderCanvas() {
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
 
-  for (let i = 0; i < N; i++) {
-   const x = al + i * cs + cs / 2
-   ctx.fillText((i + 1).toString(), x, al / 2)
-   ctx.fillText((i + 1).toString(), x, al + gridHeight + al / 2)
+  const n = props.coordinateInterval
+
+  // 间隔逻辑：n=1 连续显示，n>1 时第一格(index0)始终显示，之后每隔n格显示
+  let ci = 0
+  while (ci < N) {
+   const x = al + ci * cs + cs / 2
+   ctx.fillText((ci + 1).toString(), x, al / 2)
+   ctx.fillText((ci + 1).toString(), x, al + gridHeight + al / 2)
+   ci = n <= 1 ? ci + 1 : (ci === 0 ? n - 1 : ci + n)
   }
 
-  for (let j = 0; j < M; j++) {
-   const y = al + j * cs + cs / 2
+  // 行号
+  let cj = 0
+  while (cj < M) {
+   const y = al + cj * cs + cs / 2
    ctx.textAlign = 'center'
-   ctx.fillText((j + 1).toString(), al / 2, y)
-   ctx.fillText((j + 1).toString(), al + gridWidth + al / 2, y)
+   ctx.fillText((cj + 1).toString(), al / 2, y)
+   ctx.fillText((cj + 1).toString(), al + gridWidth + al / 2, y)
+   cj = n <= 1 ? cj + 1 : (cj === 0 ? n - 1 : cj + n)
   }
  }
 
@@ -261,6 +275,19 @@ function renderCanvas() {
     } else if (regionSet.has(cellKey)) {
      ctx.fillStyle = getDarkComplementaryColor(props.currentColor)
      ctx.fillRect(x, y, cs, cs)
+    }
+   }
+
+   // 色号文字
+   if (props.showColorCodes) {
+    const displayKey = getDisplayKey(pixel, 'MARD')
+    if (displayKey && displayKey !== '?') {
+     const fontSize = Math.max(6, Math.floor(cs * 0.5))
+     ctx.fillStyle = getContrastColor(pixel.color)
+     ctx.font = `${fontSize}px sans-serif`
+     ctx.textAlign = 'center'
+     ctx.textBaseline = 'middle'
+     ctx.fillText(displayKey, x + cs / 2, y + cs / 2)
     }
    }
   }
@@ -356,6 +383,8 @@ watch(
   () => props.showSectionLines,
   () => props.sectionLineColor,
   () => props.showCoordinates,
+  () => props.coordinateInterval,
+  () => props.showColorCodes,
   () => props.canvasScale,
   () => props.canvasOffset,
  ],
