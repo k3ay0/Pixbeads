@@ -184,18 +184,16 @@ function renderCanvas() {
  const fitScale = Math.min(containerW / totalWidth, containerH / totalHeight)
 
  // 原生缩放 = DPR × 适配缩放 × 用户缩放
- const totalScale = dpr * fitScale * props.canvasScale
- ctx.scale(totalScale, totalScale)
- ctx.translate(
-  props.canvasOffset.x / (fitScale * props.canvasScale),
-  props.canvasOffset.y / (fitScale * props.canvasScale)
- )
- ctx.clearRect(
-  -props.canvasOffset.x / (fitScale * props.canvasScale) - 10,
-  -props.canvasOffset.y / (fitScale * props.canvasScale) - 10,
-  totalWidth + 20,
-  totalHeight + 20
- )
+  const totalScale = dpr * fitScale * props.canvasScale
+  ctx.scale(totalScale, totalScale)
+  // canvasOffset 单位与逻辑坐标一致，直接作为 translate 偏移
+  ctx.translate(props.canvasOffset.x, props.canvasOffset.y)
+  ctx.clearRect(
+   -props.canvasOffset.x - 10,
+   -props.canvasOffset.y - 10,
+   totalWidth + 20,
+   totalHeight + 20
+  )
 
  // 网格实际绘制区域（考虑坐标标签边距）
  const gridOffsetX = al
@@ -421,6 +419,28 @@ function getFitScale(): number {
  const totalH = al + M * cs + al
  return Math.min(containerRef.value.clientWidth / totalW, containerRef.value.clientHeight / totalH)
 }
+
+// 使用 canvas 原生参数计算居中偏移，将指定格子置于容器中心
+function centerOnCell(row: number, col: number): { x: number; y: number } | null {
+ if (!containerRef.value || !props.gridDimensions) return null
+ const { N, M } = props.gridDimensions
+ const cs = cellSize.value
+ const al = axisLabelSize.value
+ const containerW = containerRef.value.clientWidth
+ const containerH = containerRef.value.clientHeight
+ const fitScale = Math.min(containerW / (al + N * cs + al), containerH / (al + M * cs + al))
+ const effectiveScale = fitScale * props.canvasScale
+ // 目标格子中心的逻辑坐标
+ const targetX = al + col * cs + cs / 2
+ const targetY = al + row * cs + cs / 2
+ // 居中偏移：使目标逻辑坐标映射到容器中心
+ return {
+  x: containerW / (2 * effectiveScale) - targetX,
+  y: containerH / (2 * effectiveScale) - targetY,
+ }
+}
+
+defineExpose({ centerOnCell })
 
 // 将屏幕坐标转换为画布逻辑坐标（考虑 fitScale、缩放和平移）
 function getEventPosition(event: MouseEvent | TouchEvent) {

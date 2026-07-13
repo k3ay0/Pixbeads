@@ -35,6 +35,7 @@ const { isManualColoringMode, manualTool } = storeToRefs(editorStore)
 const { activeMode } = storeToRefs(uiStore)
 
 const previewOverlayCanvas = ref<HTMLCanvasElement | null>(null)
+const focusCanvasRef = ref<InstanceType<typeof FocusCanvas> | null>(null)
 
 defineExpose({ previewOverlayCanvas })
 const { currentColor, completedCells, recommendedCell, recommendedRegion, canvasScale, canvasOffset, gridSectionInterval, showSectionLines, sectionLineColor, showCoordinates, coordinateInterval, showColorCodes, availableColors, showCelebration, celebrationData } = storeToRefs(focusStore)
@@ -58,6 +59,13 @@ function handleCanvasLeave() {
 }
 function resetCanvasView() { canvasTransform.resetCanvasView() }
 function handleCellClick(row: number, col: number) { focusStore.handleCellClick(row, col, mappedPixelData.value) }
+function handleLocate() {
+ if (!recommendedCell.value || !focusCanvasRef.value) return
+ const offset = focusCanvasRef.value.centerOnCell(recommendedCell.value.row, recommendedCell.value.col)
+ if (offset) {
+  canvasOffset.value = offset
+ }
+}
 </script>
 
 <template>
@@ -166,6 +174,7 @@ function handleCellClick(row: number, col: number) { focusStore.handleCellClick(
       <!-- Focus mode canvas -->
       <div v-else class="flex-1 relative overflow-hidden">
         <FocusCanvas
+          ref="focusCanvasRef"
           :mapped-pixel-data="mappedPixelData"
           :grid-dimensions="gridDimensions"
           :current-color="currentColor"
@@ -189,7 +198,7 @@ function handleCellClick(row: number, col: number) { focusStore.handleCellClick(
         <div class="absolute inset-0 pointer-events-none z-10">
           <!-- Top toolbar -->
           <FocusToolBar
-            @locate="focusStore.handleLocateRecommended(gridDimensions)"
+            @locate="handleLocate"
             @toggle-settings="focusStore.showSettings = !focusStore.showSettings"
           />
 

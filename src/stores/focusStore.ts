@@ -271,16 +271,9 @@ export const useFocusStore = defineStore('focus', () => {
     showColorPanel.value = false
   }
 
-  function handleLocateRecommended(gridDimensions: { N: number; M: number } | null) {
-    if (!recommendedCell.value || !gridDimensions) return
-    const { row, col } = recommendedCell.value
-    const cellSize = Math.max(15, Math.min(40, 300 / Math.max(gridDimensions.N, gridDimensions.M)))
-    const cx = (col + 0.5) * cellSize
-    const cy = (row + 0.5) * cellSize
-    canvasOffset.value = {
-      x: gridDimensions.N * cellSize / 2 - cx,
-      y: gridDimensions.M * cellSize / 2 - cy
-    }
+  // locate 功能已移至 FocusCanvas.centerOnCell()，使用 canvas 原生参数计算
+  function handleLocateRecommended(_gridDimensions: { N: number; M: number } | null) {
+    // 保留方法签名以兼容，实际定位逻辑在 FocusCanvas 中
   }
 
   function markCurrentColorComplete(mappedPixelData: MappedPixel[][] | null) {
@@ -343,6 +336,57 @@ export const useFocusStore = defineStore('focus', () => {
     }
   }
 
+  function completeEntireCurrentColor(mappedPixelData: MappedPixel[][] | null) {
+    if (!mappedPixelData || !currentColor.value) return
+
+    const newSet = new Set(completedCells.value)
+
+    // 标记当前颜色的所有格子为完成
+    for (let r = 0; r < mappedPixelData.length; r++) {
+      for (let c = 0; c < mappedPixelData[r].length; c++) {
+        if (mappedPixelData[r][c]?.color === currentColor.value) {
+          newSet.add(`${r},${c}`)
+        }
+      }
+    }
+
+    const newProgress = { ...colorProgress.value }
+    if (newProgress[currentColor.value]) {
+      newProgress[currentColor.value] = {
+        ...newProgress[currentColor.value],
+        completed: newProgress[currentColor.value].total,
+      }
+    }
+
+    completedCells.value = newSet
+    colorProgress.value = newProgress
+
+    // 更新 availableColors
+    availableColors.value = availableColors.value.map(c =>
+      c.color === currentColor.value
+        ? { ...c, completed: newProgress[currentColor.value]?.completed || 0 }
+        : c
+    )
+
+    // 触发庆祝动画
+    if (showConfetti.value) {
+      const colorInfo = availableColors.value.find(c => c.color === currentColor.value)
+      if (colorInfo) {
+        celebrationData.value = {
+          colorName: colorInfo.name,
+          colorHex: colorInfo.color,
+          completed: colorInfo.completed,
+          total: colorInfo.total,
+        }
+        showCelebration.value = true
+      }
+    }
+
+    // 重新计算推荐区域并切换到下一个颜色
+    calculateRecommendedRegion(mappedPixelData)
+    switchToNextIncompleteColor()
+  }
+
   function closeCelebration() {
     showCelebration.value = false
     celebrationData.value = null
@@ -392,6 +436,7 @@ export const useFocusStore = defineStore('focus', () => {
     handleFocusColorChange,
     handleLocateRecommended,
     markCurrentColorComplete,
+    completeEntireCurrentColor,
     closeCelebration,
   }
 })
