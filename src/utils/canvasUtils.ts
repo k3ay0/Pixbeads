@@ -8,27 +8,34 @@ import { CELL_SIZE, AXIS_WIDTH, AXIS_HEIGHT, AXIS_MIN_PIXEL_GAP } from '@/consta
 
 /**
  * 将鼠标/触摸坐标转换为画布内的格子坐标
+ * 通过 canvas 原生 ctx.scale/ctx.translate 实现缩放和拖拽
  */
 export function clientToGridCoords(
   clientX: number,
   clientY: number,
   canvas: HTMLCanvasElement,
-  gridDimensions: GridDimensions
+  gridDimensions: GridDimensions,
+  zoom: number = 1,
+  translate: { x: number; y: number } = { x: 0, y: 0 }
 ): { i: number; j: number } | null {
   const rect = canvas.getBoundingClientRect()
-  const scaleX = canvas.width / rect.width
-  const scaleY = canvas.height / rect.height
-  const canvasX = (clientX - rect.left) * scaleX
-  const canvasY = (clientY - rect.top) * scaleY
+  const screenX = clientX - rect.left
+  const screenY = clientY - rect.top
 
   const { N, M } = gridDimensions
-  const cellWidthOutput = canvas.width / N
-  const cellHeightOutput = canvas.height / M
+  const gridW = N * CELL_SIZE
+  const gridH = M * CELL_SIZE
+  const containerW = rect.width
+  const containerH = rect.height
+  const fitScale = Math.min(containerW / gridW, containerH / gridH)
 
-  const i = Math.floor(canvasX / cellWidthOutput)
-  const j = Math.floor(canvasY / cellHeightOutput)
+  // 屏幕坐标 → 网格逻辑坐标
+  const canvasX = (screenX - translate.x) / (fitScale * zoom)
+  const canvasY = (screenY - translate.y) / (fitScale * zoom)
 
-  // 检查是否在有效范围内
+  const i = Math.floor(canvasX / CELL_SIZE)
+  const j = Math.floor(canvasY / CELL_SIZE)
+
   if (i >= 0 && i < N && j >= 0 && j < M) {
     return { i, j }
   }
