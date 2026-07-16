@@ -6,6 +6,9 @@ import { join } from "node:path"
 
 const host = process.env.TAURI_DEV_HOST
 
+// GitHub Pages 部署时使用仓库名作为 base 路径，本地使用根路径
+const BASE = process.env.IS_GITHUB_PAGES === 'true' ? '/Pixbeads/' : '/'
+
 //serve index.html for any 404 route
 function spaFallback() {
   return {
@@ -19,7 +22,7 @@ function spaFallback() {
 
 export default defineConfig(async () => ({
   plugins: [vue(), spaFallback()],
-  base: './',
+  base: BASE,
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
