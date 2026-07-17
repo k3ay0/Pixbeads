@@ -72,40 +72,36 @@ const fileIO = useFileIO()
 const pixelEditing = usePixelEditing()
 const bgRemoval = useBackgroundRemoval()
 useKeyboardShortcuts()
-const canvasTransform = useCanvasTransform()
 const focusLogic = useFocusModeLogic()
 const { marchingAntsOffset, startMarchingAnts, stopMarchingAnts } = useMarchingAnts()
-const { restoreState, clearState: clearPersistedState } = useStatePersistence()
+const { restoreState } = useStatePersistence()
 const ocrRecognition = useOcrRecognition()
 
 // ========== 从 Store 映射状态 ==========
 const {
   originalImageSrc, showCropper, mappedPixelData, gridDimensions,
-  colorCounts, totalBeadCount, granularity, granularityInput,
-  granularityY, granularityYInput, lockAspectRatio,
-  similarityThreshold, similarityThresholdInput, pixelationMode,
-  isProcessing, processingProgress, croppedImageCanvas,
+  colorCounts, granularity, 
+  granularityY, lockAspectRatio,
+  similarityThreshold, pixelationMode,
+  isProcessing, croppedImageCanvas,
 } = storeToRefs(beadStore)
 
 const {
-  selectedColorSystem, customPaletteSelections, excludedColorKeys,
-  activeBeadPalette, pixelationPalette, showExcludedColors, fullBeadPalette,
+  selectedColorSystem, customPaletteSelections, 
+  pixelationPalette, fullBeadPalette,
 } = storeToRefs(paletteStore)
 
-const {
-  canvasZoom, canvasTranslate, isDragging, tooltipData,
-  previewCanvas,
-} = storeToRefs(canvasStore)
+storeToRefs(canvasStore)
 
 const {
-  isManualColoringMode, selectedEditColor, isEraseMode,
-  colorReplaceState, highlightColorKey,
-  isFloodFillEraseMode, isMagnifierActive,
-  manualTool, manualBrushSize, manualMirrorX, manualMirrorY, manualShapeFill,
-  selectionStart, selectionEnd, manualPasteActive, lineStart, clipboard,
-  lineDrawing, rectDrawing, dragDrawing, currentDrawEnd, selectDrawing,
-  selectionBoxDragging, selectionBoxDragStart, selectionBoxDragOffset,
-  selectionDragging, selectionDragOffset, isCopyingSelection, moveToolMode,
+  selectedEditColor, isEraseMode,
+  highlightColorKey,
+  isMagnifierActive,
+  manualTool
+  
+  
+  
+  ,
 } = storeToRefs(editorStore)
 
 const {
@@ -114,15 +110,9 @@ const {
   toastMessage, downloadOptions, showPaletteEditor
 } = storeToRefs(uiStore)
 
-const {
-  currentColor, canvasScale, canvasOffset,
-  completedCells, recommendedRegion, recommendedCell,
-  showColorPanel, availableColors, gridSectionInterval, showSectionLines, sectionLineColor,
-  progressPercentage, currentColorInfo,
-} = storeToRefs(focusStore)
+storeToRefs(focusStore)
 
 // ========== 本地状态 ==========
-const modes = MODES
 const pendingPbdsData = ref<PbdsImportResult | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 const pbdsFileInput = ref<HTMLInputElement | null>(null)
@@ -143,7 +133,7 @@ const ocrProgress = ref<{ phase: string; percent?: number } | null>(null)
 const ocrError = ref<string | null>(null)
 
 // ========== 初始化 Composables ==========
-const { scheduleRender, renderCanvas, renderPreviewOverlay, clearPreviewOverlay } = useCanvasRenderer(
+const { scheduleRender, renderPreviewOverlay, clearPreviewOverlay } = useCanvasRenderer(
   canvasAreaRef,
   previewOverlayCanvas,
   hoverCell,
@@ -293,17 +283,6 @@ function switchMode(mode: AppMode) {
 }
 
 // 计算属性
-const currentGridColors = computed(() => {
-  if (!mappedPixelData.value) return []
-  const map = new Map()
-  mappedPixelData.value.flat().forEach(cell => {
-    if (cell && cell.color && !cell.isExternal) {
-      const hex = cell.color.toUpperCase()
-      if (!map.has(hex)) map.set(hex, { key: cell.key, color: cell.color })
-    }
-  })
-  return sortColorsByHue(Array.from(map.values()).map(c => ({ key: getColorKeyByHex(c.color, selectedColorSystem.value), color: c.color })))
-})
 
 // Watch
 watch([mappedPixelData, highlightColorKey, () => editorStore.selectionInfo], () => scheduleRender(), { flush: 'post' })

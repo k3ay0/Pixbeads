@@ -14,7 +14,6 @@ export function usePixelEditing() {
   const beadStore = useBeadStore()
   const editorStore = useEditorStore()
   const paletteStore = usePaletteStore()
-  const focusStore = useFocusStore()
   const uiStore = useUiStore()
   const { processImage } = useImageProcessing()
 

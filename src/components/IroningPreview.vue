@@ -18,7 +18,6 @@ const { mappedPixelData, gridDimensions } = storeToRefs(beadStore)
 
 // Canvas refs
 const canvasRef = ref<HTMLCanvasElement | null>(null)
-const containerRef = ref<HTMLDivElement | null>(null)
 
 // Zoom and pan state
 const zoom = ref(1)

@@ -30,11 +30,11 @@ export function useCanvasRenderer(
   const paletteStore = usePaletteStore()
 
   const { mappedPixelData, gridDimensions } = storeToRefs(beadStore)
-  const { previewCanvas, canvasZoom, canvasTranslate } = storeToRefs(canvasStore)
+  const { previewCanvas } = storeToRefs(canvasStore)
   const {
-    selectedEditColor, isEraseMode, manualTool, manualBrushSize,
+    isEraseMode, manualTool, manualBrushSize,
     manualMirrorX, manualMirrorY, highlightColorKey,
-    lineDrawing, rectDrawing, selectDrawing,
+    lineDrawing, rectDrawing, 
     selectionBoxDragging, selectionBoxDragOffset,
     selectionDragging, selectionDragOffset, isCopyingSelection,
     lineStart, selectionStart, currentDrawEnd,
