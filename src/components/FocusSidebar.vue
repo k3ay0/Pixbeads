@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
 import { useFocusStore } from '../stores/focusStore'
+import { useBeadStore } from '../stores/beadStore'
 import ProgressBar from './ProgressBar.vue'
 
 const emit = defineEmits<{
@@ -8,6 +9,7 @@ const emit = defineEmits<{
 }>()
 
 const focusStore = useFocusStore()
+const beadStore = useBeadStore()
 
 const {
   currentColor,
@@ -21,6 +23,9 @@ const {
   gridSectionInterval,
   showSectionLines,
   sectionLineColor,
+  showCoordinates,
+  coordinateInterval,
+  showColorCodes,
   showConfetti,
 } = storeToRefs(focusStore)
 
@@ -55,8 +60,20 @@ function toggleConfetti() {
   showConfetti.value = !showConfetti.value
 }
 
+function toggleCoordinates() {
+  showCoordinates.value = !showCoordinates.value
+}
+
+function toggleColorCodes() {
+  showColorCodes.value = !showColorCodes.value
+}
+
 function setSectionLineColor(color: string) {
   sectionLineColor.value = color
+}
+
+function handleCompleteColor() {
+  focusStore.completeEntireCurrentColor(beadStore.mappedPixelData)
 }
 </script>
 
@@ -68,6 +85,7 @@ function setSectionLineColor(color: string) {
         :progress-percentage="progressPercentage"
         :recommended-cell="recommendedCell"
         :color-info="currentColorInfo"
+        @complete-color="handleCompleteColor"
       />
 
       <!-- Guidance strategy -->
@@ -147,6 +165,36 @@ function setSectionLineColor(color: string) {
               class="absolute top-[3px] w-5 h-5 rounded-full bg-white shadow-sm transition-transform"
               :class="showConfetti ? 'translate-x-[22px]' : 'translate-x-[3px]'"
             />
+          </button>
+        </div>
+      </div>
+
+      <!-- Coordinates toggle -->
+      <div
+        class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 p-4 shadow-sm shadow-gray-200/50 space-y-3">
+        <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">显示设置</h3>
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">显示坐标</h3>
+          <button @click="toggleCoordinates" class="relative w-11 h-[26px] rounded-full transition-colors"
+            :class="showCoordinates ? 'bg-green-500' : 'bg-gray-200 dark:bg-gray-700'">
+            <div class="absolute top-[3px] w-5 h-5 rounded-full bg-white shadow-sm transition-transform"
+              :class="showCoordinates ? 'translate-x-[22px]' : 'translate-x-[3px]'" />
+          </button>
+        </div>
+        <div v-if="showCoordinates" class="flex items-center gap-3">
+          <span class="text-xs text-gray-500 dark:text-gray-400 w-8">间隔</span>
+          <input v-model.number="coordinateInterval" min="1" max="10"
+            class="flex-1 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none accent-green-500"
+            type="range" />
+          <span class="text-xs text-gray-500 dark:text-gray-400 tabular-nums w-7 text-right">{{ coordinateInterval === 1
+            ? '连续' : coordinateInterval }}</span>
+        </div>
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">显示色号</h3>
+          <button @click="toggleColorCodes" class="relative w-11 h-[26px] rounded-full transition-colors"
+            :class="showColorCodes ? 'bg-green-500' : 'bg-gray-200 dark:bg-gray-700'">
+            <div class="absolute top-[3px] w-5 h-5 rounded-full bg-white shadow-sm transition-transform"
+              :class="showColorCodes ? 'translate-x-[22px]' : 'translate-x-[3px]'" />
           </button>
         </div>
       </div>

@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { MIN_ZOOM, MAX_ZOOM, AXIS_WIDTH, AXIS_HEIGHT } from '@/constants/canvasConstants'
+import { MIN_ZOOM, MAX_ZOOM, AXIS_WIDTH, AXIS_HEIGHT, CELL_SIZE } from '@/constants/canvasConstants'
 import { calculateCenterOffset } from '@/utils/canvasUtils'
+import { useBeadStore } from './beadStore'
 
 export interface TooltipData {
   x: number
@@ -73,14 +74,19 @@ export const useCanvasStore = defineStore('canvas', () => {
   function resetView() {
     canvasZoom.value = 1
     const container = canvasContainer.value
-    const canvas = previewCanvas.value
-    if (container && canvas) {
-      canvasTranslate.value = calculateCenterOffset(
-        container.clientWidth,
-        container.clientHeight,
-        canvas.width,
-        canvas.height
-      )
+    const beadStore = useBeadStore()
+    const gd = beadStore.gridDimensions
+    if (container && gd) {
+      const gridW = gd.N * CELL_SIZE
+      const gridH = gd.M * CELL_SIZE
+      const containerW = container.clientWidth
+      const containerH = container.clientHeight
+      const fitScale = Math.min(containerW / gridW, containerH / gridH)
+      // 居中偏移：使缩放后的网格在容器中居中
+      canvasTranslate.value = {
+        x: (containerW - gridW * fitScale) / 2,
+        y: (containerH - gridH * fitScale) / 2
+      }
     } else {
       canvasTranslate.value = { x: 0, y: 0 }
     }
@@ -88,14 +94,18 @@ export const useCanvasStore = defineStore('canvas', () => {
 
   function resetViewToCenter() {
     const container = canvasContainer.value
-    const canvas = previewCanvas.value
-    if (container && canvas) {
-      canvasTranslate.value = calculateCenterOffset(
-        container.clientWidth,
-        container.clientHeight,
-        canvas.width,
-        canvas.height
-      )
+    const beadStore = useBeadStore()
+    const gd = beadStore.gridDimensions
+    if (container && gd) {
+      const gridW = gd.N * CELL_SIZE
+      const gridH = gd.M * CELL_SIZE
+      const containerW = container.clientWidth
+      const containerH = container.clientHeight
+      const fitScale = Math.min(containerW / gridW, containerH / gridH)
+      canvasTranslate.value = {
+        x: (containerW - gridW * fitScale) / 2,
+        y: (containerH - gridH * fitScale) / 2
+      }
     }
   }
 

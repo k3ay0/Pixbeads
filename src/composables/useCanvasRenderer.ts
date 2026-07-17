@@ -3,15 +3,18 @@
  * 提供主画布和预览覆盖层的渲染逻辑
  */
 
-import { ref, type Ref } from 'vue'
+import { ref, watch, type Ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useBeadStore } from '@/stores/beadStore'
 import { useCanvasStore } from '@/stores/canvasStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { useUiStore } from '@/stores/uiStore'
+import { useFocusStore } from '@/stores/focusStore'
+import { usePaletteStore } from '@/stores/paletteStore'
 import { CELL_SIZE } from '@/constants/canvasConstants'
 import { getLinePoints, getRectPoints } from '@/utils/drawingAlgorithms'
-import { getColorKeyByHex } from '@/utils/colorSystemUtils'
+import { getColorKeyByHex, getDisplayKey } from '@/utils/colorSystemUtils'
+import { getContrastColor } from '@/utils/colorUtils'
 
 export function useCanvasRenderer(
   canvasAreaRef: Ref<any>,
@@ -23,6 +26,8 @@ export function useCanvasRenderer(
   const canvasStore = useCanvasStore()
   const editorStore = useEditorStore()
   const uiStore = useUiStore()
+  const focusStore = useFocusStore()
+  const paletteStore = usePaletteStore()
 
   const { mappedPixelData, gridDimensions } = storeToRefs(beadStore)
   const { previewCanvas, canvasZoom, canvasTranslate } = storeToRefs(canvasStore)
@@ -35,6 +40,13 @@ export function useCanvasRenderer(
     lineStart, selectionStart, currentDrawEnd,
   } = storeToRefs(editorStore)
   const { activeMode } = storeToRefs(uiStore)
+  const { showCoordinates, coordinateInterval, showColorCodes } = storeToRefs(focusStore)
+  const { selectedColorSystem } = storeToRefs(paletteStore)
+
+  // 监听显示设置变化，触发重绘
+  watch([showCoordinates, coordinateInterval, showColorCodes], () => {
+    scheduleRender()
+  })
 
   let renderScheduled = false
 
@@ -48,22 +60,115 @@ export function useCanvasRenderer(
     })
   }
 
-  /** 主画布渲染 */
+  /** 主画布渲染 — 使用 canvas 原生 scale/translate 实现缩放和拖拽 */
   function renderCanvas() {
     const canvas = previewCanvas.value
-    if (!canvas || !mappedPixelData.value || !gridDimensions.value) return
-    const { N, M } = gridDimensions.value
-    canvas.width = N * CELL_SIZE; canvas.height = M * CELL_SIZE
-    const ctx = canvas.getContext('2d'); ctx!.imageSmoothingEnabled = false
-    ctx!.clearRect(0, 0, canvas.width, canvas.height)
-
-    for (let j = 0; j < M; j++) for (let i = 0; i < N; i++) {
-      const cell = mappedPixelData.value[j]?.[i]; if (!cell) continue
-      const x = i * CELL_SIZE, y = j * CELL_SIZE
-      if (cell.isExternal) { ctx!.clearRect(x, y, CELL_SIZE, CELL_SIZE); continue }
-      ctx!.fillStyle = cell.color; ctx!.fillRect(x, y, CELL_SIZE, CELL_SIZE)
-      ctx!.strokeStyle = 'rgba(0,0,0,0.08)'; ctx!.lineWidth = 0.5; ctx!.strokeRect(x, y, CELL_SIZE, CELL_SIZE)
+    if (!canvas || !mappedPixelData.value || !gridDimensions.value) {
+      return
     }
+    const { N, M } = gridDimensions.value
+    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+
+    // 获取容器尺寸，canvas 填满容器
+    const container = canvasStore.canvasContainer
+    const containerW = container ? container.clientWidth : N * CELL_SIZE
+    const containerH = container ? container.clientHeight : M * CELL_SIZE
+
+    canvas.width = containerW * dpr
+    canvas.height = containerH * dpr
+    canvas.style.width = `${containerW}px`
+    canvas.style.height = `${containerH}px`
+
+    const ctx = canvas.getContext('2d')
+    ctx.imageSmoothingEnabled = false
+
+    // 网格逻辑尺寸
+    const gridW = N * CELL_SIZE
+    const gridH = M * CELL_SIZE
+
+    // 初始缩放：将网格适配到容器（fit-to-container）
+    const fitScale = Math.min(containerW / gridW, containerH / gridH)
+
+    // 原生缩放 = DPR × 适配缩放 × 用户缩放
+    const totalScale = dpr * fitScale * canvasZoom.value
+    ctx.scale(totalScale, totalScale)
+    // 平移：先除以 fitScale 转换到网格坐标系，再加用户偏移
+    ctx.translate(canvasTranslate.value.x / (fitScale * canvasZoom.value), canvasTranslate.value.y / (fitScale * canvasZoom.value))
+
+    ctx.clearRect(
+      -canvasTranslate.value.x / (fitScale * canvasZoom.value) - 10,
+      -canvasTranslate.value.y / (fitScale * canvasZoom.value) - 10,
+      gridW + 20,
+      gridH + 20
+    )
+
+
+    let drawn = 0, skipped = 0
+    for (let j = 0; j < M; j++) for (let i = 0; i < N; i++) {
+      const cell = mappedPixelData.value[j]?.[i]; if (!cell) { skipped++; continue }
+      const x = i * CELL_SIZE, y = j * CELL_SIZE
+      if (cell.isExternal) { ctx.clearRect(x, y, CELL_SIZE, CELL_SIZE); continue }
+      ctx.fillStyle = cell.color; ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE)
+      ctx.strokeStyle = 'rgba(0,0,0,0.08)'; ctx.lineWidth = 0.5; ctx.strokeRect(x, y, CELL_SIZE, CELL_SIZE)
+
+      // 色号文字
+      if (showColorCodes.value) {
+        const displayKey = getDisplayKey(cell, selectedColorSystem.value)
+        if (displayKey && displayKey !== '?') {
+          const fontSize = Math.max(4, Math.floor(CELL_SIZE * 0.45))
+          ctx.fillStyle = getContrastColor(cell.color)
+          ctx.font = `${fontSize}px sans-serif`
+          ctx.textAlign = 'center'
+          ctx.textBaseline = 'middle'
+          ctx.fillText(displayKey, x + CELL_SIZE / 2, y + CELL_SIZE / 2)
+        }
+      }
+
+      drawn++
+    }
+
+    // 绘制坐标标签（四周显示）
+    if (showCoordinates.value) {
+      const fontSize = Math.max(6, Math.min(9, Math.floor(CELL_SIZE * 0.6)))
+      const maxNum = Math.max(N, M)
+      const digits = maxNum.toString().length
+      const al = Math.max(fontSize + 3, Math.floor(digits * fontSize * 0.6 + 3))
+      ctx.fillStyle = '#F5F5F5'
+      // 上方列号背景
+      ctx.fillRect(0, -al, gridW, al)
+      // 下方列号背景
+      ctx.fillRect(0, gridH, gridW, al)
+      // 左侧行号背景
+      ctx.fillRect(-al, 0, al, gridH)
+      // 右侧行号背景
+      ctx.fillRect(gridW, 0, al, gridH)
+
+      ctx.fillStyle = '#333333'
+      ctx.font = `${fontSize}px sans-serif`
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+
+      // 间隔逻辑：n=1 连续显示，n>1 时第一格(index0)始终显示，之后每隔n格显示
+      const n = coordinateInterval.value
+      // 列号（上方和下方）
+      let ci = 0
+      while (ci < N) {
+        const x = ci * CELL_SIZE + CELL_SIZE / 2
+        ctx.fillText((ci + 1).toString(), x, -al / 2)
+        ctx.fillText((ci + 1).toString(), x, gridH + al / 2)
+        ci = n <= 1 ? ci + 1 : (ci === 0 ? n - 1 : ci + n)
+      }
+      // 行号（左侧和右侧）
+      let cj = 0
+      while (cj < M) {
+        const y = cj * CELL_SIZE + CELL_SIZE / 2
+        ctx.textAlign = 'center'
+        ctx.fillText((cj + 1).toString(), -al / 2, y)
+        ctx.fillText((cj + 1).toString(), gridW + al / 2, y)
+        cj = n <= 1 ? cj + 1 : (cj === 0 ? n - 1 : cj + n)
+      }
+    }
+
     if (highlightColorKey.value) {
       ctx!.fillStyle = 'rgba(255, 255, 0, 0.3)'
       for (let j = 0; j < M; j++) for (let i = 0; i < N; i++) {
@@ -95,20 +200,31 @@ export function useCanvasRenderer(
     }
   }
 
-  /** 笔刷预览 overlay（独立 canvas，不触发主 canvas 全量重绘） */
+  /** 笔刷预览 overlay（独立 canvas，使用原生缩放与主 canvas 同步） */
   function renderPreviewOverlay() {
     const overlay = canvasAreaRef.value?.previewOverlayCanvas || previewOverlayCanvas.value
     const mainCanvas = previewCanvas.value
     if (!overlay || !mainCanvas) return
     overlay.width = mainCanvas.width
     overlay.height = mainCanvas.height
-    overlay.style.transform = mainCanvas.style.transform
-    overlay.style.transformOrigin = mainCanvas.style.transformOrigin
+    overlay.style.width = mainCanvas.style.width
+    overlay.style.height = mainCanvas.style.height
     const ctx = overlay.getContext('2d')
     if (!ctx) return
     ctx.clearRect(0, 0, overlay.width, overlay.height)
-    const hc = hoverCell.value
+    // 与主 canvas 一致的缩放参数
+    const dpr = Math.min(window.devicePixelRatio || 1, 2)
     const gd = gridDimensions.value
+    const container = canvasStore.canvasContainer
+    const gridW = gd ? gd.N * CELL_SIZE : mainCanvas.width
+    const gridH = gd ? gd.M * CELL_SIZE : mainCanvas.height
+    const containerW = container ? container.clientWidth : gridW
+    const containerH = container ? container.clientHeight : gridH
+    const fitScale = Math.min(containerW / gridW, containerH / gridH)
+    const totalScale = dpr * fitScale * canvasZoom.value
+    ctx.scale(totalScale, totalScale)
+    ctx.translate(canvasTranslate.value.x / (fitScale * canvasZoom.value), canvasTranslate.value.y / (fitScale * canvasZoom.value))
+    const hc = hoverCell.value
     if (!gd || activeMode.value !== 'edit') return
 
     const { N, M } = gd

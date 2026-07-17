@@ -38,7 +38,7 @@ export function useCanvasInteraction(
   const paletteStore = usePaletteStore()
 
   const { mappedPixelData, gridDimensions } = storeToRefs(beadStore)
-  const { previewCanvas, isDragging } = storeToRefs(canvasStore)
+  const { previewCanvas, isDragging, canvasZoom, canvasTranslate } = storeToRefs(canvasStore)
   const {
     selectedEditColor, isEraseMode, manualTool, manualBrushSize,
     manualMirrorX, manualMirrorY, isFloodFillEraseMode,
@@ -117,7 +117,7 @@ export function useCanvasInteraction(
     }
     if (!mappedPixelData.value || !gridDimensions.value || activeMode.value !== 'edit' || isDragging.value) return
     const canvas = e.target as HTMLCanvasElement
-    const coords = clientToGridCoords(e.clientX, e.clientY, canvas, gridDimensions.value)
+    const coords = clientToGridCoords(e.clientX, e.clientY, canvas, gridDimensions.value, canvasZoom.value, canvasTranslate.value)
     if (!coords) return
     const { i: col, j: row } = coords
 
@@ -229,7 +229,7 @@ export function useCanvasInteraction(
   function handleCanvasHover(e: MouseEvent) {
     if (!mappedPixelData.value || !gridDimensions.value) return
     const canvas = e.target as HTMLCanvasElement
-    const coords = clientToGridCoords(e.clientX, e.clientY, canvas, gridDimensions.value)
+    const coords = clientToGridCoords(e.clientX, e.clientY, canvas, gridDimensions.value, canvasZoom.value, canvasTranslate.value)
     if (coords) {
       const { i: col, j: row } = coords
       hoverCell.value = { row, col }
@@ -297,7 +297,7 @@ export function useCanvasInteraction(
     if (activeMode.value !== 'edit' || isDragging.value) return
     const canvas = e.target as HTMLCanvasElement
     if (!gridDimensions.value) return
-    const coords = clientToGridCoords(e.clientX, e.clientY, canvas, gridDimensions.value)
+    const coords = clientToGridCoords(e.clientX, e.clientY, canvas, gridDimensions.value, canvasZoom.value, canvasTranslate.value)
     if (!coords) return
     const { i: col, j: row } = coords
 
@@ -458,7 +458,7 @@ export function useCanvasInteraction(
     const canvas = previewCanvas.value
     if (!canvas) return
 
-    const coords = clientToGridCoords(e.clientX, e.clientY, canvas, gridDimensions.value)
+    const coords = clientToGridCoords(e.clientX, e.clientY, canvas, gridDimensions.value, canvasZoom.value, canvasTranslate.value)
     if (!coords) return
     const { i: col, j: row } = coords
 
@@ -491,7 +491,7 @@ export function useCanvasInteraction(
     const canvas = previewCanvas.value
     if (!canvas) return
 
-    const coords = clientToGridCoords(e.clientX, e.clientY, canvas, gridDimensions.value)
+    const coords = clientToGridCoords(e.clientX, e.clientY, canvas, gridDimensions.value, canvasZoom.value, canvasTranslate.value)
     if (!coords) return
     const { i: col, j: row } = coords
 

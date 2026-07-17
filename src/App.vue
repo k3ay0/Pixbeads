@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, defineAsyncComponent, toRaw } from 'vue'
 import { storeToRefs } from 'pinia'
 
@@ -232,14 +232,11 @@ async function handleGridConfirm(data: { canvas: HTMLCanvasElement, cols: number
   if (data.ocrEnabled) {
     try {
       ocrProgress.value = { phase: 'loading', percent: 0 }
-      console.log('[OCR] 开始识别, canvas:', data.canvas.width, 'x', data.canvas.height, 'grid:', data.cols, 'x', data.rows)
       const ocrResults = await ocrRecognition.recognizeGrid(
         data.canvas, data.cols, data.rows,
         (info) => { ocrProgress.value = info }
       )
-      console.log('[OCR] 识别完成, 结果数量:', ocrResults.length)
       for (const result of ocrResults) {
-        console.log(`[OCR] cell[${result.row},${result.col}] = "${result.text}" (confidence: ${result.confidence.toFixed(3)})`)
         if (mappedPixelData[result.row] && mappedPixelData[result.row][result.col]) {
           mappedPixelData[result.row][result.col].ocrKey = result.text
           mappedPixelData[result.row][result.col].ocrConfidence = result.confidence
@@ -312,6 +309,10 @@ const currentGridColors = computed(() => {
 watch([mappedPixelData, highlightColorKey, () => editorStore.selectionInfo], () => scheduleRender(), { flush: 'post' })
 watch(isProcessing, () => { if (!isProcessing.value) scheduleRender() })
 watch(originalImageSrc, () => { if (!originalImageSrc.value) scheduleRender() })
+// canvas 原生缩放/平移变化时重绘
+watch([() => canvasStore.canvasZoom, () => canvasStore.canvasTranslate], () => {
+  scheduleRender()
+})
 // 从预览/专心模式返回时重新渲染canvas
 watch(activeMode, (newMode, oldMode) => {
   if (oldMode === 'preview' || oldMode === 'focus') {

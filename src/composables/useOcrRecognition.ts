@@ -45,7 +45,6 @@ export function useOcrRecognition() {
         },
       })
 
-      console.log('[OCR] ffocr raw result:', JSON.stringify({ text: result.text, lineCount: result.lines.length, image: result.image }))
       if (result.lines.length > 0) {
         console.log('[OCR] first line sample:', JSON.stringify(result.lines[0]))
       }
