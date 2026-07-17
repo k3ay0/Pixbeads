@@ -2,7 +2,7 @@
 
 本项目基于[perler-beads](https://github.com/Zippland/perler-beads)进行 Vue 3 重构和算法功能更新，是一款跨平台的拼豆图纸生成工具，帮助拼豆爱好者将任意图片快速转换为标准拼豆图纸或将已有拼豆图纸重新进行修改。所有计算均在本地完成，无需网络，保护隐私。
 
-**在线体验**：<https://k3ay0.github.io/Pixbeads/>（由GitHub Pages 自动部署）
+**在线体验**：[Pixbeads](https://k3ay0.github.io/Pixbeads/)
 
 ## 功能特点
 
@@ -52,13 +52,13 @@
 
 ## 技术栈
 
-| 技术 | 版本 | 用途 |
-|------|------|------|
-| Tauri | 2.x | 桌面应用框架 |
-| Vue | 3.4+ | 前端框架 |
-| Vite | 5.2+ | 构建工具 |
-| Tailwind CSS | 3.4+ | 样式系统 |
-| Rust | - | 桌面端后端（当前为脚手架） |
+| 技术         | 版本 | 用途                       |
+| ------------ | ---- | -------------------------- |
+| Tauri        | 2.x  | 桌面应用框架               |
+| Vue          | 3.4+ | 前端框架                   |
+| Vite         | 5.2+ | 构建工具                   |
+| Tailwind CSS | 3.4+ | 样式系统                   |
+| Rust         | -    | 桌面端后端（当前为脚手架） |
 
 ## 开发
 
@@ -101,7 +101,6 @@ bun run tauri build
 ## 部署
 
 Web 端通过 GitHub Actions 自动部署到 GitHub Pages。
-
 
 ## 核心算法
 
