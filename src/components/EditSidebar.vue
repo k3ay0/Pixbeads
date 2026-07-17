@@ -18,27 +18,20 @@ const beadStore = useBeadStore()
 const paletteStore = usePaletteStore()
 const editorStore = useEditorStore()
 
-const { mappedPixelData, colorCounts, totalBeadCount } = storeToRefs(beadStore)
-const { selectedColorSystem, excludedColorKeys, activeBeadPalette, showExcludedColors, fullBeadPalette } = storeToRefs(paletteStore)
+const { mappedPixelData } = storeToRefs(beadStore)
+const { selectedColorSystem, activeBeadPalette } = storeToRefs(paletteStore)
 const {
-  isManualColoringMode, selectedEditColor, isEraseMode, colorReplaceState,
+  selectedEditColor, isEraseMode, colorReplaceState,
   manualTool, manualBrushSize, manualMirrorX, manualMirrorY, manualShapeFill,
-  selectionInfo, clipboard, manualPasteActive, showFullPalette, highlightColorKey,
+  selectionInfo, manualPasteActive, showFullPalette, 
   selectionDragging, isCopyingSelection, moveToolMode, isFloodFillEraseMode
 } = storeToRefs(editorStore)
 
-function toggleEraseMode() { editorStore.toggleEraseMode() }
 function enterFloodFillEraseMode() { editorStore.enterFloodFillEraseMode() }
 function exitFloodFillEraseMode() { editorStore.exitFloodFillEraseMode() }
-function setHighlight(color: string) { editorStore.setHighlight(color) }
 function toggleColorReplaceMode() { editorStore.toggleColorReplaceMode() }
-function toggleExcludeColor(hex: string) { paletteStore.toggleExcludeColor(hex) }
-function restoreAllExcludedColors() { paletteStore.restoreAllExcluded() }
 function selectEditColor(color: any) { emit('color-select', color) }
-function handleColorReplace() { emit('color-replace', colorReplaceState.value.sourceColor, selectedEditColor.value) }
 function clearSelection() { editorStore.clearSelection() }
-function clearClipboard() { editorStore.clearClipboard() }
-function startPaste() { editorStore.startPaste() }
 function cancelPaste() { editorStore.cancelPaste() }
 
 function handleCopy() {
@@ -56,9 +49,6 @@ function handleCopy() {
   editorStore.setClipboard({ cells, width: info.width, height: info.height })
 }
 
-function handleCut() {
-  handleCopy()
-}
 
 // 色板面板本地状态
 const colorPanelCollapsed = ref(false)

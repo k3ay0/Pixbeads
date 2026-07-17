@@ -3,7 +3,7 @@
  * 处理画布上的鼠标事件（点击、悬停、按下、抬起）和工具分发
  */
 
-import { ref, type Ref } from 'vue'
+import { type Ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useBeadStore } from '@/stores/beadStore'
 import { useCanvasStore } from '@/stores/canvasStore'
@@ -20,7 +20,6 @@ import {
   applyColorToPoints as applyColorToPointsUtil,
   isPointInSelection,
 } from '@/utils/drawingAlgorithms'
-import type { AppMode } from '@/constants/modeConstants'
 import { TRANSPARENT_KEY, type MappedPixel } from '@/types'
 
 export function useCanvasInteraction(

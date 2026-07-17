@@ -4,7 +4,6 @@ import { AXIS_WIDTH, AXIS_HEIGHT } from '@/constants/canvasConstants'
 
 export function useCanvasTransform() {
   const canvasStore = useCanvasStore()
-  const editorStore = useEditorStore()
 
   function handleCanvasWheel(e: WheelEvent) {
     e.preventDefault()

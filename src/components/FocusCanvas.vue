@@ -29,7 +29,6 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits(['cellClick', 'scaleChange', 'offsetChange'])
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
-const containerRef = ref<HTMLDivElement | null>(null)
 const isDragging = ref(false)
 const lastPanPoint = ref<{ x: number; y: number } | null>(null)
 const lastPinchDistance = ref<number | null>(null)
@@ -94,15 +93,6 @@ const cellSize = computed(() => {
 })
 
 // 预计算推荐区域的 Set，用于快速查找
-const recommendedRegionSet = computed(() => {
- const set = new Set()
- if (props.recommendedRegion) {
- props.recommendedRegion.forEach(({ row, col }) => {
- set.add(`${row},${col}`)
- })
- }
- return set
-})
 
 // ========== 渲染画布 ==========
 function renderCanvas() {
@@ -459,9 +449,6 @@ function handleMouseUp(event: MouseEvent) {
 }
 
 // 阻止触摸默认行为
-function preventDefaultTouch(event: TouchEvent) {
- event.preventDefault()
-}
 </script>
 
 <template>
