@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, defineAsyncComponent, toRaw } from 'vue'
 import { storeToRefs } from 'pinia'
+import * as THREE from 'three'
 
 // Stores
 import { useBeadStore } from './stores/beadStore'
@@ -48,6 +49,18 @@ import EditToolbar from './components/EditToolbar.vue'
 import PreviewSidebar from './components/PreviewSidebar.vue'
 import IroningPreview from './components/IroningPreview.vue'
 import FocusSidebar from './components/FocusSidebar.vue'
+
+// Voxel Components
+import VoxelEditor3D from './components/VoxelEditor3D.vue'
+import VoxelHeader from './components/VoxelHeader.vue'
+import VoxelLeftPanel from './components/VoxelLeftPanel.vue'
+import VoxelEditor2D from './components/VoxelEditor2D.vue'
+import VoxelToolbar from './components/VoxelToolbar.vue'
+import VoxelExportModal from './components/VoxelExportModal.vue'
+import VoxelBgModal from './components/VoxelBgModal.vue'
+import { useVoxelStore, type VoxelTool } from './stores/voxelStore'
+import { useVoxelHistory } from './composables/useVoxelHistory'
+import { useVoxelGeometry } from './composables/useVoxelGeometry'
 
 // Async components
 const MagnifierTool = defineAsyncComponent(() =>
@@ -112,6 +125,11 @@ const {
 
 storeToRefs(focusStore)
 
+// Voxel stores
+const voxelStore = useVoxelStore()
+const { undo: voxelUndo, redo: voxelRedo } = useVoxelHistory()
+const { clearGhost } = useVoxelGeometry()
+
 // ========== 本地状态 ==========
 const pendingPbdsData = ref<PbdsImportResult | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -131,6 +149,77 @@ const ironingConfig = ref<IroningPreviewConfig>(DEFAULT_IRONING_CONFIG)
 // OCR 状态
 const ocrProgress = ref<{ phase: string; percent?: number } | null>(null)
 const ocrError = ref<string | null>(null)
+
+// Voxel refs
+const voxelEditorRef = ref<InstanceType<typeof VoxelEditor3D> | null>(null)
+const voxelEditor2DRef = ref<InstanceType<typeof VoxelEditor2D> | null>(null)
+const voxelCount = computed(() => voxelStore.voxelCount)
+const cursorPos = ref('—')
+const showVoxel2D = ref(true)
+const showExportModal = ref(false)
+const showBgModal = ref(false)
+const showAboutModal = ref(false)
+const showDimsModal = ref(false)
+const editDimW = ref(16)
+const editDimH = ref(16)
+const editDimD = ref(16)
+const currentVoxelGroup = ref<THREE.Group | null>(null)
+const currentRendererDomElement = ref<HTMLCanvasElement | null>(null)
+
+// Panel width state for resizable panels
+const leftPanelWidth = ref(180)
+const rightPanelWidth = ref(200)
+const editor2DWidth = ref(40) // percentage
+const isDragging = ref(false)
+const dragTarget = ref<'left' | 'right' | 'editor2d' | null>(null)
+const dragStartX = ref(0)
+const dragStartWidth = ref(0)
+
+// Panel resize handlers
+function startPanelResize(e: MouseEvent, target: 'left' | 'right' | 'editor2d') {
+  e.preventDefault()
+  isDragging.value = true
+  dragTarget.value = target
+  dragStartX.value = e.clientX
+  if (target === 'left') {
+    dragStartWidth.value = leftPanelWidth.value
+  } else if (target === 'right') {
+    dragStartWidth.value = rightPanelWidth.value
+  } else {
+    dragStartWidth.value = editor2DWidth.value
+  }
+  document.addEventListener('mousemove', handlePanelResize)
+  document.addEventListener('mouseup', stopPanelResize)
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+}
+
+function handlePanelResize(e: MouseEvent) {
+  if (!isDragging.value || !dragTarget.value) return
+  const dx = e.clientX - dragStartX.value
+  if (dragTarget.value === 'left') {
+    leftPanelWidth.value = Math.max(120, Math.min(400, dragStartWidth.value + dx))
+  } else if (dragTarget.value === 'right') {
+    rightPanelWidth.value = Math.max(150, Math.min(500, dragStartWidth.value - dx))
+  } else if (dragTarget.value === 'editor2d') {
+    // Get the container width for percentage calculation
+    const container = document.querySelector('.voxoB-layout .flex.flex-1')
+    if (container) {
+      const containerWidth = container.clientWidth
+      const percentageChange = (dx / containerWidth) * 100
+      editor2DWidth.value = Math.max(20, Math.min(70, dragStartWidth.value + percentageChange))
+    }
+  }
+}
+
+function stopPanelResize() {
+  isDragging.value = false
+  dragTarget.value = null
+  document.removeEventListener('mousemove', handlePanelResize)
+  document.removeEventListener('mouseup', stopPanelResize)
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+}
 
 // ========== 初始化 Composables ==========
 const { scheduleRender, renderPreviewOverlay, clearPreviewOverlay } = useCanvasRenderer(
@@ -272,6 +361,15 @@ function switchMode(mode: AppMode) {
   if (activeMode.value === 'focus') focusStore.stopTimer()
   // 离开色彩优化界面时，清空排除颜色状态（保留像素数据中的替换结果）
   if (activeMode.value === 'optimize') paletteStore.clearExcludedState()
+  // Leave voxel mode — dispose Three.js resources
+  if (activeMode.value === 'voxel' && mode !== 'voxel') {
+    voxelEditorRef.value?.dispose()
+  }
+  // Voxel mode entry — skip all 2D handlers
+  if (mode === 'voxel') {
+    uiStore.switchMode(mode)
+    return
+  }
   uiStore.switchMode(mode)
   if (mode === 'edit') editorStore.enterManualMode()
   if (mode === 'focus') focusLogic.initFocusMode()
@@ -345,6 +443,19 @@ watch(manualTool, (tool) => {
 })
 
 // Lifecycle
+function handleVoxelKeydown(e: KeyboardEvent) {
+  if (activeMode.value !== 'voxel') return
+  
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); voxelUndo(); return }
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); voxelRedo(); return }
+  if (e.key === 'Escape') { e.preventDefault(); voxelEditorRef.value?.cancelAnchor?.(); clearGhost(); return }
+  if (e.ctrlKey || e.metaKey) return
+  
+  const toolMap: Record<string, VoxelTool> = { b: 'pen', l: 'line', r: 'rect', c: 'circle', q: 'ellipse', g: 'fill', f: 'fillSlice', i: 'eyedropper' }
+  if (toolMap[e.key]) { e.preventDefault(); voxelStore.currentTool = toolMap[e.key]; return }
+  if (e.key === 'e') { e.preventDefault(); voxelStore.editMode = voxelStore.editMode === 'draw' ? 'del' : 'draw'; return }
+}
+
 onMounted(() => {
   paletteStore.initPalette()
 
@@ -359,12 +470,14 @@ onMounted(() => {
   document.addEventListener('mouseup', handleCanvasMouseUp)
   document.addEventListener('mousemove', handleDocumentMouseMove)
   document.addEventListener('mousemove', handleDocumentSelectMouseMove)
+  document.addEventListener('keydown', handleVoxelKeydown)
 })
 onUnmounted(() => {
   document.removeEventListener('click', handleGlobalClick)
   document.removeEventListener('mouseup', handleCanvasMouseUp)
   document.removeEventListener('mousemove', handleDocumentMouseMove)
   document.removeEventListener('mousemove', handleDocumentSelectMouseMove)
+  document.removeEventListener('keydown', handleVoxelKeydown)
   focusStore.stopTimer()
   stopMarchingAnts()
 })
@@ -373,6 +486,72 @@ onUnmounted(() => {
 function handleDownloadGridWithOptions(o: any) { uiStore.updateDownloadOptions(o); fileIO.handleDownloadGrid() }
 function handleMagnifierSelection(a: any) { editorStore.magnifierSelectionArea = a }
 function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdit(d) }
+
+function handleNew2DCanvas() {
+  if (beadStore.mappedPixelData && Object.keys(beadStore.colorCounts || {}).length > 0) {
+    if (!confirm('当前 2D 画布数据将被清空，是否继续？')) return
+  }
+  beadStore.reset()
+  editorStore.clearHistory()
+  uiStore.switchMode('optimize')
+}
+
+function handleNew3DCanvas() {
+  if (voxelStore.voxelCount > 0) {
+    if (!confirm('当前 3D 画布数据将被清空，是否继续？')) return
+  }
+  voxelStore.reset()
+  uiStore.switchMode('voxel')
+}
+
+function handleOpenDims() {
+  editDimW.value = voxelStore.dimW
+  editDimH.value = voxelStore.dimH
+  editDimD.value = voxelStore.dimD
+  showDimsModal.value = true
+}
+
+function applyDims() {
+  const w = Math.max(1, Math.min(128, editDimW.value))
+  const h = Math.max(1, Math.min(128, editDimH.value))
+  const d = Math.max(1, Math.min(128, editDimD.value))
+
+  if (w < voxelStore.dimW || h < voxelStore.dimH || d < voxelStore.dimD) {
+    let outOfBounds = 0
+    voxelStore.voxels.forEach((_v, key) => {
+      const [vx, vy, vz] = voxelStore.pv(key)
+      if (vx >= w || vy >= h || vz >= d) outOfBounds++
+    })
+    if (outOfBounds > 0) {
+      alert(`无法缩小：有 ${outOfBounds} 个体素超出新尺寸范围，请先删除这些体素。`)
+      return
+    }
+  }
+
+  voxelStore.setDimensions(w, h, d)
+  voxelEditorRef.value?.rebuildAllMeshes?.()
+  showDimsModal.value = false
+}
+
+function handleOpenExportModal() {
+  currentVoxelGroup.value = voxelEditorRef.value?.getVoxelGroup?.() ?? null
+  currentRendererDomElement.value = voxelEditorRef.value?.getRendererDomElement?.() ?? null
+  showExportModal.value = true
+}
+
+function handleBgUpdate(bg: any) {
+  if (bg.target === '2d') {
+    // Update 2D editor background
+    if (voxelEditor2DRef.value?.setBackground2D) {
+      voxelEditor2DRef.value.setBackground2D(bg)
+    }
+  } else {
+    // Update 3D renderer background
+    if (voxelEditorRef.value?.setBackground) {
+      voxelEditorRef.value.setBackground(bg)
+    }
+  }
+}
 </script>
 
 <template>
@@ -385,13 +564,14 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
     <!-- Header -->
     <AppHeader @switch-mode="switchMode" @trigger-file-input="triggerFileInput" @trigger-pbds-input="triggerPbdsInput"
       @open-palette-editor="showPaletteEditor = true" @export-pbds="handleExportPbds"
-      @download-image="handleDownloadImage" @download-stats="handleDownloadStats" />
+      @download-image="handleDownloadImage" @download-stats="handleDownloadStats"
+      @new-2d-canvas="handleNew2DCanvas" @new-3d-canvas="handleNew3DCanvas" />
 
     <input ref="fileInput" type="file" accept="image/*" class="hidden" @change="handleFileChange" />
     <input ref="pbdsFileInput" type="file" accept=".pbds" class="hidden" @change="handlePbdsFileChange" />
 
     <!-- Main content area -->
-    <div class="relative flex-1 min-h-0 flex">
+    <div v-if="activeMode !== 'voxel'" class="relative flex-1 min-h-0 flex">
       <div class="mx-auto w-full flex-1 min-h-0 flex">
         <!-- Canvas area -->
         <CanvasArea v-show="activeMode !== 'preview'" ref="canvasAreaRef" @trigger-file-input="triggerFileInput"
@@ -421,11 +601,44 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
     </div>
 
     <!-- Footer -->
-    <footer class="border-t border-black/[0.06] bg-white/70">
+    <footer v-if="activeMode !== 'voxel'" class="border-t border-black/[0.06] bg-white/70">
       <div class="mx-auto w-full px-4 py-2 flex items-center justify-between text-xs text-black/45">
         <span>PIXBEADS — 拼豆图纸生成工具</span>
       </div>
     </footer>
+
+    <!-- VoxoB-style 3D Editor Layout -->
+    <div v-if="activeMode === 'voxel'" class="voxoB-layout flex flex-col flex-1 min-h-0 v-theme-bg0">
+      <VoxelHeader @open-bg="showBgModal = true" @open-export="handleOpenExportModal" @open-dims="handleOpenDims" @toggle-2d="showVoxel2D = !showVoxel2D" />
+      
+      <div class="flex flex-1 min-h-0" style="gap: 0" :style="{ background: 'var(--b3)' }">
+        <!-- Left Panel -->
+        <div class="v-theme-bg2 flex-shrink-0 overflow-y-auto" :style="{ width: leftPanelWidth + 'px' }">
+          <VoxelLeftPanel />
+        </div>
+        <div class="flex-shrink-0 w-[3px] cursor-col-resize hover:bg-blue-500 transition-colors" 
+          style="background: var(--bd)" @mousedown="startPanelResize($event, 'left')"></div>
+        
+        <!-- 2D Editor -->
+        <template v-if="showVoxel2D">
+          <VoxelEditor2D ref="voxelEditor2DRef" class="flex-shrink-0" :style="{ width: editor2DWidth + '%' }" />
+          <div class="flex-shrink-0 w-[3px] cursor-col-resize hover:bg-blue-500 transition-colors" 
+            style="background: var(--bd)" @mousedown="startPanelResize($event, 'editor2d')"></div>
+        </template>
+        
+        <!-- 3D View -->
+        <div class="flex-1 min-w-[60px] flex flex-col overflow-hidden">
+          <VoxelEditor3D ref="voxelEditorRef" />
+        </div>
+        <div class="flex-shrink-0 w-[3px] cursor-col-resize hover:bg-blue-500 transition-colors" 
+          style="background: var(--bd)" @mousedown="startPanelResize($event, 'right')"></div>
+        
+        <!-- Right Panel -->
+        <div class="v-theme-bg2 flex-shrink-0 overflow-y-auto" :style="{ width: rightPanelWidth + 'px' }">
+          <VoxelToolbar />
+        </div>
+      </div>
+    </div>
   </div>
 
 
@@ -486,4 +699,51 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
 
   <!-- Install PWA -->
   <InstallPWA />
+
+  <!-- Voxel Modals -->
+  <VoxelExportModal :is-open="showExportModal" :voxel-group="currentVoxelGroup" :renderer-dom-element="currentRendererDomElement" @close="showExportModal = false" />
+  <VoxelBgModal :is-open="showBgModal" @close="showBgModal = false" @update:background="handleBgUpdate" />
+
+  <!-- Canvas Dimension Dialog -->
+  <Teleport to="body">
+    <div v-if="showDimsModal" class="fixed inset-0 bg-black/60 z-[80] flex items-center justify-center"
+      @click.self="showDimsModal = false">
+      <div class="v-theme-bg2 border rounded-xl shadow-2xl w-[340px] max-w-[90vw] p-5 v-theme-text"
+        style="border-color: var(--bd)">
+        <h2 class="text-lg font-bold mb-4" style="color: var(--tx)">📐 画布尺寸</h2>
+        <div class="space-y-3">
+          <div>
+            <label class="text-[10px] block mb-1" style="color: var(--t2)">宽 (W)</label>
+            <input v-model.number="editDimW" type="number" min="1" max="128"
+              class="w-full rounded px-3 py-1.5 text-sm font-mono focus:outline-none"
+              :style="{ backgroundColor: 'var(--b3)', border: '1px solid var(--bd)', color: 'var(--tx)' }" />
+          </div>
+          <div>
+            <label class="text-[10px] block mb-1" style="color: var(--t2)">高 (H)</label>
+            <input v-model.number="editDimH" type="number" min="1" max="128"
+              class="w-full rounded px-3 py-1.5 text-sm font-mono focus:outline-none"
+              :style="{ backgroundColor: 'var(--b3)', border: '1px solid var(--bd)', color: 'var(--tx)' }" />
+          </div>
+          <div>
+            <label class="text-[10px] block mb-1" style="color: var(--t2)">深 (D)</label>
+            <input v-model.number="editDimD" type="number" min="1" max="128"
+              class="w-full rounded px-3 py-1.5 text-sm font-mono focus:outline-none"
+              :style="{ backgroundColor: 'var(--b3)', border: '1px solid var(--bd)', color: 'var(--tx)' }" />
+          </div>
+        </div>
+        <div class="flex gap-2 mt-5">
+          <button @click="showDimsModal = false"
+            class="flex-1 py-2 rounded-lg text-sm transition-colors"
+            :style="{ backgroundColor: 'var(--b3)', border: '1px solid var(--bd)', color: 'var(--t2)' }">
+            取消
+          </button>
+          <button @click="applyDims"
+            class="flex-1 py-2 rounded-lg text-sm font-medium transition-colors"
+            :style="{ backgroundColor: 'var(--ac)', color: '#fff' }">
+            应用
+          </button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>

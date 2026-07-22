@@ -15,7 +15,11 @@ const emit = defineEmits<{
   (e: 'export-pbds'): void
   (e: 'download-image'): void
   (e: 'download-stats'): void
+  (e: 'new-2d-canvas'): void
+  (e: 'new-3d-canvas'): void
 }>()
+
+const showNewMenu = ref(false)
 
 const beadStore = useBeadStore()
 const paletteStore = usePaletteStore()
@@ -52,6 +56,11 @@ function handleDownloadStats() {
   uiStore.closeAllMenus()
   emit('switch-mode', activeMode.value)
 }
+
+function toggleNewMenu() {
+  uiStore.closeAllMenus()
+  showNewMenu.value = !showNewMenu.value
+}
 </script>
 
 <template>
@@ -70,12 +79,12 @@ function handleDownloadStats() {
             v-for="mode in modes"
             :key="mode.key"
             @click="emit('switch-mode', mode.key)"
-            :disabled="mode.key !== 'optimize' && !mappedPixelData"
-            :title="mode.key !== 'optimize' && !mappedPixelData ? '请先导入文件' : ''"
+            :disabled="mode.key !== 'optimize' && mode.key !== 'voxel' && !mappedPixelData"
+            :title="mode.key !== 'optimize' && mode.key !== 'voxel' && !mappedPixelData ? '请先导入文件' : ''"
             :class="[
               'px-2 sm:px-3 h-8 text-[11px] sm:text-xs rounded-md font-medium transition-colors min-w-[44px] flex items-center justify-center',
               activeMode === mode.key ? 'bg-black text-white shadow-sm' : 'text-black/45 hover:text-black',
-              mode.key !== 'optimize' && !mappedPixelData && 'opacity-40 cursor-not-allowed'
+              mode.key !== 'optimize' && mode.key !== 'voxel' && !mappedPixelData && 'opacity-40 cursor-not-allowed'
             ]"
           >{{ mode.label }}</button>
         </div>
@@ -113,6 +122,27 @@ function handleDownloadStats() {
               @click="emit('trigger-pbds-input'); uiStore.closeAllMenus()"
               class="w-full px-3 py-2 text-left text-xs text-black/80 hover:bg-black/[0.04] transition-colors"
             >从文件导入</button>
+          </div>
+        </div>
+
+        <!-- New button -->
+        <div class="relative">
+          <button
+            @click="toggleNewMenu"
+            class="min-h-[44px] px-3 text-xs rounded-full border border-black/10 bg-black/[0.04] text-black/60 hover:bg-black/10 transition-colors"
+          >新建</button>
+          <div
+            v-if="showNewMenu"
+            class="absolute right-0 mt-1 w-36 bg-white rounded-lg shadow-lg border border-black/10 py-1 z-50"
+          >
+            <button
+              @click="emit('new-2d-canvas'); uiStore.closeAllMenus()"
+              class="w-full px-3 py-2 text-left text-xs text-black/80 hover:bg-black/[0.04] transition-colors"
+            >新建 2D 画布</button>
+            <button
+              @click="emit('new-3d-canvas'); uiStore.closeAllMenus()"
+              class="w-full px-3 py-2 text-left text-xs text-black/80 hover:bg-black/[0.04] transition-colors"
+            >新建 3D 画布</button>
           </div>
         </div>
 
