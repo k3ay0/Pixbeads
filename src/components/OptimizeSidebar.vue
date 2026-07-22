@@ -11,6 +11,10 @@ import { findClosestPaletteColor, isLightColor } from '../utils/colorUtils'
 import { PixelationMode } from '../types'
 import type { ColorSystem } from '../types'
 
+const props = defineProps<{
+  isGridImport?: boolean
+}>()
+
 const emit = defineEmits<{
   (e: 'trigger-file-input'): void
   (e: 'auto-remove-background'): void
@@ -301,8 +305,8 @@ function handleDrop(e: DragEvent) {
     <!-- Parameter controls card -->
     <div class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 shadow-sm overflow-visible">
       <div class="divide-y divide-gray-200/60 dark:divide-gray-800/40">
-        <!-- 颜色合并程度 -->
-        <div class="relative flex items-center justify-between px-3 h-11">
+        <!-- 颜色合并程度（仅非格子导入时显示） -->
+        <div v-if="!isGridImport" class="relative flex items-center justify-between px-3 h-11">
           <div class="flex items-center gap-0.5">
             <span class="text-xs text-gray-500 dark:text-gray-400">颜色合并程度</span>
             <button
@@ -332,10 +336,14 @@ function handleDrop(e: DragEvent) {
             v-model="granularityInput"
             @blur="granularity = Math.max(10, Math.min(300, parseInt(granularityInput) || 50))"
             @keyup.enter="granularity = Math.max(10, Math.min(300, parseInt(granularityInput) || 50))"
+            :disabled="isGridImport"
             min="10"
             max="300"
             type="number"
-            class="w-20 h-7 px-2 text-right text-xs font-medium text-gray-900 dark:text-gray-100 bg-gray-100 dark:bg-gray-800 border-none rounded-md focus:ring-1 focus:ring-brand-500 focus:outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+            :class="[
+              'w-20 h-7 px-2 text-right text-xs font-medium text-gray-900 dark:text-gray-100 bg-gray-100 dark:bg-gray-800 border-none rounded-md focus:ring-1 focus:ring-brand-500 focus:outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none',
+              isGridImport && 'opacity-50 cursor-not-allowed'
+            ]"
           />
         </div>
 
@@ -344,6 +352,7 @@ function handleDrop(e: DragEvent) {
           <div class="flex items-center gap-1.5">
             <span class="text-xs text-gray-500 dark:text-gray-400">高度</span>
             <button
+              v-if="!isGridImport"
               @click="lockAspectRatio = !lockAspectRatio"
               :class="[
                 'px-1.5 py-0.5 text-[10px] rounded transition-colors',
@@ -355,19 +364,22 @@ function handleDrop(e: DragEvent) {
           </div>
           <input
             v-model="granularityYInput"
-            :disabled="(!croppedImageCanvas && !mappedPixelData) || lockAspectRatio"
+            :disabled="isGridImport || (!croppedImageCanvas && !mappedPixelData) || lockAspectRatio"
             @blur="granularityY = Math.max(10, Math.min(300, parseInt(granularityYInput) || 0))"
             @keyup.enter="granularityY = Math.max(10, Math.min(300, parseInt(granularityYInput) || 0))"
             min="10"
             max="300"
             type="number"
             :placeholder="granularityY > 0 ? granularityY.toString() : '自动'"
-            class="w-20 h-7 px-2 text-right text-xs font-medium text-gray-900 dark:text-gray-100 bg-gray-100 dark:bg-gray-800 border-none rounded-md focus:ring-1 focus:ring-brand-500 focus:outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-40"
+            :class="[
+              'w-20 h-7 px-2 text-right text-xs font-medium text-gray-900 dark:text-gray-100 bg-gray-100 dark:bg-gray-800 border-none rounded-md focus:ring-1 focus:ring-brand-500 focus:outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none',
+              isGridImport && 'opacity-50 cursor-not-allowed'
+            ]"
           />
         </div>
 
-        <!-- 处理模式 -->
-        <div class="relative flex items-center justify-between px-3 h-11">
+        <!-- 处理模式（仅非格子导入时显示） -->
+        <div v-if="!isGridImport" class="relative flex items-center justify-between px-3 h-11">
           <div class="flex items-center gap-0.5">
             <span class="text-xs text-gray-500 dark:text-gray-400">处理模式</span>
             <button

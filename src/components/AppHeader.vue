@@ -12,6 +12,7 @@ const emit = defineEmits<{
   (e: 'trigger-file-input'): void
   (e: 'trigger-pbds-input'): void
   (e: 'open-palette-editor'): void
+  (e: 'open-import-flow'): void
   (e: 'export-pbds'): void
   (e: 'download-image'): void
   (e: 'download-stats'): void
@@ -98,22 +99,9 @@ function handleDownloadStats() {
         <!-- Import button -->
         <div class="relative">
           <button
-            @click="toggleImportMenu"
+            @click="emit('open-import-flow')"
             class="min-h-[44px] px-3 text-xs rounded-full border border-black/10 bg-black/[0.04] text-black/60 hover:bg-black/10 transition-colors"
           >导入</button>
-          <div
-            v-if="showImportMenu"
-            class="absolute right-0 mt-1 w-36 bg-white rounded-lg shadow-lg border border-black/10 py-1 z-50"
-          >
-            <button
-              @click="emit('trigger-file-input'); uiStore.closeAllMenus()"
-              class="w-full px-3 py-2 text-left text-xs text-black/80 hover:bg-black/[0.04] transition-colors"
-            >从图片导入</button>
-            <button
-              @click="emit('trigger-pbds-input'); uiStore.closeAllMenus()"
-              class="w-full px-3 py-2 text-left text-xs text-black/80 hover:bg-black/[0.04] transition-colors"
-            >从文件导入</button>
-          </div>
         </div>
 
         <!-- Export dropdown -->
@@ -145,7 +133,7 @@ function handleDownloadStats() {
         <!-- Mobile import -->
         <div class="md:hidden relative">
           <button
-            @click="emit('trigger-file-input')"
+            @click="emit('open-import-flow')"
             class="min-h-[44px] min-w-[44px] flex items-center justify-center text-black/60 rounded-lg hover:bg-black/[0.04] transition-colors"
           >
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -8,13 +8,39 @@ export interface GridCellResult {
   confidence: number
 }
 
-export type OcrProgressCallback = (info: { phase: string; percent?: number }) => void
+export type OcrPhase = 'loading' | 'downloading' | 'initializing' | 'ready' | 'recognizing' | 
+  'loading_dictionary' | 'loading_detection_model' | 'loading_recognition_model' | 'warmup' | string
+
+export interface OcrProgressInfo {
+  phase: string
+  phaseLabel: string
+  percent?: number
+}
+
+export type OcrProgressCallback = (info: OcrProgressInfo) => void
+
+const phaseLabels: Record<string, string> = {
+  'loading': '加载模型中',
+  'downloading': '下载模型中',
+  'initializing': '初始化中',
+  'ready': '准备就绪',
+  'recognizing': '识别中',
+  'loading_dictionary': '加载字典中',
+  'loading_detection_model': '加载检测模型中',
+  'loading_recognition_model': '加载识别模型中',
+  'warmup': '预热模型中',
+}
+
+function getPhaseLabel(phase: string): string {
+  return phaseLabels[phase] || phase
+}
 
 export function useOcrRecognition() {
   let ocrInstance: PaddleOcrWeb | null = null
+  let initialized = false
 
   function isReady(): boolean {
-    return ocrInstance !== null
+    return ocrInstance !== null && initialized
   }
 
   function getOrCreateInstance(): PaddleOcrWeb {
@@ -22,6 +48,25 @@ export function useOcrRecognition() {
       ocrInstance = createDefaultPPOcrV5({ cacheModels: true })
     }
     return ocrInstance
+  }
+
+  async function preload(onProgress?: OcrProgressCallback): Promise<void> {
+    const ocr = getOrCreateInstance()
+    // 仅初始化模型，不进行识别
+    await ocr.init((progress) => {
+      let percent: number | undefined
+      if (progress.loaded != null && progress.totalBytes != null && progress.totalBytes > 0) {
+        percent = Math.min(100, Math.max(0, Math.round((progress.loaded / progress.totalBytes) * 100)))
+      } else if (progress.current != null && progress.total != null && progress.total > 0) {
+        percent = Math.min(100, Math.max(0, Math.round((progress.current / progress.total) * 100)))
+      }
+      onProgress?.({ 
+        phase: progress.phase,
+        phaseLabel: getPhaseLabel(progress.phase),
+        percent 
+      })
+    })
+    initialized = true
   }
 
   async function recognizeGrid(
@@ -37,11 +82,15 @@ export function useOcrRecognition() {
         onProgress: (progress) => {
           let percent: number | undefined
           if (progress.loaded != null && progress.totalBytes != null && progress.totalBytes > 0) {
-            percent = Math.round((progress.loaded / progress.totalBytes) * 100)
+            percent = Math.min(100, Math.max(0, Math.round((progress.loaded / progress.totalBytes) * 100)))
           } else if (progress.current != null && progress.total != null && progress.total > 0) {
-            percent = Math.round((progress.current / progress.total) * 100)
+            percent = Math.min(100, Math.max(0, Math.round((progress.current / progress.total) * 100)))
           }
-          onProgress?.({ phase: progress.phase, percent })
+          onProgress?.({ 
+            phase: progress.phase,
+            phaseLabel: getPhaseLabel(progress.phase),
+            percent 
+          })
         },
       })
 
@@ -85,10 +134,12 @@ export function useOcrRecognition() {
     if (ocrInstance) {
       ocrInstance.dispose()
       ocrInstance = null
+      initialized = false
     }
   }
 
   return {
+    preload,
     recognizeGrid,
     isReady,
     dispose,
