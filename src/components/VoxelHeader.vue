@@ -10,6 +10,7 @@ const emit = defineEmits<{
   'open-export': []
   'open-dims': []
   'toggle-2d': []
+  'open-slice-grid': []
 }>()
 
 const store = useVoxelStore()
@@ -84,7 +85,6 @@ function setLang(e: Event): void {
 
     <select class="v-theme-bg3 rounded px-2 py-1 text-xs v-theme-text" style="border: 1px solid var(--bd)" @change="setTheme">
       <option value="light" selected>☀ 亮色</option>
-      <option value="dark">🌑 暗色</option>
       <option value="grey">⬜ 灰色</option>
       <option value="warm">🔥 暖色</option>
       <option value="sepia">📜 怀旧</option>
@@ -102,6 +102,11 @@ function setLang(e: Event): void {
       class="px-2 py-1 v-theme-bg3 rounded whitespace-nowrap hover:!border-pink-400 v-theme-accent2"
       @click="emit('open-export')" style="border: 1px solid var(--bd)">
       ⬇ 导出
+    </button>
+    <button
+      class="px-2 py-1 v-theme-bg3 rounded whitespace-nowrap hover:!border-cyan-400"
+      @click="emit('open-slice-grid')" style="border: 1px solid var(--bd)">
+      ⊞ 切片
     </button>
   </header>
 </template>

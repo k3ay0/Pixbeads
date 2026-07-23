@@ -58,6 +58,7 @@ import VoxelEditor2D from './components/VoxelEditor2D.vue'
 import VoxelToolbar from './components/VoxelToolbar.vue'
 import VoxelExportModal from './components/VoxelExportModal.vue'
 import VoxelBgModal from './components/VoxelBgModal.vue'
+import VoxelSliceGridModal from './components/VoxelSliceGridModal.vue'
 import { useVoxelStore, type VoxelTool } from './stores/voxelStore'
 import { useVoxelHistory } from './composables/useVoxelHistory'
 import { useVoxelGeometry } from './composables/useVoxelGeometry'
@@ -160,6 +161,7 @@ const showExportModal = ref(false)
 const showBgModal = ref(false)
 const showAboutModal = ref(false)
 const showDimsModal = ref(false)
+const showSliceGridModal = ref(false)
 const editDimW = ref(16)
 const editDimH = ref(16)
 const editDimD = ref(16)
@@ -539,6 +541,11 @@ function handleOpenExportModal() {
   showExportModal.value = true
 }
 
+function handleSliceExported() {
+  showSliceGridModal.value = false
+  switchMode('optimize')
+}
+
 function handleBgUpdate(bg: any) {
   if (bg.target === '2d') {
     // Update 2D editor background
@@ -609,7 +616,7 @@ function handleBgUpdate(bg: any) {
 
     <!-- VoxoB-style 3D Editor Layout -->
     <div v-if="activeMode === 'voxel'" class="voxoB-layout flex flex-col flex-1 min-h-0 v-theme-bg0">
-      <VoxelHeader @open-bg="showBgModal = true" @open-export="handleOpenExportModal" @open-dims="handleOpenDims" @toggle-2d="showVoxel2D = !showVoxel2D" />
+      <VoxelHeader @open-bg="showBgModal = true" @open-export="handleOpenExportModal" @open-dims="handleOpenDims" @toggle-2d="showVoxel2D = !showVoxel2D" @open-slice-grid="showSliceGridModal = true" />
       
       <div class="flex flex-1 min-h-0" style="gap: 0" :style="{ background: 'var(--b3)' }">
         <!-- Left Panel -->
@@ -703,6 +710,7 @@ function handleBgUpdate(bg: any) {
   <!-- Voxel Modals -->
   <VoxelExportModal :is-open="showExportModal" :voxel-group="currentVoxelGroup" :renderer-dom-element="currentRendererDomElement" @close="showExportModal = false" />
   <VoxelBgModal :is-open="showBgModal" @close="showBgModal = false" @update:background="handleBgUpdate" />
+  <VoxelSliceGridModal :is-open="showSliceGridModal" @close="showSliceGridModal = false" @exported="handleSliceExported" />
 
   <!-- Canvas Dimension Dialog -->
   <Teleport to="body">

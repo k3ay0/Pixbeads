@@ -160,15 +160,14 @@ export function useVoxelInteraction(
       }
     }
 
-    // Fallback: intersect with Y=0 ground plane
+    // Fallback: intersect with Y=0 plane
     const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
     const point = new THREE.Vector3()
     if (raycaster.ray.intersectPlane(plane, point)) {
       const gx = Math.floor(point.x)
       const gz = Math.floor(point.z)
-      if (gx >= 0 && gx < store.dimW && gz >= 0 && gz < store.dimD) {
+      if (gx >= 0 && gx < store.dimW && gz >= 0 && gz < store.dimD)
         return { existing: null, adjacent: { x: gx, y: 0, z: gz }, color: null }
-      }
     }
 
     return null

@@ -30,7 +30,7 @@ export function useCanvasRenderer(
   const paletteStore = usePaletteStore()
 
   const { mappedPixelData, gridDimensions } = storeToRefs(beadStore)
-  const { previewCanvas } = storeToRefs(canvasStore)
+  const { previewCanvas, canvasZoom, canvasTranslate } = storeToRefs(canvasStore)
   const {
     isEraseMode, manualTool, manualBrushSize,
     manualMirrorX, manualMirrorY, highlightColorKey,

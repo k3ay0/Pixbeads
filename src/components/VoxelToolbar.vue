@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch, nextTick } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch, nextTick } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useVoxelStore, type VoxelData, type VoxelMap } from '@/stores/voxelStore'
 import { usePaletteStore } from '@/stores/paletteStore'
 import { useVoxelHistory, type VoxelAction } from '@/composables/useVoxelHistory'
 import { useVoxelGeometry } from '@/composables/useVoxelGeometry'
+import { getColorKeyByHex, sortColorsByHue } from '@/utils/colorSystemUtils'
+import { hexToRgb, findClosestPaletteColor, isLightColor } from '@/utils/colorUtils'
 
 const voxelStore = useVoxelStore()
 const paletteStore = usePaletteStore()
-const { activeBeadPalette } = storeToRefs(paletteStore)
+const { activeBeadPalette, selectedColorSystem } = storeToRefs(paletteStore)
 const { pushUndo } = useVoxelHistory()
 const { rebuildAllMeshes } = useVoxelGeometry()
 
@@ -246,201 +248,303 @@ function cancelRename() {
 }
 
 // ============================================================
-// HSL Color Picker
+// HSV Color Picker
 // ============================================================
 
-const hslCanvasRef = ref<HTMLCanvasElement | null>(null)
-const hueBarRef = ref<HTMLCanvasElement | null>(null)
+const colorPanelCollapsed = ref(false)
+const hueSortEnabled = ref(false)
+const showAllColors = ref(false)
+const showFullPalette = ref(false)
+const selectedCategory = ref('all')
+
 const pickerHue = ref(0)
 const pickerSat = ref(100)
-const pickerLum = ref(50)
-const pickerAlpha = ref(255)
-const hexInput = ref(voxelStore.selectedColor)
+const pickerVal = ref(100)
+const pickerHexInput = ref('#FF0000')
+const pickerR = ref(255)
+const pickerG = ref(0)
+const pickerB = ref(0)
+const pickerH = ref(0)
+const pickerS = ref(100)
+const pickerL = ref(50)
+const pickerSource = ref<'hsv' | 'hex' | 'rgb' | 'hsl'>('hsv')
 
-const miniPalette = [
-  '#ff0000', '#ff4400', '#ff8800', '#ffcc00', '#ffff00',
-  '#ccff00', '#88ff00', '#44ff00', '#00ff00', '#00ff44',
-  '#00ff88', '#00ffcc', '#00ffff', '#00ccff', '#0088ff',
-  '#0044ff', '#0000ff', '#4400ff', '#8800ff', '#cc00ff',
-  '#ff00ff', '#ff00cc', '#ff0088', '#ff0044', '#ffffff',
-  '#cccccc', '#999999', '#666666', '#333333', '#000000',
-]
+const satPanelRef = ref<HTMLElement | null>(null)
+const hueBarRef = ref<HTMLElement | null>(null)
+const isDraggingSat = ref(false)
+const isDraggingHue = ref(false)
 
-// --- HSL <-> RGB conversion helpers ---
-
-function hexToRgb(hex: string): [number, number, number] {
-  const h = hex.replace('#', '')
-  return [
-    parseInt(h.slice(0, 2), 16),
-    parseInt(h.slice(2, 4), 16),
-    parseInt(h.slice(4, 6), 16),
-  ]
+function hsvToRgb(h: number, s: number, v: number): { r: number; g: number; b: number } {
+  s /= 100; v /= 100
+  const c = v * s
+  const x = c * (1 - Math.abs((h / 60) % 2 - 1))
+  const m = v - c
+  let r = 0, g = 0, b = 0
+  if (h < 60) { r = c; g = x }
+  else if (h < 120) { r = x; g = c }
+  else if (h < 180) { g = c; b = x }
+  else if (h < 240) { g = x; b = c }
+  else if (h < 300) { r = x; b = c }
+  else { r = c; b = x }
+  return {
+    r: Math.round((r + m) * 255),
+    g: Math.round((g + m) * 255),
+    b: Math.round((b + m) * 255)
+  }
 }
 
-function rgbToHex(r: number, g: number, b: number): string {
-  return '#' + [r, g, b].map(c => Math.round(Math.max(0, Math.min(255, c))).toString(16).padStart(2, '0')).join('')
+function rgbToHsv(r: number, g: number, b: number): { h: number; s: number; v: number } {
+  r /= 255; g /= 255; b /= 255
+  const max = Math.max(r, g, b), min = Math.min(r, g, b)
+  const d = max - min
+  let h = 0
+  if (d !== 0) {
+    if (max === r) h = ((g - b) / d) % 6
+    else if (max === g) h = (b - r) / d + 2
+    else h = (r - g) / d + 4
+    h *= 60
+    if (h < 0) h += 360
+  }
+  return { h, s: max === 0 ? 0 : (d / max) * 100, v: max * 100 }
 }
 
-function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
-  const rr = r / 255, gg = g / 255, bb = b / 255
-  const max = Math.max(rr, gg, bb), min = Math.min(rr, gg, bb)
-  let h = 0, s = 0
+function rgbToHsl(r: number, g: number, b: number): { h: number; s: number; l: number } {
+  r /= 255; g /= 255; b /= 255
+  const max = Math.max(r, g, b), min = Math.min(r, g, b)
   const l = (max + min) / 2
+  let h = 0, s = 0
   if (max !== min) {
     const d = max - min
     s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
-    if (max === rr) h = ((gg - bb) / d + (gg < bb ? 6 : 0)) / 6
-    else if (max === gg) h = ((bb - rr) / d + 2) / 6
-    else h = ((rr - gg) / d + 4) / 6
+    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) * 60
+    else if (max === g) h = ((b - r) / d + 2) * 60
+    else h = ((r - g) / d + 4) * 60
   }
-  return [h * 360, s * 100, l * 100]
+  return { h: Math.round(h), s: Math.round(s * 100), l: Math.round(l * 100) }
 }
 
-function hslToRgb(h: number, s: number, l: number): [number, number, number] {
-  const hh = h / 360, ss = s / 100, ll = l / 100
-  if (ss === 0) {
-    const v = Math.round(ll * 255)
-    return [v, v, v]
+function hslToRgb(h: number, s: number, l: number): { r: number; g: number; b: number } {
+  s /= 100; l /= 100
+  const c = (1 - Math.abs(2 * l - 1)) * s
+  const x = c * (1 - Math.abs((h / 60) % 2 - 1))
+  const m = l - c / 2
+  let r = 0, g = 0, b = 0
+  if (h < 60) { r = c; g = x }
+  else if (h < 120) { r = x; g = c }
+  else if (h < 180) { g = c; b = x }
+  else if (h < 240) { g = x; b = c }
+  else if (h < 300) { r = x; b = c }
+  else { r = c; b = x }
+  return {
+    r: Math.round((r + m) * 255),
+    g: Math.round((g + m) * 255),
+    b: Math.round((b + m) * 255)
   }
-  const hue2rgb = (p: number, q: number, t: number): number => {
-    if (t < 0) t += 1
-    if (t > 1) t -= 1
-    if (t < 1 / 6) return p + (q - p) * 6 * t
-    if (t < 1 / 2) return q
-    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6
-    return p
-  }
-  const q = ll < 0.5 ? ll * (1 + ss) : ll + ss - ll * ss
-  const p = 2 * ll - q
-  return [
-    Math.round(hue2rgb(p, q, hh + 1 / 3) * 255),
-    Math.round(hue2rgb(p, q, hh) * 255),
-    Math.round(hue2rgb(p, q, hh - 1 / 3) * 255),
-  ]
 }
 
-// --- Canvas drawing ---
+function rgbToHex(r: number, g: number, b: number): string {
+  return '#' + [r, g, b].map(c => c.toString(16).padStart(2, '0')).join('').toUpperCase()
+}
 
-function drawHslCanvas(): void {
-  const cvs = hslCanvasRef.value
-  if (!cvs) return
-  const ctx = cvs.getContext('2d')!
-  const w = cvs.width, h = cvs.height
-  const img = ctx.createImageData(w, h)
-  const hue = pickerHue.value
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const s = (x / w) * 100
-      const l = 100 - (y / h) * 100
-      const [r, g, b] = hslToRgb(hue, s, l)
-      const idx = (y * w + x) * 4
-      img.data[idx] = r
-      img.data[idx + 1] = g
-      img.data[idx + 2] = b
-      img.data[idx + 3] = 255
+const pickerHex = computed(() => {
+  const rgb = hsvToRgb(pickerHue.value, pickerSat.value, pickerVal.value)
+  return rgbToHex(rgb.r, rgb.g, rgb.b)
+})
+
+const closestBeadColor = computed(() => {
+  const rgb = hexToRgb(pickerHex.value)
+  if (!rgb || !activeBeadPalette.value.length) return null
+  const palette = activeBeadPalette.value.map((c: any) => ({
+    key: c.key,
+    hex: c.hex,
+    rgb: hexToRgb(c.hex) || { r: 0, g: 0, b: 0 }
+  }))
+  const closest = findClosestPaletteColor(rgb, palette)
+  return {
+    ...closest,
+    displayKey: getColorKeyByHex(closest.hex, selectedColorSystem.value)
+  }
+})
+
+// 从体素数据中统计当前使用的颜色
+const currentVoxelColors = computed(() => {
+  const colorMap = new Map<string, number>()
+  for (const voxel of voxelStore.voxels.values()) {
+    const hex = voxel.color.toUpperCase()
+    colorMap.set(hex, (colorMap.get(hex) || 0) + 1)
+  }
+  return Array.from(colorMap.entries()).map(([hex, count]) => ({
+    key: getColorKeyByHex(hex, selectedColorSystem.value),
+    color: hex,
+    count
+  }))
+})
+
+// 从颜色标签中提取分类字母（如 A01 -> A, B02 -> B）
+function getCategoryFromKey(key: string): string {
+  const match = key.match(/^([A-Za-z]+)/)
+  return match ? match[1].toUpperCase() : '#'
+}
+
+// 获取所有颜色分类
+const colorCategories = computed(() => {
+  const categories = new Set<string>()
+  if (showAllColors.value) {
+    for (const c of activeBeadPalette.value) {
+      const key = getColorKeyByHex(c.hex, selectedColorSystem.value)
+      categories.add(getCategoryFromKey(key))
+    }
+  } else {
+    for (const c of currentVoxelColors.value) {
+      categories.add(getCategoryFromKey(c.key))
     }
   }
-  ctx.putImageData(img, 0, 0)
+  return ['all', ...Array.from(categories).sort()]
+})
 
-  // Crosshair at current S/L
-  const cx = (pickerSat.value / 100) * w
-  const cy = (1 - pickerLum.value / 100) * h
-  ctx.strokeStyle = pickerLum.value > 50 ? '#000' : '#fff'
-  ctx.lineWidth = 2
-  ctx.beginPath()
-  ctx.arc(cx, cy, 4, 0, Math.PI * 2)
-  ctx.stroke()
-}
+// 按分类筛选后的颜色
+const filteredColors = computed(() => {
+  const colors = showAllColors.value
+    ? activeBeadPalette.value.map((c: any) => ({ key: getColorKeyByHex(c.hex, selectedColorSystem.value), color: c.hex }))
+    : currentVoxelColors.value
 
-function drawHueBar(): void {
-  const cvs = hueBarRef.value
-  if (!cvs) return
-  const ctx = cvs.getContext('2d')!
-  const w = cvs.width, h = cvs.height
-  const img = ctx.createImageData(w, h)
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const hue = (x / w) * 360
-      const [r, g, b] = hslToRgb(hue, 100, 50)
-      const idx = (y * w + x) * 4
-      img.data[idx] = r
-      img.data[idx + 1] = g
-      img.data[idx + 2] = b
-      img.data[idx + 3] = 255
-    }
-  }
-  ctx.putImageData(img, 0, 0)
+  if (selectedCategory.value === 'all') return colors
+  return colors.filter(c => getCategoryFromKey(c.key) === selectedCategory.value)
+})
 
-  // Indicator
-  const ix = (pickerHue.value / 360) * w
-  ctx.strokeStyle = '#fff'
-  ctx.lineWidth = 2
-  ctx.beginPath()
-  ctx.moveTo(ix, 0)
-  ctx.lineTo(ix, h)
-  ctx.stroke()
-}
+const displayColors = computed(() => {
+  const colors = filteredColors.value
+  if (hueSortEnabled.value) return sortColorsByHue(colors)
+  return colors
+})
 
-// --- HSL picker event handlers ---
+watch([pickerHue, pickerSat, pickerVal], () => {
+  if (pickerSource.value !== 'hsv') return
+  const rgb = hsvToRgb(pickerHue.value, pickerSat.value, pickerVal.value)
+  pickerR.value = rgb.r; pickerG.value = rgb.g; pickerB.value = rgb.b
+  pickerHexInput.value = rgbToHex(rgb.r, rgb.g, rgb.b)
+  const hsl = rgbToHsl(rgb.r, rgb.g, rgb.b)
+  pickerH.value = hsl.h; pickerS.value = hsl.s; pickerL.value = hsl.l
+}, { immediate: true })
 
-function onHslCanvasClick(e: MouseEvent): void {
-  const cvs = hslCanvasRef.value
-  if (!cvs) return
-  const rect = cvs.getBoundingClientRect()
-  const x = e.clientX - rect.left
-  const y = e.clientY - rect.top
-  pickerSat.value = Math.max(0, Math.min(100, (x / cvs.width) * 100))
-  pickerLum.value = Math.max(0, Math.min(100, 100 - (y / cvs.height) * 100))
-  applyPickerColor()
-}
+// 切换显示模式时重置分类选择
+watch(showAllColors, () => {
+  selectedCategory.value = 'all'
+})
 
-function onHueBarClick(e: MouseEvent): void {
-  const cvs = hueBarRef.value
-  if (!cvs) return
-  const rect = cvs.getBoundingClientRect()
-  const x = e.clientX - rect.left
-  pickerHue.value = Math.max(0, Math.min(360, (x / cvs.width) * 360))
-  applyPickerColor()
-}
-
-function applyPickerColor(): void {
-  const [r, g, b] = hslToRgb(pickerHue.value, pickerSat.value, pickerLum.value)
-  voxelStore.selectedColor = rgbToHex(r, g, b)
-}
-
-function onHexChange(): void {
-  const val = hexInput.value
-  if (/^#[0-9a-fA-F]{6}$/.test(val)) {
-    voxelStore.selectedColor = val.toLowerCase()
-  }
-}
-
-// Sync picker state when store.selectedColor changes externally (palette click, etc.)
+// Sync picker when voxelStore.selectedColor changes externally (palette grid clicks, etc.)
 watch(() => voxelStore.selectedColor, (hex) => {
   if (!hex) return
-  hexInput.value = hex
-  const [r, g, b] = hexToRgb(hex)
-  const [h, s, l] = rgbToHsl(r, g, b)
-  pickerHue.value = h
-  pickerSat.value = s
-  pickerLum.value = l
-  nextTick(() => {
-    drawHslCanvas()
-    drawHueBar()
-  })
+  const rgb = hexToRgb(hex)
+  if (!rgb) return
+  const hsv = rgbToHsv(rgb.r, rgb.g, rgb.b)
+  pickerHue.value = hsv.h
+  pickerSat.value = hsv.s
+  pickerVal.value = hsv.v
+  pickerHexInput.value = hex.toUpperCase()
+  pickerR.value = rgb.r
+  pickerG.value = rgb.g
+  pickerB.value = rgb.b
+  const hsl = rgbToHsl(rgb.r, rgb.g, rgb.b)
+  pickerH.value = hsl.h
+  pickerS.value = hsl.s
+  pickerL.value = hsl.l
 })
 
-watch([pickerHue, pickerSat, pickerLum], () => {
-  nextTick(() => {
-    drawHslCanvas()
-    if (pickerHue.value !== undefined) drawHueBar()
-  })
-})
-
-// --- Mini palette handler ---
-function selectMiniPaletteColor(hex: string): void {
-  voxelStore.selectedColor = hex
+function updateFromHex() {
+  const hex = pickerHexInput.value.trim()
+  const rgb = hexToRgb(hex)
+  if (!rgb) return
+  pickerSource.value = 'hex'
+  pickerR.value = rgb.r; pickerG.value = rgb.g; pickerB.value = rgb.b
+  const hsv = rgbToHsv(rgb.r, rgb.g, rgb.b)
+  pickerHue.value = hsv.h; pickerSat.value = hsv.s; pickerVal.value = hsv.v
+  const hsl = rgbToHsl(rgb.r, rgb.g, rgb.b)
+  pickerH.value = hsl.h; pickerS.value = hsl.s; pickerL.value = hsl.l
+  nextTick(() => { pickerSource.value = 'hsv' })
 }
+
+function updateFromRgb() {
+  pickerSource.value = 'rgb'
+  const r = Math.max(0, Math.min(255, pickerR.value))
+  const g = Math.max(0, Math.min(255, pickerG.value))
+  const b = Math.max(0, Math.min(255, pickerB.value))
+  pickerR.value = r; pickerG.value = g; pickerB.value = b
+  pickerHexInput.value = rgbToHex(r, g, b)
+  const hsv = rgbToHsv(r, g, b)
+  pickerHue.value = hsv.h; pickerSat.value = hsv.s; pickerVal.value = hsv.v
+  const hsl = rgbToHsl(r, g, b)
+  pickerH.value = hsl.h; pickerS.value = hsl.s; pickerL.value = hsl.l
+  nextTick(() => { pickerSource.value = 'hsv' })
+}
+
+function updateFromHsl() {
+  pickerSource.value = 'hsl'
+  const h = Math.max(0, Math.min(360, pickerH.value))
+  const s = Math.max(0, Math.min(100, pickerS.value))
+  const l = Math.max(0, Math.min(100, pickerL.value))
+  pickerH.value = h; pickerS.value = s; pickerL.value = l
+  const rgb = hslToRgb(h, s, l)
+  pickerR.value = rgb.r; pickerG.value = rgb.g; pickerB.value = rgb.b
+  pickerHexInput.value = rgbToHex(rgb.r, rgb.g, rgb.b)
+  const hsv = rgbToHsv(rgb.r, rgb.g, rgb.b)
+  pickerHue.value = hsv.h; pickerSat.value = hsv.s; pickerVal.value = hsv.v
+  nextTick(() => { pickerSource.value = 'hsv' })
+}
+
+function startSatDrag(e: MouseEvent | TouchEvent) {
+  isDraggingSat.value = true
+  updateSatFromEvent(e)
+}
+function updateSatFromEvent(e: MouseEvent | TouchEvent) {
+  const panel = satPanelRef.value
+  if (!panel) return
+  const rect = panel.getBoundingClientRect()
+  const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX
+  const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY
+  pickerSat.value = Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100))
+  pickerVal.value = Math.max(0, Math.min(100, 100 - ((clientY - rect.top) / rect.height) * 100))
+}
+
+function startHueDrag(e: MouseEvent | TouchEvent) {
+  isDraggingHue.value = true
+  updateHueFromEvent(e)
+}
+function updateHueFromEvent(e: MouseEvent | TouchEvent) {
+  const bar = hueBarRef.value
+  if (!bar) return
+  const rect = bar.getBoundingClientRect()
+  const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX
+  pickerHue.value = Math.max(0, Math.min(360, ((clientX - rect.left) / rect.width) * 360))
+}
+
+function onPickerMove(e: MouseEvent | TouchEvent) {
+  if (isDraggingSat.value) updateSatFromEvent(e)
+  if (isDraggingHue.value) updateHueFromEvent(e)
+}
+function onPickerEnd() {
+  isDraggingSat.value = false
+  isDraggingHue.value = false
+}
+
+function usePickerColor() {
+  if (closestBeadColor.value) {
+    voxelStore.selectedColor = closestBeadColor.value.hex
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('mousemove', onPickerMove)
+  window.addEventListener('mouseup', onPickerEnd)
+  window.addEventListener('touchmove', onPickerMove)
+  window.addEventListener('touchend', onPickerEnd)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('mousemove', onPickerMove)
+  window.removeEventListener('mouseup', onPickerEnd)
+  window.removeEventListener('touchmove', onPickerMove)
+  window.removeEventListener('touchend', onPickerEnd)
+})
 
 // ============================================================
 // Copy / Paste
@@ -856,66 +960,190 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- HSL Color Picker -->
+    <!-- HSV Color Picker -->
     <div class="bg-white rounded-xl border border-black/10 shadow-sm px-4 py-3 space-y-2">
-      <h3 class="text-sm font-bold text-gray-700">HSL 颜色选择器</h3>
+      <h3 class="text-sm font-bold text-gray-700">颜色选择器</h3>
 
-      <!-- Current color swatch -->
-      <div class="flex items-center gap-2">
-        <div class="w-8 h-8 rounded-md border border-gray-200 shadow-inner flex-shrink-0"
-          :style="{ backgroundColor: voxelStore.selectedColor }" />
-        <span class="text-xs font-mono text-gray-600">{{ voxelStore.selectedColor }}</span>
+      <div class="flex gap-1.5 mb-3">
+        <div class="flex bg-gray-100 rounded-lg p-0.5">
+          <button
+            class="text-xs py-1 px-2.5 rounded-md transition-colors"
+            :class="!showFullPalette ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 active:text-gray-700'"
+            @click="showFullPalette = false"
+          >色块</button>
+          <button
+            class="text-xs py-1 px-2.5 rounded-md transition-colors"
+            :class="showFullPalette ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 active:text-gray-700'"
+            @click="showFullPalette = true"
+          >色盘</button>
+        </div>
+        <template v-if="!showFullPalette">
+          <button
+            class="flex-1 text-xs py-1.5 px-2 bg-gray-100 text-gray-600 rounded-lg active:bg-gray-200 transition-colors"
+            @click="showAllColors = !showAllColors"
+          >{{ showAllColors ? '全部' : '当前' }} ({{ displayColors.length }})</button>
+          <button
+            class="text-xs py-1.5 px-2.5 bg-gray-100 text-gray-600 rounded-lg active:bg-gray-200 transition-colors whitespace-nowrap"
+            :class="hueSortEnabled ? 'ring-1 ring-gray-400' : ''"
+            @click="hueSortEnabled = !hueSortEnabled"
+          >色相排序</button>
+        </template>
       </div>
 
-      <!-- HSL canvas 184x52 -->
-      <canvas ref="hslCanvasRef" width="184" height="52"
-        class="w-full rounded-md cursor-crosshair border border-gray-200" @click="onHslCanvasClick" />
+      <!-- 色块模式：颜色网格 -->
+      <template v-if="!showFullPalette">
+        <div v-if="displayColors.length === 0" class="text-xs text-gray-400 text-center py-2">暂无颜色</div>
+        <div v-else class="flex gap-2" style="height: 240px;">
+          <!-- 左侧分类标签 -->
+          <div class="flex flex-col gap-0.5 overflow-y-auto scrollbar-hide w-10 flex-shrink-0">
+            <button
+              v-for="cat in colorCategories"
+              :key="cat"
+              @click="selectedCategory = cat"
+              class="text-[10px] py-1 px-1 rounded transition-colors whitespace-nowrap"
+              :class="selectedCategory === cat
+                ? 'bg-gray-900 text-white font-medium'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'"
+            >{{ cat === 'all' ? '全部' : cat }}</button>
+          </div>
+          <!-- 右侧颜色网格 -->
+          <div class="flex-1 overflow-y-auto scrollbar-hide">
+            <div class="grid grid-cols-5 gap-1.5">
+              <button
+                v-for="color in displayColors"
+                :key="color.color"
+                @click="voxelStore.selectedColor = color.color"
+                class="relative rounded-lg border-2 transition-all duration-150 active:scale-95 flex items-center justify-center"
+                :style="{ backgroundColor: color.color, aspectRatio: '1 / 1' }"
+                :title="`${color.key} (${color.color})`"
+                :class="[
+                  voxelStore.selectedColor?.toUpperCase() === color.color.toUpperCase()
+                    ? 'border-gray-900 ring-2 ring-gray-900/20'
+                    : 'border-gray-200 active:border-gray-400'
+                ]"
+              >
+                <span
+                  class="text-[9px] font-bold leading-none select-none"
+                  :class="isLightColor(color.color) ? 'text-gray-900/70' : 'text-white/80'"
+                >{{ color.key }}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </template>
 
-      <!-- Hue bar -->
-      <canvas ref="hueBarRef" width="184" height="10" class="w-full rounded-sm cursor-pointer border border-gray-200"
-        @click="onHueBarClick" />
+      <!-- 色盘模式：HSV 颜色选择器 -->
+      <template v-else>
+        <div class="space-y-3">
+          <!-- 饱和度/明度面板 -->
+          <div
+            ref="satPanelRef"
+            class="relative rounded-lg cursor-crosshair touch-none select-none overflow-hidden"
+            style="aspect-ratio: 224 / 144;"
+            @mousedown="startSatDrag"
+            @touchstart.prevent="startSatDrag"
+          >
+            <div class="absolute inset-0" :style="{ backgroundColor: `hsl(${pickerHue}, 100%, 50%)` }"></div>
+            <div class="absolute inset-0" style="background: linear-gradient(to right, rgb(255, 255, 255), transparent);"></div>
+            <div class="absolute inset-0" style="background: linear-gradient(transparent, rgb(0, 0, 0));"></div>
+            <div
+              class="absolute w-3.5 h-3.5 rounded-full border-2 border-white shadow-md pointer-events-none"
+              :style="{
+                left: pickerSat + '%',
+                top: (100 - pickerVal) + '%',
+                transform: 'translate(-50%, -50%)',
+                backgroundColor: pickerHex
+              }"
+            ></div>
+          </div>
 
-      <!-- Alpha slider + Hex input -->
-      <div class="flex items-center gap-2">
-        <label class="text-[10px] text-gray-500 w-10">透明度</label>
-        <input v-model.number="pickerAlpha" type="range" min="0" max="255" class="flex-1 accent-gray-900 h-2" />
-        <span class="text-[10px] font-mono text-gray-400 w-6 text-right">{{ pickerAlpha }}</span>
-      </div>
+          <!-- 色相滑块 -->
+          <div
+            ref="hueBarRef"
+            class="relative rounded-full cursor-crosshair touch-none select-none"
+            style="height: 14px; background: linear-gradient(to right, rgb(255, 0, 0) 0%, rgb(255, 255, 0) 17%, rgb(0, 255, 0) 33%, rgb(0, 255, 255) 50%, rgb(0, 0, 255) 67%, rgb(255, 0, 255) 83%, rgb(255, 0, 0) 100%);"
+            @mousedown="startHueDrag"
+            @touchstart.prevent="startHueDrag"
+          >
+            <div
+              class="absolute top-1/2 w-3 h-3 rounded-full border-2 border-white shadow pointer-events-none"
+              :style="{
+                left: (pickerHue / 360 * 100) + '%',
+                transform: 'translate(-50%, -50%)',
+                backgroundColor: `hsl(${pickerHue}, 100%, 50%)`
+              }"
+            ></div>
+          </div>
 
-      <div class="flex items-center gap-2">
-        <label class="text-[10px] text-gray-500 w-10">Hex</label>
-        <input v-model="hexInput" @change="onHexChange"
-          class="flex-1 text-xs font-mono border border-gray-200 rounded px-2 py-1 focus:outline-none focus:border-gray-400" />
-      </div>
+          <!-- 输入框 -->
+          <div class="space-y-1.5">
+            <div class="flex items-center gap-2">
+              <span class="text-[11px] text-gray-500 w-7 flex-shrink-0">HEX</span>
+              <input
+                v-model="pickerHexInput"
+                @change="updateFromHex"
+                @blur="updateFromHex"
+                class="w-full px-1 py-1.5 rounded border border-gray-200 bg-white text-gray-700 text-center outline-none focus:border-gray-400 text-[11px] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none flex-1"
+              />
+            </div>
+            <div class="flex items-center gap-1.5">
+              <span class="text-[11px] text-gray-500 w-7 flex-shrink-0">RGB</span>
+              <input
+                v-model.number="pickerR" type="number" min="0" max="255" placeholder="R"
+                @change="updateFromRgb" @blur="updateFromRgb"
+                class="w-full px-1 py-1.5 rounded border border-gray-200 bg-white text-gray-700 text-center outline-none focus:border-gray-400 text-[11px] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none flex-1"
+              />
+              <input
+                v-model.number="pickerG" type="number" min="0" max="255" placeholder="G"
+                @change="updateFromRgb" @blur="updateFromRgb"
+                class="w-full px-1 py-1.5 rounded border border-gray-200 bg-white text-gray-700 text-center outline-none focus:border-gray-400 text-[11px] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none flex-1"
+              />
+              <input
+                v-model.number="pickerB" type="number" min="0" max="255" placeholder="B"
+                @change="updateFromRgb" @blur="updateFromRgb"
+                class="w-full px-1 py-1.5 rounded border border-gray-200 bg-white text-gray-700 text-center outline-none focus:border-gray-400 text-[11px] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none flex-1"
+              />
+            </div>
+            <div class="flex items-center gap-1.5">
+              <span class="text-[11px] text-gray-500 w-7 flex-shrink-0">HSL</span>
+              <input
+                v-model.number="pickerH" type="number" min="0" max="360" placeholder="H"
+                @change="updateFromHsl" @blur="updateFromHsl"
+                class="w-full px-1 py-1.5 rounded border border-gray-200 bg-white text-gray-700 text-center outline-none focus:border-gray-400 text-[11px] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none flex-1"
+              />
+              <input
+                v-model.number="pickerS" type="number" min="0" max="100" placeholder="S"
+                @change="updateFromHsl" @blur="updateFromHsl"
+                class="w-full px-1 py-1.5 rounded border border-gray-200 bg-white text-gray-700 text-center outline-none focus:border-gray-400 text-[11px] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none flex-1"
+              />
+              <input
+                v-model.number="pickerL" type="number" min="0" max="100" placeholder="L"
+                @change="updateFromHsl" @blur="updateFromHsl"
+                class="w-full px-1 py-1.5 rounded border border-gray-200 bg-white text-gray-700 text-center outline-none focus:border-gray-400 text-[11px] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none flex-1"
+              />
+            </div>
+          </div>
 
-      <!-- Mini palette (30 preset colors, show in grid) -->
-      <div class="grid grid-cols-10 gap-1 pt-1">
-        <button v-for="c in miniPalette" :key="c" @click="selectMiniPaletteColor(c)" :title="c"
-          class="w-full rounded-sm border transition-all duration-100 hover:scale-110 active:scale-95"
-          :style="{ backgroundColor: c, aspectRatio: '1 / 1' }"
-          :class="voxelStore.selectedColor === c ? 'border-gray-900 ring-1 ring-gray-900/30' : 'border-gray-200'" />
-      </div>
-    </div>
-
-    <!-- Palette Colors -->
-    <div class="bg-white rounded-xl border border-black/10 shadow-sm px-4 py-3 space-y-2">
-      <h3 class="text-sm font-bold text-gray-700">
-        色板
-        <span class="font-normal text-gray-400 ml-1">({{ activeBeadPalette.length }})</span>
-      </h3>
-      <div v-if="paletteColors.length === 0" class="text-xs text-gray-400 py-2 text-center">
-        无色板数据
-      </div>
-      <div v-else class="grid grid-cols-6 gap-1.5">
-        <button v-for="color in paletteColors" :key="color.hex" @click="voxelStore.selectedColor = color.hex"
-          :title="color.hex"
-          class="relative rounded-md border-2 transition-all duration-150 active:scale-95 flex items-center justify-center"
-          :style="{ backgroundColor: color.hex, aspectRatio: '1 / 1' }" :class="[
-            voxelStore.selectedColor === color.hex
-              ? 'border-gray-900 ring-2 ring-gray-900/20'
-              : 'border-gray-200 hover:border-gray-400',
-          ]" />
-      </div>
+          <!-- 最近拼豆色匹配 -->
+          <div v-if="closestBeadColor" class="p-2.5 bg-gray-100 rounded-lg space-y-2">
+            <div class="flex items-center gap-2">
+              <div class="w-6 h-6 rounded border border-gray-300 flex-shrink-0" :style="{ backgroundColor: pickerHex }"></div>
+              <svg class="w-3 h-3 text-gray-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path>
+              </svg>
+              <div class="w-6 h-6 rounded border border-gray-300 flex-shrink-0" :style="{ backgroundColor: closestBeadColor.hex }"></div>
+              <div class="text-xs text-gray-600 min-w-0">
+                <span class="font-semibold">{{ closestBeadColor.displayKey }}</span>
+                <span class="text-gray-500 ml-1">{{ closestBeadColor.hex }}</span>
+              </div>
+            </div>
+            <button
+              @click="usePickerColor"
+              class="w-full text-xs py-1.5 rounded-lg bg-blue-500 text-white font-medium active:bg-blue-600 transition-colors"
+            >使用此颜色</button>
+          </div>
+        </div>
+      </template>
     </div>
 
     <!-- 图层管理 -->
