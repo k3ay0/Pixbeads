@@ -53,6 +53,7 @@ const mode = ref<"crop" | "grid">("crop");
 // Grid alignment state
 const gridCols = ref(10);
 const gridRows = ref(10);
+const gridStep = ref(16); // 颜色量化步长
 const ocrEnabled = ref(false);
 
 // Canvas view transform (for grid mode panning and zooming)
@@ -100,6 +101,111 @@ const cropStart = ref({ x: 0, y: 0, width: 0, height: 0 });
 
 const HANDLE_SIZE = 12;
 const MIN_CROP_SIZE = 20;
+const SNAP_THRESHOLD = 15; // 吸附阈值（像素）
+
+// 检测到的边缘位置（用于智能吸附）
+const detectedEdgesX = ref<number[]>([]);
+const detectedEdgesY = ref<number[]>([]);
+
+// 智能吸附函数 - 检测值是否接近检测到的边缘
+function snapToEdge(value: number): number {
+  // 检查检测到的线条边缘
+  for (const edge of detectedEdgesX.value) {
+    if (Math.abs(value - edge) < SNAP_THRESHOLD) {
+      return edge;
+    }
+  }
+  for (const edge of detectedEdgesY.value) {
+    if (Math.abs(value - edge) < SNAP_THRESHOLD) {
+      return edge;
+    }
+  }
+  return value;
+}
+
+// 检测图片中的边缘线条
+function detectEdges() {
+  if (!img.value) return;
+  
+  const tempCanvas = document.createElement('canvas');
+  const ctx = tempCanvas.getContext('2d')!;
+  const { width, height } = getEffectiveDimensions();
+  tempCanvas.width = width;
+  tempCanvas.height = height;
+  
+  // 绘制图片
+  ctx.save();
+  applyTransforms(ctx, width, height);
+  ctx.drawImage(img.value, 0, 0, width, height);
+  ctx.restore();
+  
+  const imageData = ctx.getImageData(0, 0, width, height);
+  const data = imageData.data;
+  
+  // 转换为灰度并检测边缘
+  const gray = new Uint8Array(width * height);
+  for (let i = 0; i < gray.length; i++) {
+    const idx = i * 4;
+    gray[i] = Math.round(0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2]);
+  }
+  
+  // 使用 Sobel 算子检测边缘
+  const edgesX = new Set<number>();
+  const edgesY = new Set<number>();
+  
+  // 检测水平线条（y方向变化大）
+  for (let y = 1; y < height - 1; y++) {
+    let edgeStrength = 0;
+    for (let x = 1; x < width - 1; x++) {
+      const idx = y * width + x;
+      const sobelY = -gray[(y-1)*width + x-1] - 2*gray[(y-1)*width + x] - gray[(y-1)*width + x+1]
+                    +gray[(y+1)*width + x-1] + 2*gray[(y+1)*width + x] + gray[(y+1)*width + x+1];
+      edgeStrength += Math.abs(sobelY);
+    }
+    edgeStrength /= width;
+    if (edgeStrength > 50) { // 阈值
+      edgesY.add(y);
+    }
+  }
+  
+  // 检测垂直线条（x方向变化大）
+  for (let x = 1; x < width - 1; x++) {
+    let edgeStrength = 0;
+    for (let y = 1; y < height - 1; y++) {
+      const idx = y * width + x;
+      const sobelX = -gray[(y-1)*width + x-1] - 2*gray[y*width + x-1] - gray[(y+1)*width + x-1]
+                    +gray[(y-1)*width + x+1] + 2*gray[y*width + x+1] + gray[(y+1)*width + x+1];
+      edgeStrength += Math.abs(sobelX);
+    }
+    edgeStrength /= height;
+    if (edgeStrength > 50) { // 阈值
+      edgesX.add(x);
+    }
+  }
+  
+  // 合并相近的边缘（减少冗余）
+  const mergeThreshold = 5;
+  const mergedEdgesX = mergeNearbyEdges([...edgesX], mergeThreshold);
+  const mergedEdgesY = mergeNearbyEdges([...edgesY], mergeThreshold);
+  
+  // 转换为显示坐标
+  const s = scale.value;
+  detectedEdgesX.value = mergedEdgesX.map(e => Math.round(e * s));
+  detectedEdgesY.value = mergedEdgesY.map(e => Math.round(e * s));
+}
+
+// 合并相近的边缘
+function mergeNearbyEdges(edges: number[], threshold: number): number[] {
+  if (edges.length === 0) return [];
+  edges.sort((a, b) => a - b);
+  const merged: number[] = [edges[0]];
+  for (let i = 1; i < edges.length; i++) {
+    if (edges[i] - merged[merged.length - 1] > threshold) {
+      merged.push(edges[i]);
+    }
+  }
+  return merged;
+}
 
 // Load image
 onMounted(() => {
@@ -110,6 +216,7 @@ onMounted(() => {
     fitImageToContainer();
     initCrop();
     initGridCrop();
+    detectEdges(); // 检测图片边缘
     render();
   };
   image.src = props.imageSrc;
@@ -237,12 +344,38 @@ function render() {
   ctx.restore();
 
   if (mode.value === "crop") {
+    renderDetectedEdges(ctx); // 显示检测到的边缘
     renderCropOverlay(ctx);
   } else {
     renderGridOverlay(ctx);
   }
 
   ctx.restore();
+}
+
+// 渲染检测到的边缘线
+function renderDetectedEdges(ctx: CanvasRenderingContext2D) {
+  ctx.strokeStyle = "rgba(99, 102, 241, 0.5)"; // 紫色半透明
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]); // 虚线
+  
+  // 绘制垂直边缘线
+  for (const x of detectedEdgesX.value) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, displayHeight.value);
+    ctx.stroke();
+  }
+  
+  // 绘制水平边缘线
+  for (const y of detectedEdgesY.value) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(displayWidth.value, y);
+    ctx.stroke();
+  }
+  
+  ctx.setLineDash([]); // 重置虚线
 }
 
 function renderCropOverlay(ctx: CanvasRenderingContext2D) {
@@ -637,10 +770,18 @@ function onPointerMove(e: MouseEvent | TouchEvent) {
       case "move":
         newX = Math.max(0, Math.min(maxW - c.width, c.x + dx));
         newY = Math.max(0, Math.min(maxH - c.height, c.y + dy));
+        // 智能吸附
+        newX = snapToEdge(newX);
+        newY = snapToEdge(newY);
         break;
       case "nw":
         newX = Math.max(0, Math.min(c.x + c.width - MIN_CROP_SIZE, c.x + dx));
         newY = Math.max(0, Math.min(c.y + c.height - MIN_CROP_SIZE, c.y + dy));
+        newW = c.x + c.width - newX;
+        newH = c.y + c.height - newY;
+        // 智能吸附
+        newX = snapToEdge(newX);
+        newY = snapToEdge(newY);
         newW = c.x + c.width - newX;
         newH = c.y + c.height - newY;
         break;
@@ -648,29 +789,50 @@ function onPointerMove(e: MouseEvent | TouchEvent) {
         newY = Math.max(0, Math.min(c.y + c.height - MIN_CROP_SIZE, c.y + dy));
         newW = Math.max(MIN_CROP_SIZE, Math.min(maxW - c.x, c.width + dx));
         newH = c.y + c.height - newY;
+        // 智能吸附
+        newY = snapToEdge(newY);
+        newW = snapToEdge(newW);
+        newH = c.y + c.height - newY;
         break;
       case "sw":
         newX = Math.max(0, Math.min(c.x + c.width - MIN_CROP_SIZE, c.x + dx));
         newW = c.x + c.width - newX;
         newH = Math.max(MIN_CROP_SIZE, Math.min(maxH - c.y, c.height + dy));
+        // 智能吸附
+        newX = snapToEdge(newX);
+        newH = snapToEdge(newH);
+        newW = c.x + c.width - newX;
         break;
       case "se":
         newW = Math.max(MIN_CROP_SIZE, Math.min(maxW - c.x, c.width + dx));
         newH = Math.max(MIN_CROP_SIZE, Math.min(maxH - c.y, c.height + dy));
+        // 智能吸附
+        newW = snapToEdge(newW);
+        newH = snapToEdge(newH);
         break;
       case "n":
         newY = Math.max(0, Math.min(c.y + c.height - MIN_CROP_SIZE, c.y + dy));
         newH = c.y + c.height - newY;
+        // 智能吸附
+        newY = snapToEdge(newY);
+        newH = c.y + c.height - newY;
         break;
       case "s":
         newH = Math.max(MIN_CROP_SIZE, Math.min(maxH - c.y, c.height + dy));
+        // 智能吸附
+        newH = snapToEdge(newH);
         break;
       case "w":
         newX = Math.max(0, Math.min(c.x + c.width - MIN_CROP_SIZE, c.x + dx));
         newW = c.x + c.width - newX;
+        // 智能吸附
+        newX = snapToEdge(newX);
+        newW = c.x + c.width - newX;
         break;
       case "e":
         newW = Math.max(MIN_CROP_SIZE, Math.min(maxW - c.x, c.width + dx));
+        // 智能吸附
+        newW = snapToEdge(newW);
         break;
     }
 
@@ -707,6 +869,9 @@ function onPointerMove(e: MouseEvent | TouchEvent) {
             0,
             Math.min(displayHeight.value - c.height, c.y + dy)
           );
+          // 智能吸附
+          newX = snapToEdge(newX);
+          newY = snapToEdge(newY);
           break;
         case "nw":
           newX = Math.max(0, Math.min(c.x + c.width - MIN_CROP_SIZE, c.x + dx));
@@ -714,6 +879,11 @@ function onPointerMove(e: MouseEvent | TouchEvent) {
             0,
             Math.min(c.y + c.height - MIN_CROP_SIZE, c.y + dy)
           );
+          newW = c.x + c.width - newX;
+          newH = c.y + c.height - newY;
+          // 智能吸附
+          newX = snapToEdge(newX);
+          newY = snapToEdge(newY);
           newW = c.x + c.width - newX;
           newH = c.y + c.height - newY;
           break;
@@ -727,6 +897,10 @@ function onPointerMove(e: MouseEvent | TouchEvent) {
             Math.min(displayWidth.value - c.x, c.width + dx)
           );
           newH = c.y + c.height - newY;
+          // 智能吸附
+          newY = snapToEdge(newY);
+          newW = snapToEdge(newW);
+          newH = c.y + c.height - newY;
           break;
         case "sw":
           newX = Math.max(0, Math.min(c.x + c.width - MIN_CROP_SIZE, c.x + dx));
@@ -735,6 +909,10 @@ function onPointerMove(e: MouseEvent | TouchEvent) {
             MIN_CROP_SIZE,
             Math.min(displayHeight.value - c.y, c.height + dy)
           );
+          // 智能吸附
+          newX = snapToEdge(newX);
+          newH = snapToEdge(newH);
+          newW = c.x + c.width - newX;
           break;
         case "se":
           newW = Math.max(
@@ -745,6 +923,9 @@ function onPointerMove(e: MouseEvent | TouchEvent) {
             MIN_CROP_SIZE,
             Math.min(displayHeight.value - c.y, c.height + dy)
           );
+          // 智能吸附
+          newW = snapToEdge(newW);
+          newH = snapToEdge(newH);
           break;
         case "n":
           newY = Math.max(
@@ -752,15 +933,23 @@ function onPointerMove(e: MouseEvent | TouchEvent) {
             Math.min(c.y + c.height - MIN_CROP_SIZE, c.y + dy)
           );
           newH = c.y + c.height - newY;
+          // 智能吸附
+          newY = snapToEdge(newY);
+          newH = c.y + c.height - newY;
           break;
         case "s":
           newH = Math.max(
             MIN_CROP_SIZE,
             Math.min(displayHeight.value - c.y, c.height + dy)
           );
+          // 智能吸附
+          newH = snapToEdge(newH);
           break;
         case "w":
           newX = Math.max(0, Math.min(c.x + c.width - MIN_CROP_SIZE, c.x + dx));
+          newW = c.x + c.width - newX;
+          // 智能吸附
+          newX = snapToEdge(newX);
           newW = c.x + c.width - newX;
           break;
         case "e":
@@ -768,6 +957,8 @@ function onPointerMove(e: MouseEvent | TouchEvent) {
             MIN_CROP_SIZE,
             Math.min(displayWidth.value - c.x, c.width + dx)
           );
+          // 智能吸附
+          newW = snapToEdge(newW);
           break;
       }
 
@@ -977,7 +1168,7 @@ function handleGridConfirm() {
   const pixelColors: string[][] = [];
 
   // Border trim amount (10% of cell size, at least 1 pixel)
-  const borderTrim = Math.max(1, Math.floor(Math.min(cellW, cellH) * 0.1));
+  const borderTrim = Math.max(1, Math.min(cellW, cellH) * 0.1);
 
   for (let row = 0; row < rows; row++) {
     const rowColors: string[] = [];
@@ -988,7 +1179,7 @@ function handleGridConfirm() {
       const h = Math.round(cellH);
 
       const imageData = resultCtx.getImageData(x, y, w, h);
-      const dominantColor = getDominantColorByArea(imageData, borderTrim);
+      const dominantColor = getDominantColorByArea(imageData, borderTrim, { step: gridStep.value });
       rowColors.push(dominantColor);
     }
     pixelColors.push(rowColors);
@@ -1108,6 +1299,50 @@ onUnmounted(() => {
 
     <!-- Grid info (only in grid mode) -->
     <div v-if="mode === 'grid'" class="text-center py-2 bg-gray-900/60">
+      <!-- 智能识别（OCR） -->
+      <div class="flex items-center justify-center gap-2 mb-2">
+        <span class="text-white/60 text-sm select-none">智能识别（OCR）</span>
+        <button
+          @click="ocrEnabled = !ocrEnabled"
+          :disabled="ocrLoading"
+          :class="[
+            'relative w-10 h-6 rounded-full transition-colors',
+            ocrLoading ? 'opacity-50 cursor-not-allowed' : '',
+            ocrEnabled ? 'bg-brand-500' : 'bg-gray-600'
+          ]"
+        >
+          <span
+            :class="[
+              'absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-transform',
+              ocrEnabled ? 'translate-x-4' : 'translate-x-0'
+            ]"
+          />
+        </button>
+      </div>
+      <!-- OCR 加载状态 -->
+      <div v-if="ocrProgress" class="mb-2">
+        <div class="flex items-center justify-center gap-2">
+          <div v-if="ocrProgress.phase !== 'ready' && ocrProgress.phase !== 'error'" class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+          <svg v-else-if="ocrProgress.phase === 'ready'" class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+          </svg>
+          <svg v-else class="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+          <span class="text-xs text-white/60">
+            {{ ocrProgress.phaseLabel }}
+          </span>
+        </div>
+        <!-- 加载中显示进度条 -->
+        <div v-if="ocrProgress.percent != null" class="mt-2 w-full bg-white/10 rounded-full h-1.5">
+          <div
+            class="bg-brand-500 h-1.5 rounded-full transition-all duration-300"
+            :style="{ width: `${Math.min(100, Math.max(0, ocrProgress.percent))}%` }"
+          />
+        </div>
+      </div>
+
+      <!-- 网格参数 -->
       <div class="flex items-center justify-center gap-4">
         <label class="flex items-center gap-2">
           <span class="text-white/60 text-sm">横向</span>
@@ -1131,47 +1366,17 @@ onUnmounted(() => {
           />
           <span class="text-white/60 text-sm">格</span>
         </label>
-        <label class="flex items-center gap-2 cursor-pointer">
-          <span class="text-white/60 text-sm select-none">智能识别（OCR）</span>
-          <button
-            @click="ocrEnabled = !ocrEnabled"
-            :disabled="ocrLoading"
-            :class="[
-              'relative w-10 h-6 rounded-full transition-colors',
-              ocrLoading ? 'opacity-50 cursor-not-allowed' : '',
-              ocrEnabled ? 'bg-brand-500' : 'bg-gray-600'
-            ]"
-          >
-            <span
-              :class="[
-                'absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-transform',
-                ocrEnabled ? 'translate-x-4' : 'translate-x-0'
-              ]"
-            />
-          </button>
+        <label class="flex items-center gap-2">
+          <span class="text-white/60 text-sm">步长</span>
+          <input
+            v-model.number="gridStep"
+            type="number"
+            min="1"
+            max="64"
+            class="w-16 px-2 py-1 bg-gray-800 text-white text-center rounded border border-gray-600 focus:border-brand-500 focus:outline-none"
+          />
+          <span class="text-white/60 text-sm w-3"></span>
         </label>
-        <!-- OCR 加载状态 -->
-        <div v-if="ocrProgress" class="mt-3">
-          <div class="flex items-center gap-2">
-            <div v-if="ocrProgress.phase !== 'ready' && ocrProgress.phase !== 'error'" class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            <svg v-else-if="ocrProgress.phase === 'ready'" class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-            </svg>
-            <svg v-else class="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-            <span class="text-xs text-white/60">
-              {{ ocrProgress.phaseLabel }}
-            </span>
-          </div>
-          <!-- 加载中显示进度条 -->
-          <div v-if="ocrProgress.percent != null" class="mt-2 w-full bg-white/10 rounded-full h-1.5">
-            <div
-              class="bg-brand-500 h-1.5 rounded-full transition-all duration-300"
-              :style="{ width: `${Math.min(100, Math.max(0, ocrProgress.percent))}%` }"
-            />
-          </div>
-        </div>
       </div>
     </div>
 
@@ -1198,7 +1403,7 @@ onUnmounted(() => {
         v-if="mode === 'crop'"
         class="absolute bottom-6 left-1/2 -translate-x-1/2 bg-black/60 text-white/80 text-xs px-4 py-2 rounded-full pointer-events-none animate-pulse"
       >
-        拖动四角或边缘调整 · 滚轮缩放 · 拖动空白平移
+        拖动四角或边缘调整 · 滚轮缩放 · 自动吸附线条
       </div>
       <div
         v-if="mode === 'grid'"
