@@ -34,6 +34,7 @@ import type { PbdsImportResult } from './utils/downloader'
 import type { IroningPreviewConfig } from './utils/ironingPreview'
 import { DEFAULT_IRONING_CONFIG } from './utils/ironingPreview'
 import type { MappedPixel } from './types'
+import { TRANSPARENT_KEY, transparentColorData } from './types'
 
 // Components
 import DownloadSettingsModal from './components/DownloadSettingsModal.vue'
@@ -254,36 +255,29 @@ async function handleGridConfirm(data: { canvas: HTMLCanvasElement, cols: number
     rgb: { r: c.rgb.r, g: c.rgb.g, b: c.rgb.b }
   }))
 
-  // Oklab 色彩匹配 - 将每个 RGB 颜色映射到最近的拼豆颜色
-  const mappedPixelData: MappedPixel[][] = data.pixelColors.map(row =>
-    row.map(color => {
-      const rgb = parseRgb(color)
-      const closest = findClosestPaletteColor(rgb, palette)
-      return { key: closest.key, color: closest.hex }
-    })
-  )
-
-  // OCR 识别色号
+  // OCR 模式下跳过 Oklab 色彩匹配，直接使用已在 EmbeddedCropper 中匹配好的色号
+  let mappedPixelData: MappedPixel[][]
   if (data.ocrEnabled) {
-    try {
-      ocrProgress.value = { phase: 'loading', phaseLabel: '加载模型中', percent: 0 }
-      const ocrResults = await ocrRecognition.recognizeGrid(
-        data.canvas, data.cols, data.rows,
-        (info) => { ocrProgress.value = info }
-      )
-      for (const result of ocrResults) {
-        if (mappedPixelData[result.row] && mappedPixelData[result.row][result.col]) {
-          mappedPixelData[result.row][result.col].ocrKey = result.text
-          mappedPixelData[result.row][result.col].ocrConfidence = result.confidence
+    mappedPixelData = data.pixelColors.map(row =>
+      row.map(hex => {
+        // 无 OCR 色号的空格子 → TRANSPARENT_KEY
+        if (hex === TRANSPARENT_KEY) {
+          return { ...transparentColorData }
         }
-      }
-      ocrProgress.value = null
-    } catch (err) {
-      ocrProgress.value = null
-      ocrError.value = 'OCR 识别失败，已使用颜色匹配结果'
-      console.error('[OCR] recognition failed:', err)
-      setTimeout(() => { ocrError.value = null }, 3000)
-    }
+        const hexLower = hex.replace('#', '').toUpperCase()
+        const match = palette.find(c => c.hex.replace('#', '').toUpperCase() === hexLower)
+        return match ? { key: match.key, color: match.hex } : { key: '?', color: hex }
+      })
+    )
+  } else {
+    // Oklab 色彩匹配 - 将每个 RGB 颜色映射到最近的拼豆颜色
+    mappedPixelData = data.pixelColors.map(row =>
+      row.map(color => {
+        const rgb = parseRgb(color)
+        const closest = findClosestPaletteColor(rgb, palette)
+        return { key: closest.key, color: closest.hex }
+      })
+    )
   }
 
   // 设置像素数据

@@ -6,6 +6,7 @@ import { usePaletteStore } from "../stores/paletteStore";
 import { useOcrRecognition } from "../composables/useOcrRecognition";
 import { median, iqrFilter, inferGridFromOcrBoxes, inferGridFromEdges, detectGridDimensions, type GridDimensionsResult } from "../utils/gridDetection";
 import colorSystemMappingJson from "../data/colorSystemMapping.json";
+import { TRANSPARENT_KEY } from "../types";
 
 const props = defineProps<{
   imageSrc: string;
@@ -78,10 +79,12 @@ interface LegendEntry {
   bbox: { x: number, y: number, width: number, height: number }
 }
 const legendData = ref<Map<string, LegendEntry>>(new Map())
+const detectedLegendBrand = ref<string>('')  // 检测到的图例品牌，用于 getColorForCode 精确匹配
 const autoGridCols = ref(0)
 const inferredGrid = ref<{ rows: number; cols: number; confidence: number }>({ rows: 0, cols: 0, confidence: 0 })
 const autoGridRows = ref(0)
 const detectionConfidence = ref<GridDimensionsResult>({ rows: 0, cols: 0, confidence: 0, method: "手动输入" })
+const ocrLegendLines = ref<readonly { text: string, box: { points: readonly {x:number,y:number}[] } }[]>([])
 
 // Editable grid override for auto-detected dimensions
 const isEditingGrid = ref(autoGridCols.value === 0 && autoGridRows.value === 0)
@@ -407,22 +410,35 @@ function render() {
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
 
-  // 两个模式都应用拖动和缩放
-  ctx.save();
-  ctx.translate(canvasTranslateX.value, canvasTranslateY.value);
-  ctx.scale(canvasScale.value, canvasScale.value);
+  // Non-ocr-verify/diff-view: draw background image + overlays with canvas transform
+  if (!(ocrEnabled.value && (ocrStep.value === 'ocr-verify' || ocrStep.value === 'diff-view'))) {
+    ctx.save();
+    ctx.translate(canvasTranslateX.value, canvasTranslateY.value);
+    ctx.scale(canvasScale.value, canvasScale.value);
 
-  // 绘制图片
-  ctx.save();
-  applyTransforms(ctx, displayWidth.value, displayHeight.value);
-  ctx.drawImage(img.value, 0, 0, displayWidth.value, displayHeight.value);
-  ctx.restore();
+    // 绘制图片
+    ctx.save();
+    applyTransforms(ctx, displayWidth.value, displayHeight.value);
+    ctx.drawImage(img.value, 0, 0, displayWidth.value, displayHeight.value);
+    ctx.restore();
 
-  // Pattern-crop: show grid overlay regardless of mode
-  if (ocrEnabled.value && ocrStep.value === 'pattern-crop') {
-    renderGridOverlay(ctx);
-  } else if (ocrEnabled.value && ocrStep.value === 'ocr-verify') {
-    // Draw legend canvas image centered in the canvas area
+    // Pattern-crop: show grid overlay
+    if (ocrEnabled.value && ocrStep.value === 'pattern-crop') {
+      renderGridOverlay(ctx);
+    } else if (ocrEnabled.value && ocrStep.value === 'legend-crop') {
+      renderLegendCropOverlay(ctx);
+    } else if (mode.value === "crop") {
+      renderDetectedEdges(ctx);
+      renderCropOverlay(ctx);
+    } else {
+      renderGridOverlay(ctx);
+    }
+
+    ctx.restore();
+  }
+
+  // ocr-verify: draw legend canvas directly (outside transform, raw canvas coords)
+  if (ocrEnabled.value && ocrStep.value === 'ocr-verify') {
     if (legendCanvas.value) {
       const lc = legendCanvas.value;
       // Scale legend image to fit within canvas, preserving aspect ratio
@@ -443,12 +459,10 @@ function render() {
         const bw = entry.bbox.width * drawScale;
         const bh = entry.bbox.height * drawScale;
 
-        // Green box for entries with both code and quantity parsed
         ctx.strokeStyle = '#22c55e';
         ctx.lineWidth = 2;
         ctx.strokeRect(bx, by, bw, bh);
 
-        // Draw extracted code and quantity text
         ctx.fillStyle = '#22c55e';
         ctx.font = `bold ${Math.max(11, 12 * drawScale)}px sans-serif`;
         ctx.textBaseline = 'bottom';
@@ -456,7 +470,6 @@ function render() {
         ctx.fillText(label, bx, by - 2);
       }
     } else {
-      // Legend canvas not ready yet — show loading text
       ctx.fillStyle = 'rgba(0,0,0,0.4)';
       ctx.font = '14px sans-serif';
       ctx.textAlign = 'center';
@@ -464,8 +477,10 @@ function render() {
       ctx.fillText('正在识别图例...', canvas.width / 2, canvas.height / 2);
       ctx.textAlign = 'start';
     }
-  } else if (ocrEnabled.value && ocrStep.value === 'diff-view') {
-    // Draw pattern grid with matched colors OR slice gallery
+  }
+
+  // diff-view: draw pattern grid or slice gallery (outside transform, raw canvas coords)
+  if (ocrEnabled.value && ocrStep.value === 'diff-view') {
     if (colorSlices.value.length > 0 && selectedDiffColor.value) {
       // === Slice Gallery Mode ===
       const slices = colorSlices.value
@@ -571,9 +586,23 @@ function render() {
         const x = offsetX + cell.col * cellSize
         const y = offsetY + cell.row * cellSize
         
-        // Fill with matched hex color
-        ctx.fillStyle = cell.hex
-        ctx.fillRect(x, y, cellSize, cellSize)
+        if (cell.code === TRANSPARENT_KEY) {
+          // 空格子：白色背景 + 斜线标记
+          ctx.fillStyle = '#fafafa'
+          ctx.fillRect(x, y, cellSize, cellSize)
+          ctx.strokeStyle = '#d1d5db'
+          ctx.lineWidth = 0.5
+          ctx.beginPath()
+          ctx.moveTo(x, y)
+          ctx.lineTo(x + cellSize, y + cellSize)
+          ctx.moveTo(x + cellSize, y)
+          ctx.lineTo(x, y + cellSize)
+          ctx.stroke()
+        } else {
+          // Fill with matched hex color
+          ctx.fillStyle = cell.hex
+          ctx.fillRect(x, y, cellSize, cellSize)
+        }
         
         // Highlight selected diff color
         if (selectedDiffColor.value && cell.code === selectedDiffColor.value) {
@@ -612,18 +641,7 @@ function render() {
       ctx.fillText('正在提取颜色...', canvas.width / 2, canvas.height / 2);
       ctx.textAlign = 'start';
     }
-  } else if (mode.value === "crop") {
-    if (ocrEnabled.value && ocrStep.value === 'legend-crop') {
-      renderLegendCropOverlay(ctx);
-    } else {
-      renderDetectedEdges(ctx); // 显示检测到的边缘
-      renderCropOverlay(ctx);
-    }
-  } else {
-    renderGridOverlay(ctx);
   }
-
-  ctx.restore();
 }
 
 // 渲染检测到的边缘线
@@ -856,7 +874,7 @@ function onPointerDown(e: MouseEvent | TouchEvent) {
   const x = (clientX - rect.left) * (canvas.width / rect.width);
   const y = (clientY - rect.top) * (canvas.height / rect.height);
 
-  const useGridMode = mode.value === "grid" || (ocrEnabled.value && ocrStep.value === 'pattern-crop');
+  const useGridMode = (mode.value === "grid" && !ocrEnabled.value) || (ocrEnabled.value && ocrStep.value === 'pattern-crop');
   if (!useGridMode) {
     const hitMode = getCropHitMode(x, y);
     dragMode.value = hitMode;
@@ -887,7 +905,7 @@ function onPointerMove(e: MouseEvent | TouchEvent) {
   const x = (clientX - rect.left) * (canvas.width / rect.width);
   const y = (clientY - rect.top) * (canvas.height / rect.height);
 
-  const useGridMode = mode.value === "grid" || (ocrEnabled.value && ocrStep.value === 'pattern-crop');
+  const useGridMode = (mode.value === "grid" && !ocrEnabled.value) || (ocrEnabled.value && ocrStep.value === 'pattern-crop');
   if (!useGridMode) {
     if (!dragMode.value) {
       const hitMode = getCropHitMode(x, y);
@@ -1141,7 +1159,7 @@ function handleGridReset() {
 }
 
 // Get step index for comparison
-const stepOrder: OcrStep[] = ['legend-crop', 'pattern-crop', 'ocr-verify', 'diff-view']
+const stepOrder: OcrStep[] = ['legend-crop', 'ocr-verify', 'pattern-crop', 'diff-view']
 function getStepIndex(step: OcrStep): number {
   return stepOrder.indexOf(step)
 }
@@ -1208,9 +1226,27 @@ function handleLegendConfirm() {
   resultCtx.drawImage(tempCanvas, imgRect.x, imgRect.y, imgRect.width, imgRect.height, 0, 0, imgRect.width, imgRect.height);
   legendCanvas.value = resultCanvas;
   console.log('[OCR] 图例裁剪完成，画布尺寸:', resultCanvas.width, 'x', resultCanvas.height);
-  ocrStep.value = 'pattern-crop';
-  isLegendCrop.value = false;
-  initGridCrop(); // Reset grid crop to upper-center square when entering step 2
+  
+  // Show overlay and run OCR immediately
+  showProcessingOverlay.value = true;
+  processingMessage.value = '正在识别图例...';
+  processingProgress.value = { phase: 'loading', percent: 0 };
+  
+  nextTick(async () => {
+    try {
+      await parseLegendWithOcrWithOverlay();
+      console.log('[OCR] 图例识别完成')
+    } catch (err) {
+      console.error('[OCR] 图例识别失败:', err)
+      processingMessage.value = '识别失败，请重试'
+    } finally {
+      setTimeout(() => {
+        showProcessingOverlay.value = false;
+        ocrStep.value = 'ocr-verify';
+        isLegendCrop.value = false;
+      }, 500)
+    }
+  });
 }
 
 function handlePatternConfirm() {
@@ -1240,26 +1276,27 @@ function handlePatternConfirm() {
   resultCtx.drawImage(tempCanvas, imgRect.x, imgRect.y, imgRect.width, imgRect.height, 0, 0, imgRect.width, imgRect.height);
   patternCanvas.value = resultCanvas;
   
-  // Show fullscreen overlay and start OCR processing
+  // Show fullscreen overlay and start color extraction only (OCR already done)
   showProcessingOverlay.value = true;
-  processingMessage.value = '正在识别图例...';
-  processingProgress.value = { phase: 'loading', percent: 0 };
+  processingMessage.value = '正在提取图纸颜色...';
+  processingProgress.value = { phase: 'extracting', percent: 0 };
   
-  console.log('[OCR] 图纸裁剪完成，开始OCR处理流程')
+  console.log('[OCR] 图纸裁剪完成，开始颜色提取')
+  console.log(`[OCR] 图案画布: ${patternCanvas.value.width}x${patternCanvas.value.height}, 图例画布: ${legendCanvas.value!.width}x${legendCanvas.value!.height}`)
   
-  // Start OCR parsing with overlay progress
+  // Start color extraction with overlay progress
   nextTick(async () => {
     try {
-      await parseLegendWithOcrWithOverlay();
+      runGridDetection() // Detect grid now that pattern canvas is available
       await extractPatternColorsWithOverlay();
-      console.log('[OCR] 全部处理完成')
+      console.log('[OCR] 颜色提取完成')
     } catch (err) {
-      console.error('[OCR] 处理失败:', err)
-      processingMessage.value = '处理失败，请重试'
+      console.error('[OCR] 提取失败:', err)
+      processingMessage.value = '提取失败，请重试'
     } finally {
       setTimeout(() => {
         showProcessingOverlay.value = false;
-        ocrStep.value = 'ocr-verify';
+        ocrStep.value = 'diff-view';
       }, 500)
     }
   });
@@ -1283,9 +1320,6 @@ function getOcrPhaseLabel(phase: string): string {
 
 async function parseLegendWithOcr() {
   if (!legendCanvas.value) return
-
-  // Dynamic row-threshold: 0.5% of image height, minimum 10px
-  const rowThreshold = Math.max(10, (legendCanvas.value?.height || 200) * 0.005)
 
   // Ensure OCR is initialized
   if (!ocrRecognition.isReady()) {
@@ -1315,49 +1349,50 @@ async function parseLegendWithOcr() {
     },
   })
 
+  console.log('[OCR:legacy] 图例识别完成，识别到', result.lines.length, '行文本')
+  console.log(`[OCR:legacy] 原始识别内容:\n${result.lines.map((l: { text: string, score: number }) => `  "${l.text}" (${(l.score * 100).toFixed(0)}%)`).join('\n')}`)
+
   // Use core parsing function
   legendData.value = _parseLegendCore(result.lines, legendCanvas.value.height)
-  const entries = legendData.value
+  ocrProgress.value = null
+}
 
-  // Auto-detect grid cell size from text spacing
-  if (entries.size >= 2) {
-    const sortedEntries = Array.from(entries.values()).sort((a, b) => {
-      // Sort by y position first (row), then x (column)
-      if (Math.abs(a.bbox.y - b.bbox.y) > rowThreshold) return a.bbox.y - b.bbox.y
-      return a.bbox.x - b.bbox.x
-    })
+/**
+ * Normalize OCR text to handle common OCR errors (e.g., missing leading zeros).
+ * Returns an array of candidate strings to try matching against brand codes.
+ * e.g., "H7" → ["H7", "H07"]
+ */
+function normalizeOcrText(text: string): string[] {
+  const upper = text.toUpperCase()
+  const candidates: string[] = [upper]
 
-    // Calculate spacing using median with IQR outlier filtering
-    const dxValues: number[] = []
-    const dyValues: number[] = []
-
-    for (let i = 1; i < sortedEntries.length; i++) {
-      const prev = sortedEntries[i - 1]
-      const curr = sortedEntries[i]
-      const dx = curr.bbox.x - prev.bbox.x
-      const dy = curr.bbox.y - prev.bbox.y
-
-      if (Math.abs(dy) < rowThreshold && dx > 0) {
-        dxValues.push(dx)
-      } else if (dy > 0) {
-        dyValues.push(dy)
-      }
-    }
-
-    const filteredDx = iqrFilter(dxValues)
-    const filteredDy = iqrFilter(dyValues)
-    const medianXSpacing = filteredDx.length > 0 ? median(filteredDx) : 0
-    const medianYSpacing = filteredDy.length > 0 ? median(filteredDy) : 0
-
-    // Use pattern canvas dimensions to calculate grid size
-    if (patternCanvas.value && medianXSpacing > 0 && medianYSpacing > 0) {
-      autoGridCols.value = Math.round(patternCanvas.value.width / medianXSpacing)
-      autoGridRows.value = Math.round(patternCanvas.value.height / medianYSpacing)
-      console.log(`[OCR] 自动检测网格: ${autoGridCols.value} x ${autoGridRows.value} (中位数间距: ${medianXSpacing.toFixed(1)} x ${medianYSpacing.toFixed(1)}, 过滤前: x=${dxValues.length} y=${dyValues.length}, 过滤后: x=${filteredDx.length} y=${filteredDy.length})`)
-    }
+  // Pattern: single letter + single digit → pad to 2 digits (OCR often drops leading zero)
+  // e.g., "H7" → "H07", "D1" → "D01", "A8" → "A08"
+  const m = /^([A-Z])(\d)$/.exec(upper)
+  if (m) {
+    candidates.push(m[1] + '0' + m[2])
   }
 
-  ocrProgress.value = null
+  // Pattern: single letter + 2 digits already padded → also try unpadded
+  // e.g., "H07" → also try "H7"
+  const m2 = /^([A-Z])0(\d)$/.exec(upper)
+  if (m2) {
+    candidates.push(m2[1] + m2[2])
+  }
+
+  return candidates
+}
+
+/**
+ * Resolve OCR text to the actual brand code.
+ * e.g., OCR reads "H7" → brand has "H07" → returns "H07"
+ */
+function resolveCodeFromOcr(ocrText: string, brandCodes: Set<string>): string {
+  const candidates = normalizeOcrText(ocrText)
+  for (const cand of candidates) {
+    if (brandCodes.has(cand)) return cand
+  }
+  return ocrText.toUpperCase()
 }
 
 // Core legend parsing logic shared by both parseLegendWithOcr and parseLegendWithOcrWithOverlay
@@ -1365,20 +1400,45 @@ function _parseLegendCore(
   ocrLines: readonly { text: string, box: { points: readonly {x:number,y:number}[] } }[],
   canvasHeight: number
 ): Map<string, LegendEntry> {
-  // Step 1: Brand auto-detection
+  // Step 1: Brand auto-detection (with OCR text normalization)
   const brandIndex = buildBrandCodeIndex()
   const brandScores = new Map<string, number>()
   for (const brand of brandIndex.keys()) {
     brandScores.set(brand, 0)
   }
 
+  // Numeric-only brands: their codes are pure numbers that collide with quantity values
+  const NUMERIC_BRANDS = new Set(['盼盼', '咪小窝'])
+
+  const brandMatches = new Map<string, string[]>() // brand → matched OCR texts, for debug log
+
   for (const line of ocrLines) {
     const text = line.text.trim().toUpperCase()
+    const candidates = normalizeOcrText(text)
+
     for (const [brand, codes] of brandIndex) {
-      if (codes.has(text)) {
-        brandScores.set(brand, (brandScores.get(brand) || 0) + 1)
+      let matched = false
+      for (const cand of candidates) {
+        if (codes.has(cand)) {
+          matched = true
+          break
+        }
+      }
+      if (matched) {
+        // Numeric-only brands get reduced weight (0.25x) because their codes
+        // are pure numbers that often collide with quantity values in legends
+        const weight = NUMERIC_BRANDS.has(brand) ? 0.25 : 1.0
+        brandScores.set(brand, (brandScores.get(brand) || 0) + weight)
+        // Record match for debug
+        if (!brandMatches.has(brand)) brandMatches.set(brand, [])
+        brandMatches.get(brand)!.push(text)
       }
     }
+  }
+
+  // Log per-brand matched texts
+  for (const [brand, texts] of brandMatches) {
+    console.log(`[OCR] Brand "${brand}" matched texts: ${texts.join(', ')}`)
   }
 
   // Select brand with highest match count
@@ -1391,22 +1451,26 @@ function _parseLegendCore(
     }
   }
 
+  console.log(`[OCR] Brand scores: ${Array.from(brandScores.entries()).map(([b,s]) => `${b}=${s.toFixed(1)}`).join(', ')}`)
   console.log(`[OCR] Brand detection: ${detectedBrand} (${maxScore} codes matched)`)
 
   if (!detectedBrand || maxScore === 0) {
     console.warn('[OCR] No brand codes detected, legend parsing failed')
+    detectedLegendBrand.value = ''
     return new Map()
   }
 
+  detectedLegendBrand.value = detectedBrand
   const brandCodes = brandIndex.get(detectedBrand)!
 
   // Step 2: Build OcrToken array
   const tokens: OcrToken[] = []
   const discarded: string[] = []
+  const classifiedCodes: string[] = []
+  const classifiedNumbers: string[] = []
 
   for (const line of ocrLines) {
     const text = line.text.trim()
-    const upperText = text.toUpperCase()
     const pts = line.box.points
 
     const centerX = (pts[0].x + pts[1].x + pts[2].x + pts[3].x) / 4
@@ -1418,20 +1482,26 @@ function _parseLegendCore(
       height: pts[2].y - pts[0].y,
     }
 
-    if (brandCodes.has(upperText)) {
-      // Exact match against known color codes
-      tokens.push({ text, bbox, centerX, centerY, isCode: true })
+    const resolvedCode = resolveCodeFromOcr(text, brandCodes)
+    if (brandCodes.has(resolvedCode)) {
+      // Matches known color code — store the RESOLVED code (not raw OCR text)
+      // so downstream lookups like getColorForCode() work correctly
+      tokens.push({ text: resolvedCode, bbox, centerX, centerY, isCode: true })
+      classifiedCodes.push(resolvedCode)
     } else if (/^\d+$/.test(text)) {
       // Pure number → likely a quantity
       tokens.push({ text, bbox, centerX, centerY, isCode: false })
+      classifiedNumbers.push(text)
     } else {
       // Not a code or number → discard
       discarded.push(text)
     }
   }
 
+  console.log(`[OCR] Token分类 — 色号(${classifiedCodes.length}): ${classifiedCodes.join(', ')}`)
+  console.log(`[OCR] Token分类 — 数量(${classifiedNumbers.length}): ${classifiedNumbers.join(', ')}`)
   if (discarded.length > 0) {
-    console.log(`[OCR] Discarded non-code text: ${discarded.join(', ')}`)
+    console.log(`[OCR] Token分类 — 丢弃(${discarded.length}): ${discarded.join(', ')}`)
   }
 
   // Step 3: Spatial pairing
@@ -1442,30 +1512,7 @@ function _parseLegendCore(
     return new Map()
   }
 
-  // Compute median code-to-code distance for pairing threshold
-  let maxDistance = 100 // default
-  if (codeTokens.length >= 2) {
-    const sortedByX = [...codeTokens].sort((a, b) => a.centerX - b.centerX)
-    const dxValues: number[] = []
-    for (let i = 1; i < sortedByX.length; i++) {
-      const dx = sortedByX[i].centerX - sortedByX[i-1].centerX
-      if (dx > 0) dxValues.push(dx)
-    }
-    const sortedByY = [...codeTokens].sort((a, b) => a.centerY - b.centerY)
-    const dyValues: number[] = []
-    for (let i = 1; i < sortedByY.length; i++) {
-      const dy = sortedByY[i].centerY - sortedByY[i-1].centerY
-      if (dy > 0) dyValues.push(dy)
-    }
-
-    // Use 0.6× median spacing as max pairing distance
-    const medianDx = dxValues.length > 0 ? median(iqrFilter(dxValues)) : 100
-    const medianDy = dyValues.length > 0 ? median(iqrFilter(dyValues)) : 100
-    maxDistance = Math.max(30, Math.min(medianDx, medianDy) * 0.6)
-    console.log(`[OCR] Median spacing: dx=${medianDx.toFixed(1)}, dy=${medianDy.toFixed(1)}, maxPairDistance=${maxDistance.toFixed(1)}`)
-  }
-
-  const paired = pairCodeQuantityByProximity(tokens, maxDistance)
+  const paired = pairCodeQuantityByProximity(tokens)
 
   // Step 4: Build legendData
   const entries = new Map<string, LegendEntry>()
@@ -1499,10 +1546,7 @@ function _parseLegendCore(
 // OCR parsing with fullscreen overlay progress
 async function parseLegendWithOcrWithOverlay() {
   if (!legendCanvas.value) return
-
-  // Dynamic row-threshold: 0.5% of image height, minimum 10px
-  const rowThreshold = Math.max(10, (legendCanvas.value?.height || 200) * 0.005)
-  
+   
   // Validate canvas has valid dimensions
   if (legendCanvas.value.width <= 0 || legendCanvas.value.height <= 0) {
     console.error('[OCR] 图例画布尺寸无效:', legendCanvas.value.width, 'x', legendCanvas.value.height);
@@ -1551,82 +1595,90 @@ async function parseLegendWithOcrWithOverlay() {
   })
 
   console.log('[OCR] 图例识别完成，识别到', result.lines.length, '行文本')
+  console.log(`[OCR] 原始识别内容:\n${result.lines.map((l: { text: string, score: number }) => `  "${l.text}" (置信度:${(l.score * 100).toFixed(0)}%)`).join('\n')}`)
+
+  // Store OCR lines for later grid detection
+  ocrLegendLines.value = result.lines
 
   // Use core parsing function
   legendData.value = _parseLegendCore(result.lines, legendCanvas.value.height)
+}
+
+/**
+ * Run grid detection using stored OCR lines and current pattern canvas.
+ * Must be called AFTER pattern crop is done (patternCanvas available).
+ */
+function runGridDetection() {
   const entries = legendData.value
-
-  // Auto-detect grid cell size from text spacing
-  if (entries.size >= 2) {
-    const sortedEntries = Array.from(entries.values()).sort((a, b) => {
-      if (Math.abs(a.bbox.y - b.bbox.y) > rowThreshold) return a.bbox.y - b.bbox.y
-      return a.bbox.x - b.bbox.x
-    })
-
-    // Calculate spacing using median with IQR outlier filtering
-    const dxValues: number[] = []
-    const dyValues: number[] = []
-
-    for (let i = 1; i < sortedEntries.length; i++) {
-      const prev = sortedEntries[i - 1]
-      const curr = sortedEntries[i]
-      const dx = curr.bbox.x - prev.bbox.x
-      const dy = curr.bbox.y - prev.bbox.y
-
-      if (Math.abs(dy) < rowThreshold && dx > 0) {
-        dxValues.push(dx)
-      } else if (dy > 0) {
-        dyValues.push(dy)
-      }
-    }
-
-    const filteredDx = iqrFilter(dxValues)
-    const filteredDy = iqrFilter(dyValues)
-    const medianXSpacing = filteredDx.length > 0 ? median(filteredDx) : 0
-    const medianYSpacing = filteredDy.length > 0 ? median(filteredDy) : 0
-
-    if (patternCanvas.value && medianXSpacing > 0 && medianYSpacing > 0) {
-      autoGridCols.value = Math.round(patternCanvas.value.width / medianXSpacing)
-      autoGridRows.value = Math.round(patternCanvas.value.height / medianYSpacing)
-      console.log(`[OCR] 自动检测网格: ${autoGridCols.value} x ${autoGridRows.value} (中位数间距: ${medianXSpacing.toFixed(1)} x ${medianYSpacing.toFixed(1)}, 过滤前: x=${dxValues.length} y=${dyValues.length}, 过滤后: x=${filteredDx.length} y=${filteredDy.length})`)
+  const lines = ocrLegendLines.value
+  
+  if (entries.size < 2 || lines.length === 0) {
+    console.log('[OCR] 网格检测跳过: 图例条目不足或未识别')
+    return
+  }
+  
+  const rowThreshold = Math.max(10, (legendCanvas.value?.height || 200) * 0.005)
+  
+  const sortedEntries = Array.from(entries.values()).sort((a, b) => {
+    if (Math.abs(a.bbox.y - b.bbox.y) > rowThreshold) return a.bbox.y - b.bbox.y
+    return a.bbox.x - b.bbox.x
+  })
+  
+  const dxValues: number[] = []
+  const dyValues: number[] = []
+  for (let i = 1; i < sortedEntries.length; i++) {
+    const prev = sortedEntries[i - 1]
+    const curr = sortedEntries[i]
+    const dx = curr.bbox.x - prev.bbox.x
+    const dy = curr.bbox.y - prev.bbox.y
+    if (Math.abs(dy) < rowThreshold && dx > 0) {
+      dxValues.push(dx)
+    } else if (dy > 0) {
+      dyValues.push(dy)
     }
   }
-
-  // Infer grid from OCR box centers for additional validation
-  if (result.lines.length >= 4) {
-    const inferred = inferGridFromOcrBoxes(result.lines as unknown as { box: { points: {x:number,y:number}[] } }[])
+  
+  const filteredDx = iqrFilter(dxValues)
+  const filteredDy = iqrFilter(dyValues)
+  const medianXSpacing = filteredDx.length > 0 ? median(filteredDx) : 0
+  const medianYSpacing = filteredDy.length > 0 ? median(filteredDy) : 0
+  
+  if (patternCanvas.value && medianXSpacing > 0 && medianYSpacing > 0) {
+    autoGridCols.value = Math.round(patternCanvas.value.width / medianXSpacing)
+    autoGridRows.value = Math.round(patternCanvas.value.height / medianYSpacing)
+    console.log(`[OCR] 自动检测网格: ${autoGridCols.value} x ${autoGridRows.value}`)
+  }
+  
+  if (lines.length >= 4) {
+    const inferred = inferGridFromOcrBoxes(lines as unknown as { box: { points: {x:number,y:number}[] } }[])
     inferredGrid.value = inferred
-    console.log(`[OCR] OCR框聚类推断网格: ${inferred.cols} x ${inferred.rows} (置信度: ${inferred.confidence})`)
+    console.log(`[OCR] OCR框聚类: ${inferred.cols} x ${inferred.rows}`)
   }
-
-  // Infer grid from edge signals for additional voting input
+  
   let edgeResult = { rows: 0, cols: 0, confidence: 0 }
   if (patternCanvas.value) {
     const pCtx = patternCanvas.value.getContext('2d')
     if (pCtx) {
       const edgeImageData = pCtx.getImageData(0, 0, patternCanvas.value.width, patternCanvas.value.height)
       edgeResult = inferGridFromEdges(edgeImageData)
-      if (edgeResult.confidence > 0 && edgeResult.cols > 0 && edgeResult.rows > 0) {
-        console.log(`[OCR] 边缘自相关检测网格: ${edgeResult.cols} x ${edgeResult.rows} (置信度: ${edgeResult.confidence})`)
-      }
+      if (edgeResult.confidence > 0) console.log(`[OCR] 边缘检测: ${edgeResult.cols} x ${edgeResult.rows}`)
     }
   }
-
-  // Combine all detection results via majority voting
-  const ocrResult = { rows: autoGridRows.value, cols: autoGridCols.value }
-  const ocrBoxResult = inferredGrid.value
-  const combined = detectGridDimensions(ocrResult, ocrBoxResult, edgeResult)
+  
+  const combined = detectGridDimensions(
+    { rows: autoGridRows.value, cols: autoGridCols.value },
+    inferredGrid.value,
+    edgeResult
+  )
   detectionConfidence.value = combined
-
-  // Update final auto grid values from combined result
+  
   if (combined.rows > 0 && combined.cols > 0) {
     autoGridRows.value = combined.rows
     autoGridCols.value = combined.cols
-    console.log(`[OCR] 最终检测结果: ${combined.cols}x${combined.rows} (方法: ${combined.method}, 置信度: ${combined.confidence})`)
-  } else {
-    console.log(`[OCR] 最终检测结果: 所有自动检测方法均失败 (OCR间距: ${ocrResult.cols}x${ocrResult.rows}, OCR框聚类: ${ocrBoxResult.cols}x${ocrBoxResult.rows}, 边缘检测: ${edgeResult.cols}x${edgeResult.rows}), 请手动输入网格尺寸`)
+    console.log(`[OCR] 最终网格: ${combined.cols}x${combined.rows} (${combined.method}, ${combined.confidence})`)
   }
 }
+
 
 // Pattern color extraction with overlay progress
 async function extractPatternColorsWithOverlay() {
@@ -1656,7 +1708,22 @@ async function extractPatternColorsWithOverlay() {
 
   const cells: PatternCell[] = []
   const colorCounts = new Map<string, { count: number, cells: Array<{ row: number, col: number }> }>()
-  const palette = paletteStore.activeBeadPalette
+
+  // Build legend color lookup: code → { r, g, b } for distance comparison
+  const legendColors: { code: string, r: number, g: number, b: number }[] = []
+  for (const [code] of legendData.value) {
+    const hex = getColorForCode(code, detectedLegendBrand.value)
+    const hexMatch = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex)
+    if (hexMatch) {
+      legendColors.push({
+        code,
+        r: parseInt(hexMatch[1], 16),
+        g: parseInt(hexMatch[2], 16),
+        b: parseInt(hexMatch[3], 16),
+      })
+    }
+  }
+  console.log(`[OCR] 图例颜色查找表: ${legendColors.length} 个色号`)
 
   const totalCells = rows * cols
   let processedCells = 0
@@ -1678,18 +1745,44 @@ async function extractPatternColorsWithOverlay() {
       const g = parseInt(match[2], 10)
       const b = parseInt(match[3], 10)
 
-      const closest = findClosestPaletteColor({ r, g, b }, palette)
-      const hex = closest.hex
-      const code = closest.key || '?'
+      // Find closest legend color by RGB distance
+      // 距离阈值：超过此值视为无匹配，归为空格子
+      const MAX_COLOR_DISTANCE = 10000
+      let bestCode = TRANSPARENT_KEY
+      let bestHex = ''
+      let bestDist = Infinity
+      for (const lc of legendColors) {
+        const dr = r - lc.r
+        const dg = g - lc.g
+        const db = b - lc.b
+        const dist = dr * dr + dg * dg + db * db
+        if (dist < bestDist) {
+          bestDist = dist
+          bestCode = lc.code
+          bestHex = getColorForCode(lc.code, detectedLegendBrand.value)
+        }
+      }
+      // 超出距离阈值或无语录颜色 → 归为空格子
+      if (bestDist > MAX_COLOR_DISTANCE) {
+        bestCode = TRANSPARENT_KEY
+        bestHex = ''
+      }
+      // Fallback: if no legend colors, use hex directly
+      if (legendColors.length === 0) {
+        bestHex = `rgb(${r},${g},${b})`
+          .replace(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/, (_, r, g, b) =>
+            '#' + [r, g, b].map(x => parseInt(x).toString(16).padStart(2, '0')).join('')
+          )
+      }
 
-      cells.push({ row, col, rgb: dominantColor, hex, code })
+      cells.push({ row, col, rgb: dominantColor, hex: bestHex, code: bestCode })
 
-      const existing = colorCounts.get(code)
+      const existing = colorCounts.get(bestCode)
       if (existing) {
         existing.count++
         existing.cells.push({ row, col })
       } else {
-        colorCounts.set(code, { count: 1, cells: [{ row, col }] })
+        colorCounts.set(bestCode, { count: 1, cells: [{ row, col }] })
       }
 
       processedCells++
@@ -1703,6 +1796,7 @@ async function extractPatternColorsWithOverlay() {
   }
 
   console.log('[OCR] 图纸颜色提取完成，共', cells.length, '个格子，', colorCounts.size, '种颜色')
+  console.log(`[OCR:extract] 各颜色实际数量:\n${Array.from(colorCounts.entries()).map(([code, data]) => `  ${code}: ${data.count}个`).join('\n')}`)
   patternColorData.value = cells
 
   // Build diff data
@@ -1741,6 +1835,10 @@ async function extractPatternColorsWithOverlay() {
 
   diffData.value = diff
   console.log('[OCR] 差异对比完成，共', diff.length, '个颜色')
+  for (const entry of diff) {
+    const status = entry.diff === 0 ? '✓一致' : (entry.diff > 0 ? `↑多${entry.diff}` : `↓少${Math.abs(entry.diff)}`)
+    console.log(`[OCR:diff] ${entry.code} 期望=${entry.expectedCount} 实际=${entry.actualCount} ${status}`)
+  }
   processingProgress.value = { phase: 'complete', percent: 100 }
 }
 
@@ -1754,6 +1852,8 @@ function handleBackToPattern() {
 }
 
 function getColorHex(code: string): string {
+  // 空格子返回特殊颜色
+  if (code === TRANSPARENT_KEY) return '#fafafa'
   // Find hex for this code from patternColorData
   const cell = patternColorData.value.find(c => c.code === code)
   return cell?.hex || '#e5e7eb'
@@ -1881,6 +1981,7 @@ function extractPatternColorsForDiff() {
   })
 
   diffData.value = diff
+  console.log(`[OCR:diff-recalc] 差异重算完成，共${diff.length}个颜色`)
 }
 
 function handleBackToVerify() {
@@ -1894,13 +1995,18 @@ function handleOcrComplete() {
   const cols = autoGridCols.value || gridCols.value
   const rows = autoGridRows.value || gridRows.value
   
-  // Build pixelColors from patternColorData
+  // Build pixelColors from patternColorData (already matched to legend colors)
+  // 无 OCR 色号的格子（TRANSPARENT_KEY）标记为空格子
   const pixelColors: string[][] = []
   for (let row = 0; row < rows; row++) {
     const rowColors: string[] = []
     for (let col = 0; col < cols; col++) {
       const cell = patternColorData.value.find(c => c.row === row && c.col === col)
-      rowColors.push(cell?.rgb || 'rgb(0, 0, 0)')
+      if (cell && cell.code === TRANSPARENT_KEY) {
+        rowColors.push(TRANSPARENT_KEY)
+      } else {
+        rowColors.push(cell?.hex || '#000000')
+      }
     }
     pixelColors.push(rowColors)
   }
@@ -1915,27 +2021,9 @@ function handleOcrComplete() {
 }
 
 function handleConfirmOcrVerify() {
-  // Show overlay and start color extraction
-  showProcessingOverlay.value = true;
-  processingMessage.value = '正在提取图纸颜色...';
-  processingProgress.value = { phase: 'extracting', percent: 0 };
-  
-  console.log('[OCR] 确认识别结果，开始提取图纸颜色')
-  
-  nextTick(async () => {
-    try {
-      await extractPatternColorsWithOverlay();
-      console.log('[OCR] 图纸颜色提取完成')
-    } catch (err) {
-      console.error('[OCR] 图纸颜色提取失败:', err)
-      processingMessage.value = '提取失败，请重试'
-    } finally {
-      setTimeout(() => {
-        showProcessingOverlay.value = false;
-        ocrStep.value = 'diff-view';
-      }, 500)
-    }
-  });
+  console.log('[OCR] 确认识别结果，进入图纸裁剪')
+  ocrStep.value = 'pattern-crop'
+  initGridCrop() // Reset grid crop to upper-center square
 }
 
 interface OcrToken {
@@ -1947,73 +2035,160 @@ interface OcrToken {
 }
 
 function pairCodeQuantityByProximity(
-  tokens: OcrToken[],
-  maxDistance: number
+  tokens: OcrToken[]
 ): Map<string, { code: string, count: number, codeBbox: { x: number, y: number, width: number, height: number }, countBbox: { x: number, y: number, width: number, height: number } }> {
-  // Split tokens into code candidates and number candidates
   const codeTokens = tokens.filter(t => t.isCode)
   const numberTokens = tokens.filter(t => !t.isCode && /^\d+$/.test(t.text.trim()))
 
   console.log(`[pairCodeQuantity] codeTokens: ${codeTokens.length}, numberTokens: ${numberTokens.length}`)
 
-  // For each codeToken, compute distance to every numberToken
-  // Each entry: { codeIdx, numIdx, distance }
-  const candidates: { codeIdx: number, numIdx: number, distance: number }[] = []
+  if (codeTokens.length === 0 || numberTokens.length === 0) return new Map()
 
-  for (let ci = 0; ci < codeTokens.length; ci++) {
-    const ct = codeTokens[ci]
-    for (let ni = 0; ni < numberTokens.length; ni++) {
-      const nt = numberTokens[ni]
-      const dx = ct.centerX - nt.centerX
-      const dy = ct.centerY - nt.centerY
-      const distance = Math.sqrt(dx * dx + dy * dy)
-      if (distance < maxDistance) {
-        candidates.push({ codeIdx: ci, numIdx: ni, distance })
+  // Determine layout direction from the first code:
+  // find nearest number to the right vs nearest number below.
+  // The closer direction determines the layout for all codes.
+  const firstCode = codeTokens[0]
+  let nearestRight: { idx: number, dist: number } | null = null
+  let nearestBelow: { idx: number, dist: number } | null = null
+
+  for (let ni = 0; ni < numberTokens.length; ni++) {
+    const nt = numberTokens[ni]
+    const dx = nt.centerX - firstCode.centerX
+    const dy = nt.centerY - firstCode.centerY
+
+    if (dx > 0) { // number is to the right of code
+      const dist = Math.sqrt(dx * dx + dy * dy)
+      if (!nearestRight || dist < nearestRight.dist) {
+        nearestRight = { idx: ni, dist }
+      }
+    }
+    if (dy > 0) { // number is below code
+      const dist = Math.sqrt(dx * dx + dy * dy)
+      if (!nearestBelow || dist < nearestBelow.dist) {
+        nearestBelow = { idx: ni, dist }
       }
     }
   }
 
-  // Sort by distance ascending so closest pairs are matched first
-  candidates.sort((a, b) => a.distance - b.distance)
+  // Pick direction: horizontal (right) or vertical (below)
+  let isHorizontal: boolean
+  if (nearestRight && nearestBelow) {
+    isHorizontal = nearestRight.dist <= nearestBelow.dist
+  } else if (nearestRight) {
+    isHorizontal = true
+  } else if (nearestBelow) {
+    isHorizontal = false
+  } else {
+    // No number to the right or below the first code — fallback to closest overall
+    console.warn('[pairCodeQuantity] No right/below candidate found, fallback to closest overall')
+    return pairCodeQuantityFallback(codeTokens, numberTokens)
+  }
 
-  const pairedNumbers = new Set<number>()
+  console.log(`[pairCodeQuantity] Layout: ${isHorizontal ? 'horizontal (→)' : 'vertical (↓)'}`)
+
+  // Greedy pairing: for each code, find the nearest number in the determined direction
+  const usedNumbers = new Set<number>()
   const result = new Map<string, { code: string, count: number, codeBbox: { x: number, y: number, width: number, height: number }, countBbox: { x: number, y: number, width: number, height: number } }>()
 
-  for (const cand of candidates) {
-    // Skip if this number token is already paired
-    if (pairedNumbers.has(cand.numIdx)) continue
+  for (const ct of codeTokens) {
+    let best: { idx: number, dist: number } | null = null
+    for (let ni = 0; ni < numberTokens.length; ni++) {
+      if (usedNumbers.has(ni)) continue
+      const nt = numberTokens[ni]
+      const dx = nt.centerX - ct.centerX
+      const dy = nt.centerY - ct.centerY
 
-    const codeText = codeTokens[cand.codeIdx].text.trim().toUpperCase()
-    // Skip if this code is already paired (take the closest match)
-    if (result.has(codeText)) continue
+      // Must be in the determined direction
+      if (isHorizontal && dx <= 0) continue
+      if (!isHorizontal && dy <= 0) continue
 
-    const count = parseInt(numberTokens[cand.numIdx].text.trim(), 10)
-    if (isNaN(count)) continue
+      const dist = Math.sqrt(dx * dx + dy * dy)
+      if (!best || dist < best.dist) {
+        best = { idx: ni, dist }
+      }
+    }
 
-    pairedNumbers.add(cand.numIdx)
-    result.set(codeText, {
-      code: codeText,
-      count,
-      codeBbox: codeTokens[cand.codeIdx].bbox,
-      countBbox: numberTokens[cand.numIdx].bbox,
-    })
-
-    console.log(`[pairCodeQuantity] paired "${codeText}" (dist=${cand.distance.toFixed(1)}) -> count=${count}`)
+    if (best) {
+      usedNumbers.add(best.idx)
+      const code = ct.text.trim().toUpperCase()
+      const count = parseInt(numberTokens[best.idx].text.trim(), 10)
+      if (!isNaN(count)) {
+        result.set(code, { code, count, codeBbox: ct.bbox, countBbox: numberTokens[best.idx].bbox })
+        console.log(`[pairCodeQuantity] "${code}" → ${count} (dist=${best.dist.toFixed(0)}px)`)
+      }
+    } else {
+      console.log(`[pairCodeQuantity] "${ct.text}" — no unpaired number ${isHorizontal ? 'to the right' : 'below'}`)
+    }
   }
 
   console.log(`[pairCodeQuantity] total pairs: ${result.size}/${codeTokens.length} codes`)
   return result
 }
 
-function getColorForCode(code: string): string {
-  // Search colorSystemMapping for a hex key whose entry contains this code
-  // The mapping is { hex -> { MARD?, COCO?, ... } }
-  // We need a reverse lookup: code -> hex
+/** Fallback: pair each code with the closest unpaired number (no direction constraint). */
+function pairCodeQuantityFallback(
+  codeTokens: OcrToken[],
+  numberTokens: OcrToken[]
+): Map<string, { code: string, count: number, codeBbox: { x: number, y: number, width: number, height: number }, countBbox: { x: number, y: number, width: number, height: number } }> {
+  const candidates: { codeIdx: number, numIdx: number, distance: number }[] = []
+  for (let ci = 0; ci < codeTokens.length; ci++) {
+    for (let ni = 0; ni < numberTokens.length; ni++) {
+      const dx = codeTokens[ci].centerX - numberTokens[ni].centerX
+      const dy = codeTokens[ci].centerY - numberTokens[ni].centerY
+      candidates.push({ codeIdx: ci, numIdx: ni, distance: Math.sqrt(dx * dx + dy * dy) })
+    }
+  }
+  candidates.sort((a, b) => a.distance - b.distance)
+
+  const usedCodes = new Set<string>()
+  const usedNumbers = new Set<number>()
+  const result = new Map<string, { code: string, count: number, codeBbox: { x: number, y: number, width: number, height: number }, countBbox: { x: number, y: number, width: number, height: number } }>()
+
+  for (const cand of candidates) {
+    if (usedNumbers.has(cand.numIdx)) continue
+    const code = codeTokens[cand.codeIdx].text.trim().toUpperCase()
+    if (usedCodes.has(code)) continue
+    const count = parseInt(numberTokens[cand.numIdx].text.trim(), 10)
+    if (isNaN(count)) continue
+    usedCodes.add(code)
+    usedNumbers.add(cand.numIdx)
+    result.set(code, { code, count, codeBbox: codeTokens[cand.codeIdx].bbox, countBbox: numberTokens[cand.numIdx].bbox })
+  }
+  return result
+}
+
+function getColorForCode(code: string, brand?: string): string {
+  // Search colorSystemMapping for a hex key whose entry contains this code.
+  // When brand is provided, prioritize the exact brand match to avoid
+  // cross-brand code collisions (e.g. MARD:H07=#000000 vs COCO:H07=#01ACEB).
   try {
     const mapping = (colorSystemMappingJson as Record<string, Record<string, string>>)
+    const brandsToTry = brand
+      ? [brand, ...Object.keys(mapping[Object.keys(mapping)[0]] || {}).filter(b => b !== brand)]
+      : Object.keys(mapping[Object.keys(mapping)[0]] || {})
+
+    // Try exact match with brand priority
+    for (const b of brandsToTry) {
+      for (const [hex, systems] of Object.entries(mapping)) {
+        if (systems[b] === code) {
+          return hex.startsWith('#') ? hex : `#${hex}`
+        }
+      }
+    }
+    // Fallback: try any system
     for (const [hex, systems] of Object.entries(mapping)) {
       if (Object.values(systems).some(v => v === code)) {
         return hex.startsWith('#') ? hex : `#${hex}`
+      }
+    }
+    // Fallback: try normalized variants (OCR may have dropped leading zeros)
+    const candidates = normalizeOcrText(code)
+    for (const cand of candidates) {
+      if (cand === code.toUpperCase()) continue // already tried above
+      for (const [hex, systems] of Object.entries(mapping)) {
+        if (Object.values(systems).some(v => v === cand)) {
+          return hex.startsWith('#') ? hex : `#${hex}`
+        }
       }
     }
   } catch (e) {
@@ -2229,9 +2404,9 @@ watch(mode, (newMode) => {
 // OCR 预加载
 watch(ocrEnabled, async (enabled) => {
   if (!enabled) {
-    // 关闭开关时重置状态
     ocrProgress.value = null;
     ocrLoading.value = false;
+    nextTick(() => render());
     return;
   }
   // OCR 启用时重置步骤状态
@@ -2239,6 +2414,7 @@ watch(ocrEnabled, async (enabled) => {
   isLegendCrop.value = true
   initLegendCrop()
   patternCrop.value = { x: 0, y: 0, width: 0, height: 0 }
+  nextTick(() => render());
   // 如果模型已加载完成，显示完成状态
   if (ocrRecognition.isReady()) {
     ocrProgress.value = { phase: 'ready', phaseLabel: '模型已加载' };
@@ -2266,12 +2442,31 @@ watch(ocrEnabled, async (enabled) => {
   }
 });
 
+let resizeObserver: ResizeObserver | null = null
+
 onMounted(() => {
   window.addEventListener("resize", onResize);
+  // Observe canvas parent size changes (e.g. 识别结果 bar appears/disappears)
+  nextTick(() => {
+    const canvas = canvasRef.value
+    if (canvas?.parentElement) {
+      resizeObserver = new ResizeObserver(() => {
+        render()
+      })
+      resizeObserver.observe(canvas.parentElement)
+    }
+  })
 });
+
 onUnmounted(() => {
   window.removeEventListener("resize", onResize);
+  resizeObserver?.disconnect()
 });
+
+// Re-render when ocrStep changes (results bar shows/hides, changing canvas container size)
+watch(ocrStep, () => {
+  nextTick(() => render())
+})
 </script>
 
 <template>
@@ -2291,21 +2486,21 @@ onUnmounted(() => {
           @click="handleLegendConfirm()"
           class="h-7 px-3 text-xs rounded-md bg-blue-500 text-white hover:bg-blue-600 transition-colors font-medium"
         >
-          确认图例
+          确认
         </button>
         <button
           v-else-if="ocrEnabled && ocrStep === 'pattern-crop'"
           @click="handlePatternConfirm()"
           class="h-7 px-3 text-xs rounded-md bg-emerald-500 text-white hover:bg-emerald-600 transition-colors font-medium"
         >
-          确认图纸
+          确认
         </button>
         <button
           v-else-if="ocrEnabled && ocrStep === 'ocr-verify'"
           @click="handleConfirmOcrVerify()"
           class="h-7 px-3 text-xs rounded-md bg-violet-500 text-white hover:bg-violet-600 transition-colors font-medium"
         >
-          确认识别
+          确认
         </button>
         <button
           v-else-if="ocrEnabled && ocrStep === 'diff-view'"
@@ -2340,6 +2535,43 @@ onUnmounted(() => {
           >
             图纸识别
           </button>
+        </div>
+      </div>
+
+      <!-- OCR 流程指示器 (所有OCR步骤公用) -->
+      <div v-if="ocrEnabled" class="px-3 py-2.5 border-b border-black/10">
+        <p class="text-[10px] text-black/40 uppercase tracking-wider mb-2">流程</p>
+        <div class="flex flex-col gap-0.5">
+          <template v-for="(step, index) in [
+            { key: 'legend-crop', label: '图例裁剪' },
+            { key: 'ocr-verify', label: '识别核对' },
+            { key: 'pattern-crop', label: '图纸裁剪' },
+            { key: 'diff-view', label: '差异对比' }
+          ]" :key="step.key">
+            <div class="flex items-center gap-2 px-2 py-1 rounded-md transition-all duration-200"
+              :class="[
+                ocrStep === step.key ? 'bg-black text-white' : '',
+                getStepIndex(ocrStep) > index ? 'text-black/60' : '',
+                getStepIndex(ocrStep) < index ? 'text-black/25' : ''
+              ]"
+            >
+              <div
+                class="w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-medium shrink-0"
+                :class="[
+                  ocrStep === step.key ? 'bg-white/20 text-white' : '',
+                  getStepIndex(ocrStep) > index ? 'bg-black/10 text-black/60' : '',
+                  getStepIndex(ocrStep) < index ? 'bg-black/5 text-black/20' : ''
+                ]"
+              >
+                <span v-if="getStepIndex(ocrStep) > index">✓</span>
+                <span v-else>{{ index + 1 }}</span>
+              </div>
+              <span class="text-[11px] whitespace-nowrap">{{ step.label }}</span>
+            </div>
+            <div v-if="index < 3" class="w-px h-2 ml-2"
+              :class="getStepIndex(ocrStep) > index ? 'bg-black/30' : 'bg-black/10'"
+            />
+          </template>
         </div>
       </div>
 
@@ -2500,7 +2732,7 @@ onUnmounted(() => {
           </button>
         </div>
 
-        <button @click="handleBackToLegend()" class="w-full h-8 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] text-xs transition-colors">
+        <button @click="handleBackToVerify()" class="w-full h-8 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] text-xs transition-colors">
           ← 上一步
         </button>
 
@@ -2509,7 +2741,7 @@ onUnmounted(() => {
         </p>
       </div>
 
-      <!-- OCR verify tools (Step 3) -->
+      <!-- OCR verify tools (Step 2) -->
       <div v-else-if="ocrEnabled && ocrStep === 'ocr-verify'" class="flex-1 px-3 py-3 space-y-3 overflow-y-auto">
         <!-- OCR 开关 -->
         <div class="space-y-2">
@@ -2561,36 +2793,12 @@ onUnmounted(() => {
           <p class="text-[10px] text-black/40 leading-relaxed">检查OCR识别结果，修正错误</p>
         </div>
 
-        <!-- Legend entries list -->
-        <div class="border-t border-black/10 pt-3">
-          <p class="text-[10px] text-black/40 uppercase tracking-wider mb-3">识别结果 ({{ legendData.size }})</p>
-          <div class="space-y-2 max-h-60 overflow-y-auto">
-            <div v-for="[code, entry] in legendData" :key="code" 
-              class="flex items-center gap-2 p-2 rounded-lg bg-black/[0.04]">
-              <div class="w-6 h-6 rounded border border-black/10" :style="{ backgroundColor: getColorForCode(code) }"></div>
-              <div class="flex-1 min-w-0">
-                <p class="text-xs font-medium text-black/80">{{ code }}</p>
-              </div>
-              <div class="flex items-center gap-1">
-                <input
-                  type="number"
-                  :value="entry.expectedCount"
-                  @input="updateLegendCount(code, $event)"
-                  class="w-14 px-1.5 py-0.5 bg-white text-black text-center text-xs rounded border border-black/10 focus:border-black/30 focus:outline-none"
-                  min="0"
-                />
-                <button @click="deleteLegendEntry(code)" class="text-red-500 hover:text-red-700 text-xs">×</button>
-              </div>
-            </div>
-          </div>
-        </div>
-
         <!-- Navigation buttons -->
         <div class="border-t border-black/10 pt-3 space-y-2">
           <button @click="handleConfirmOcrVerify()" class="w-full h-8 rounded-lg bg-black text-white hover:bg-black/80 text-xs font-medium transition-colors">
             确认识别
           </button>
-          <button @click="handleBackToPattern()" class="w-full h-8 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] text-xs transition-colors">
+          <button @click="handleBackToLegend()" class="w-full h-8 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] text-xs transition-colors">
             ← 上一步
           </button>
         </div>
@@ -2742,7 +2950,7 @@ onUnmounted(() => {
             <button @click="handleOcrComplete()" class="w-full h-8 rounded-lg bg-black text-white hover:bg-black/80 text-xs font-medium transition-colors">
               完成
             </button>
-            <button @click="handleBackToVerify()" class="w-full h-8 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] text-xs transition-colors">
+            <button @click="handleBackToPattern()" class="w-full h-8 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] text-xs transition-colors">
               ← 上一步
             </button>
           </div>
@@ -2985,77 +3193,62 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- 右侧画布区域 -->
-    <div class="flex-1 flex items-center justify-center p-4 overflow-hidden relative bg-black/[0.02]" style="width: 100%; height: 100%;">
-      <canvas
-        ref="canvasRef"
-        class="cursor-move shadow-sm rounded"
-        style="touch-action: none; width: 100%; height: 100%;"
-        @mousedown="onPointerDown"
-        @mousemove="onPointerMove"
-        @mouseup="onPointerUp"
-        @mouseleave="onPointerUp"
-        @wheel.prevent="onWheel"
-        @touchstart.passive="onPointerDown"
-        @touchmove="onPointerMove"
-        @touchend="onPointerUp"
-      />
-      <!-- OCR step indicator (shown when OCR is enabled) -->
-      <div
-        v-if="ocrEnabled"
-        class="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur-sm shadow-lg border border-black/10 px-4 py-2 rounded-xl pointer-events-none"
-      >
-        <div class="flex items-center gap-1">
-          <template v-for="(step, index) in [
-            { key: 'legend-crop', label: '图例裁剪' },
-            { key: 'pattern-crop', label: '图纸裁剪' },
-            { key: 'ocr-verify', label: '识别核对' },
-            { key: 'diff-view', label: '差异对比' }
-          ]" :key="step.key">
-            <!-- Step connector line -->
-            <div
-              v-if="index > 0"
-              class="w-6 h-px mx-0.5"
-              :class="getStepIndex(ocrStep) >= index ? 'bg-black/60' : 'bg-black/20'"
-            />
-            <!-- Step item -->
-            <div class="flex items-center gap-1.5 px-2 py-1 rounded-full transition-all duration-200"
-              :class="[
-                ocrStep === step.key ? 'bg-black text-white' : '',
-                getStepIndex(ocrStep) > index ? 'text-black/70' : '',
-                getStepIndex(ocrStep) < index ? 'text-black/30' : ''
-              ]"
-            >
-              <!-- Step number or checkmark -->
-              <div
-                class="w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-medium"
-                :class="[
-                  ocrStep === step.key ? 'bg-white/20 text-white' : '',
-                  getStepIndex(ocrStep) > index ? 'bg-black/10 text-black/60' : '',
-                  getStepIndex(ocrStep) < index ? 'bg-black/5 text-black/20' : ''
-                ]"
-              >
-                <span v-if="getStepIndex(ocrStep) > index">✓</span>
-                <span v-else>{{ index + 1 }}</span>
-              </div>
-              <!-- Step label -->
-              <span class="text-[11px] whitespace-nowrap">{{ step.label }}</span>
-            </div>
-          </template>
+    <!-- 右侧画布 + 识别结果区域 -->
+    <div class="flex-1 flex flex-col" style="width: 100%; height: 100%;">
+      <!-- Canvas -->
+      <div class="flex-1 flex items-center justify-center p-4 overflow-hidden relative bg-black/[0.02]">
+        <canvas
+          ref="canvasRef"
+          class="cursor-move shadow-sm rounded"
+          style="touch-action: none; width: 100%; height: 100%;"
+          @mousedown="onPointerDown"
+          @mousemove="onPointerMove"
+          @mouseup="onPointerUp"
+          @mouseleave="onPointerUp"
+          @wheel.prevent="onWheel"
+          @touchstart.passive="onPointerDown"
+          @touchmove="onPointerMove"
+          @touchend="onPointerUp"
+        />
+        <!-- Regular hints (shown when OCR is disabled) -->
+        <div
+          v-if="!ocrEnabled && mode === 'crop'"
+          class="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/60 text-white/80 text-xs px-3 py-1.5 rounded-full pointer-events-none"
+        >
+          拖动四角或边缘调整 · 滚轮缩放 · 自动吸附线条
+        </div>
+        <div
+          v-if="!ocrEnabled && mode === 'grid'"
+          class="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/60 text-white/80 text-xs px-3 py-1.5 rounded-full pointer-events-none"
+        >
+          将红框与图纸边框对齐 · 越精准误差越小
         </div>
       </div>
-      <!-- Regular hints (shown when OCR is disabled) -->
+      <!-- 识别结果 (shown during ocr-verify step, below canvas) -->
       <div
-        v-else-if="mode === 'crop'"
-        class="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/60 text-white/80 text-xs px-3 py-1.5 rounded-full pointer-events-none"
+        v-if="ocrEnabled && ocrStep === 'ocr-verify'"
+        class="border-t border-black/10 px-4 py-3 bg-white"
       >
-        拖动四角或边缘调整 · 滚轮缩放 · 自动吸附线条
-      </div>
-      <div
-        v-else-if="mode === 'grid'"
-        class="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/60 text-white/80 text-xs px-3 py-1.5 rounded-full pointer-events-none"
-      >
-        将红框与图纸边框对齐 · 越精准误差越小
+        <div class="flex items-center gap-2 mb-2">
+          <p class="text-[10px] text-black/40 uppercase tracking-wider">识别结果 ({{ legendData.size }})</p>
+          <span v-if="detectedLegendBrand" class="text-[10px] px-1.5 py-0.5 rounded bg-black text-white font-medium">{{ detectedLegendBrand }}</span>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <div v-for="[code, entry] in legendData" :key="code"
+            class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-black/[0.04]"
+          >
+            <div class="w-5 h-5 rounded border border-black/10 shrink-0" :style="{ backgroundColor: getColorForCode(code, detectedLegendBrand) }"></div>
+            <span class="text-xs font-medium text-black/80">{{ code }}</span>
+            <input
+              type="number"
+              :value="entry.expectedCount"
+              @input="updateLegendCount(code, $event)"
+              class="w-14 px-1.5 py-0.5 bg-white text-black text-center text-xs rounded border border-black/10 focus:border-black/30 focus:outline-none"
+              min="0"
+            />
+            <button @click="deleteLegendEntry(code)" class="text-red-500 hover:text-red-700 text-xs ml-1">×</button>
+          </div>
+        </div>
       </div>
     </div>
 
