@@ -3,8 +3,8 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from "vue";
 import { getDominantColorByArea } from "../utils/pixelation";
 import { findClosestPaletteColor } from "../utils/colorUtils";
 import { usePaletteStore } from "../stores/paletteStore";
-import { useOcrRecognition } from "../composables/useOcrRecognition";
-import { median, iqrFilter, inferGridFromOcrBoxes, inferGridFromEdges, detectGridDimensions, type GridDimensionsResult } from "../utils/gridDetection";
+import { useOcrRecognition, type GridCellResult } from "../composables/useOcrRecognition";
+import { inferGridFromEdges, detectGridDimensions, type GridDimensionsResult } from "../utils/gridDetection";
 import colorSystemMappingJson from "../data/colorSystemMapping.json";
 import { TRANSPARENT_KEY } from "../types";
 
@@ -81,10 +81,9 @@ interface LegendEntry {
 const legendData = ref<Map<string, LegendEntry>>(new Map())
 const detectedLegendBrand = ref<string>('')  // 检测到的图例品牌，用于 getColorForCode 精确匹配
 const autoGridCols = ref(0)
-const inferredGrid = ref<{ rows: number; cols: number; confidence: number }>({ rows: 0, cols: 0, confidence: 0 })
 const autoGridRows = ref(0)
 const detectionConfidence = ref<GridDimensionsResult>({ rows: 0, cols: 0, confidence: 0, method: "手动输入" })
-const ocrLegendLines = ref<readonly { text: string, box: { points: readonly {x:number,y:number}[] } }[]>([])
+const ocrCellResults = ref<GridCellResult[]>([])  // 图纸 OCR 逐格识别结果，供网格检测+颜色匹配共用
 
 // Editable grid override for auto-detected dimensions
 const isEditingGrid = ref(autoGridCols.value === 0 && autoGridRows.value === 0)
@@ -1282,12 +1281,47 @@ function handlePatternConfirm() {
   processingProgress.value = { phase: 'extracting', percent: 0 };
   
   console.log('[OCR] 图纸裁剪完成，开始颜色提取')
-  console.log(`[OCR] 图案画布: ${patternCanvas.value.width}x${patternCanvas.value.height}, 图例画布: ${legendCanvas.value!.width}x${legendCanvas.value!.height}`)
+  console.log(`[OCR] 图案画布: ${patternCanvas.value.width}x${patternCanvas.value.height}, 图纸画布: ${legendCanvas.value!.width}x${legendCanvas.value!.height}`)
   
   // Start color extraction with overlay progress
   nextTick(async () => {
     try {
-      runGridDetection() // Detect grid now that pattern canvas is available
+      // Step 1: 网格检测（基于图纸像素边缘检测）
+      runGridDetection()
+
+      // Step 2: 图纸 OCR 逐格识别（使用检测到的网格）
+      const canvas = patternCanvas.value!
+      const cols = autoGridCols.value || gridCols.value
+      const rows = autoGridRows.value || gridRows.value
+      ocrCellResults.value = []
+      try {
+        ocrCellResults.value = await ocrRecognition.recognizeGrid(canvas, cols, rows, (progress) => {
+          let percent: number | undefined
+          if (progress.percent != null) percent = progress.percent
+          processingMessage.value = `正在识别图纸格子色号... ${percent != null ? percent + '%' : ''}`
+          processingProgress.value = { phase: progress.phase, percent }
+        })
+        console.log(`[OCR] 格子OCR完成，识别到 ${ocrCellResults.value.length} 个格子有文字`)
+      } catch (err) {
+        console.error('[OCR] 格子OCR识别失败:', err)
+        ocrCellResults.value = []
+      }
+
+      // Step 2.5: 用 OCR 格子坐标验证网格（仅日志，不自动修正以避免坐标不一致）
+      if (ocrCellResults.value.length >= 4) {
+        const cells = ocrCellResults.value
+        const ocrRows = Math.max(...cells.map(c => c.row)) + 1
+        const ocrCols = Math.max(...cells.map(c => c.col)) + 1
+        const edgeRows = autoGridRows.value
+        const edgeCols = autoGridCols.value
+        if (ocrRows !== edgeRows || ocrCols !== edgeCols) {
+          console.log(`[OCR] ⚠ OCR坐标验证: ${ocrCols}x${ocrRows}，与边缘检测 ${edgeCols}x${edgeRows} 不一致，以边缘检测为准`)
+        } else {
+          console.log(`[OCR] ✓ OCR坐标与边缘检测一致: ${ocrCols}x${ocrRows}`)
+        }
+      }
+
+      // Step 3: 颜色提取
       await extractPatternColorsWithOverlay();
       console.log('[OCR] 颜色提取完成')
     } catch (err) {
@@ -1597,64 +1631,15 @@ async function parseLegendWithOcrWithOverlay() {
   console.log('[OCR] 图例识别完成，识别到', result.lines.length, '行文本')
   console.log(`[OCR] 原始识别内容:\n${result.lines.map((l: { text: string, score: number }) => `  "${l.text}" (置信度:${(l.score * 100).toFixed(0)}%)`).join('\n')}`)
 
-  // Store OCR lines for later grid detection
-  ocrLegendLines.value = result.lines
-
   // Use core parsing function
   legendData.value = _parseLegendCore(result.lines, legendCanvas.value.height)
 }
 
 /**
- * Run grid detection using stored OCR lines and current pattern canvas.
+ * Run grid detection using current pattern canvas.
  * Must be called AFTER pattern crop is done (patternCanvas available).
  */
 function runGridDetection() {
-  const entries = legendData.value
-  const lines = ocrLegendLines.value
-  
-  if (entries.size < 2 || lines.length === 0) {
-    console.log('[OCR] 网格检测跳过: 图例条目不足或未识别')
-    return
-  }
-  
-  const rowThreshold = Math.max(10, (legendCanvas.value?.height || 200) * 0.005)
-  
-  const sortedEntries = Array.from(entries.values()).sort((a, b) => {
-    if (Math.abs(a.bbox.y - b.bbox.y) > rowThreshold) return a.bbox.y - b.bbox.y
-    return a.bbox.x - b.bbox.x
-  })
-  
-  const dxValues: number[] = []
-  const dyValues: number[] = []
-  for (let i = 1; i < sortedEntries.length; i++) {
-    const prev = sortedEntries[i - 1]
-    const curr = sortedEntries[i]
-    const dx = curr.bbox.x - prev.bbox.x
-    const dy = curr.bbox.y - prev.bbox.y
-    if (Math.abs(dy) < rowThreshold && dx > 0) {
-      dxValues.push(dx)
-    } else if (dy > 0) {
-      dyValues.push(dy)
-    }
-  }
-  
-  const filteredDx = iqrFilter(dxValues)
-  const filteredDy = iqrFilter(dyValues)
-  const medianXSpacing = filteredDx.length > 0 ? median(filteredDx) : 0
-  const medianYSpacing = filteredDy.length > 0 ? median(filteredDy) : 0
-  
-  if (patternCanvas.value && medianXSpacing > 0 && medianYSpacing > 0) {
-    autoGridCols.value = Math.round(patternCanvas.value.width / medianXSpacing)
-    autoGridRows.value = Math.round(patternCanvas.value.height / medianYSpacing)
-    console.log(`[OCR] 自动检测网格: ${autoGridCols.value} x ${autoGridRows.value}`)
-  }
-  
-  if (lines.length >= 4) {
-    const inferred = inferGridFromOcrBoxes(lines as unknown as { box: { points: {x:number,y:number}[] } }[])
-    inferredGrid.value = inferred
-    console.log(`[OCR] OCR框聚类: ${inferred.cols} x ${inferred.rows}`)
-  }
-  
   let edgeResult = { rows: 0, cols: 0, confidence: 0 }
   if (patternCanvas.value) {
     const pCtx = patternCanvas.value.getContext('2d')
@@ -1664,14 +1649,14 @@ function runGridDetection() {
       if (edgeResult.confidence > 0) console.log(`[OCR] 边缘检测: ${edgeResult.cols} x ${edgeResult.rows}`)
     }
   }
-  
+
   const combined = detectGridDimensions(
-    { rows: autoGridRows.value, cols: autoGridCols.value },
-    inferredGrid.value,
+    { rows: 0, cols: 0 },
+    { rows: 0, cols: 0, confidence: 0 },
     edgeResult
   )
   detectionConfidence.value = combined
-  
+
   if (combined.rows > 0 && combined.cols > 0) {
     autoGridRows.value = combined.rows
     autoGridCols.value = combined.cols
@@ -1680,7 +1665,127 @@ function runGridDetection() {
 }
 
 
+// 回退方案：纯颜色距离匹配（无 OCR 格子识别）
+function extractPatternColorsByColorDistance(
+  canvas: HTMLCanvasElement,
+  ctx: CanvasRenderingContext2D,
+  cols: number,
+  rows: number,
+  cellW: number,
+  cellH: number,
+  borderTrim: number,
+) {
+  const totalCells = rows * cols
+  const cells: PatternCell[] = []
+  const colorCounts = new Map<string, { count: number, cells: Array<{ row: number, col: number }> }>()
+
+  // Build legend color lookup
+  const legendColors: { code: string, r: number, g: number, b: number }[] = []
+  for (const [code] of legendData.value) {
+    const hex = getColorForCode(code, detectedLegendBrand.value)
+    const hexMatch = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex)
+    if (hexMatch) {
+      legendColors.push({ code, r: parseInt(hexMatch[1], 16), g: parseInt(hexMatch[2], 16), b: parseInt(hexMatch[3], 16) })
+    }
+  }
+
+  const MAX_COLOR_DISTANCE = 3000
+  let processedCells = 0
+
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      const x = Math.round(col * cellW)
+      const y = Math.round(row * cellH)
+      const w = Math.round(cellW)
+      const h = Math.round(cellH)
+
+      const imageData = ctx.getImageData(x, y, w, h)
+      const dominantColor = getDominantColorByArea(imageData, borderTrim, { step: gridStep.value })
+
+      const match = dominantColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/)
+      const r = match ? parseInt(match[1], 10) : 0
+      const gVal = match ? parseInt(match[2], 10) : 0
+      const b = match ? parseInt(match[3], 10) : 0
+
+      let bestCode = TRANSPARENT_KEY
+      let bestHex = ''
+      let bestDist = Infinity
+      for (const lc of legendColors) {
+        const dr = r - lc.r
+        const dg = gVal - lc.g
+        const db = b - lc.b
+        const dist = dr * dr + dg * dg + db * db
+        if (dist < bestDist) { bestDist = dist; bestCode = lc.code; bestHex = getColorForCode(lc.code, detectedLegendBrand.value) }
+      }
+      if (bestDist > MAX_COLOR_DISTANCE) { bestCode = TRANSPARENT_KEY; bestHex = '' }
+
+      cells.push({ row, col, rgb: dominantColor, hex: bestHex, code: bestCode })
+
+      const existing = colorCounts.get(bestCode)
+      if (existing) { existing.count++; existing.cells.push({ row, col }) }
+      else { colorCounts.set(bestCode, { count: 1, cells: [{ row, col }] }) }
+
+      processedCells++
+      if (processedCells % 50 === 0 || processedCells === totalCells) {
+        processingMessage.value = `正在提取图纸颜色... ${Math.round((processedCells / totalCells) * 100)}%`
+      }
+    }
+  }
+
+  patternColorData.value = cells
+  buildDiffFromColorCounts(colorCounts, totalCells)
+  processingProgress.value = { phase: 'complete', percent: 100 }
+}
+
+// 从 colorCounts 构建差异数据（extractPatternColorsWithOverlay 和回退方案共用）
+function buildDiffFromColorCounts(
+  colorCounts: Map<string, { count: number, cells: Array<{ row: number, col: number }> }>,
+  totalCells: number,
+) {
+  const diff: DiffEntry[] = []
+
+  for (const [code, entry] of legendData.value) {
+    const actual = colorCounts.get(code)
+    diff.push({
+      code, expectedCount: entry.expectedCount,
+      actualCount: actual?.count || 0,
+      diff: (actual?.count || 0) - entry.expectedCount,
+      cells: actual?.cells || []
+    })
+  }
+
+  for (const [code, data] of colorCounts) {
+    if (!legendData.value.has(code) && code !== TRANSPARENT_KEY) {
+      diff.push({ code, expectedCount: 0, actualCount: data.count, diff: data.count, cells: data.cells })
+    }
+  }
+
+  // 空格子差异
+  const expectedLegendTotal = Array.from(legendData.value.values()).reduce((sum, entry) => sum + entry.expectedCount, 0)
+  const expectedEmptyCount = Math.max(0, totalCells - expectedLegendTotal)
+  const actualEmptyData = colorCounts.get(TRANSPARENT_KEY)
+  if (expectedEmptyCount > 0 || actualEmptyData) {
+    diff.push({
+      code: TRANSPARENT_KEY,
+      expectedCount: expectedEmptyCount,
+      actualCount: actualEmptyData?.count || 0,
+      diff: (actualEmptyData?.count || 0) - expectedEmptyCount,
+      cells: actualEmptyData?.cells || []
+    })
+  }
+
+  diff.sort((a, b) => {
+    const aM = Math.abs(a.diff), bM = Math.abs(b.diff)
+    if (aM > 0 && bM === 0) return -1
+    if (aM === 0 && bM > 0) return 1
+    return bM - aM
+  })
+  diffData.value = diff
+}
+
+
 // Pattern color extraction with overlay progress
+// 核心策略：对图纸每个格子做 OCR 识别，有识别结果→匹配色号，无结果→空格子
 async function extractPatternColorsWithOverlay() {
   if (!patternCanvas.value) return
   
@@ -1692,9 +1797,9 @@ async function extractPatternColorsWithOverlay() {
     return;
   }
 
-  console.log('[OCR] 开始图纸颜色提取')
-  processingMessage.value = '正在提取图纸颜色...'
-  processingProgress.value = { phase: 'extracting', percent: 0 }
+  console.log('[OCR] 开始图纸颜色提取（OCR 格子识别模式）')
+  processingMessage.value = '正在识别图纸格子色号...'
+  processingProgress.value = { phase: 'recognizing', percent: 0 }
 
   const canvas = patternCanvas.value
   const ctx = canvas.getContext('2d')!
@@ -1706,10 +1811,27 @@ async function extractPatternColorsWithOverlay() {
 
   console.log(`[OCR] 图纸尺寸: ${canvas.width} x ${canvas.height}, 网格: ${cols} x ${rows}, 格子: ${cellW.toFixed(1)} x ${cellH.toFixed(1)}`)
 
-  const cells: PatternCell[] = []
-  const colorCounts = new Map<string, { count: number, cells: Array<{ row: number, col: number }> }>()
+  // ========== Step 1: 使用 handlePatternConfirm 中预计算的 OCR 结果 ==========
+  const ocrResults = ocrCellResults.value
+  console.log(`[OCR] 使用预计算OCR结果，有效格子数: ${ocrResults.length}`)
 
-  // Build legend color lookup: code → { r, g, b } for distance comparison
+  // 构建 OCR 结果映射：(row,col) → 识别文本
+  const ocrCellMap = new Map<string, string>()
+  for (const cell of ocrResults) {
+    const key = `${cell.row},${cell.col}`
+    // 同一格子取文本最长的结果（更可能是完整色号）
+    const existing = ocrCellMap.get(key)
+    if (!existing || cell.text.length > existing.length) {
+      ocrCellMap.set(key, cell.text.trim().toUpperCase())
+    }
+  }
+  console.log(`[OCR] 有效OCR格子数: ${ocrCellMap.size}`)
+
+  // 品牌色号集合（用于 OCR 文本归一化匹配）
+  const brandIndex = buildBrandCodeIndex()
+  const brandCodes = brandIndex.get(detectedLegendBrand.value) ?? new Set<string>()
+
+  // ========== Step 2: 构建图例颜色查找表（用于无OCR匹配时回退） ==========
   const legendColors: { code: string, r: number, g: number, b: number }[] = []
   for (const [code] of legendData.value) {
     const hex = getColorForCode(code, detectedLegendBrand.value)
@@ -1725,8 +1847,17 @@ async function extractPatternColorsWithOverlay() {
   }
   console.log(`[OCR] 图例颜色查找表: ${legendColors.length} 个色号`)
 
+  // ========== Step 3: 遍历每个格子，按OCR结果归类 ==========
   const totalCells = rows * cols
   let processedCells = 0
+  let ocrMatchedCount = 0
+  let colorFallbackCount = 0
+  let emptyCount = 0
+
+  const cells: PatternCell[] = []
+  const colorCounts = new Map<string, { count: number, cells: Array<{ row: number, col: number }> }>()
+
+  const MAX_COLOR_DISTANCE = 3000
 
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
@@ -1738,41 +1869,54 @@ async function extractPatternColorsWithOverlay() {
       const imageData = ctx.getImageData(x, y, w, h)
       const dominantColor = getDominantColorByArea(imageData, borderTrim, { step: gridStep.value })
 
-      const match = dominantColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/)
-      if (!match) continue
+      const rgbMatch = dominantColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/)
+      
+      const r = rgbMatch ? parseInt(rgbMatch[1], 10) : 0
+      const gVal = rgbMatch ? parseInt(rgbMatch[2], 10) : 0
+      const b = rgbMatch ? parseInt(rgbMatch[3], 10) : 0
 
-      const r = parseInt(match[1], 10)
-      const g = parseInt(match[2], 10)
-      const b = parseInt(match[3], 10)
+      const ocrText = ocrCellMap.get(`${row},${col}`)
+      
+      let bestCode: string
+      let bestHex: string
 
-      // Find closest legend color by RGB distance
-      // 距离阈值：超过此值视为无匹配，归为空格子
-      const MAX_COLOR_DISTANCE = 10000
-      let bestCode = TRANSPARENT_KEY
-      let bestHex = ''
-      let bestDist = Infinity
-      for (const lc of legendColors) {
-        const dr = r - lc.r
-        const dg = g - lc.g
-        const db = b - lc.b
-        const dist = dr * dr + dg * dg + db * db
-        if (dist < bestDist) {
-          bestDist = dist
-          bestCode = lc.code
-          bestHex = getColorForCode(lc.code, detectedLegendBrand.value)
+      if (ocrText) {
+        // 有 OCR 识别结果 → 尝试匹配图例色号
+        const resolvedCode = resolveCodeFromOcr(ocrText, brandCodes)
+        if (brandCodes.has(resolvedCode)) {
+          // OCR 文本匹配到已知色号
+          bestCode = resolvedCode
+          bestHex = getColorForCode(resolvedCode, detectedLegendBrand.value)
+          ocrMatchedCount++
+        } else {
+          // OCR 有结果但不匹配任何色号 → 回退到颜色距离匹配
+          let bestDist = Infinity
+          bestCode = TRANSPARENT_KEY
+          bestHex = ''
+          for (const lc of legendColors) {
+            const dr = r - lc.r
+            const dg = gVal - lc.g
+            const db = b - lc.b
+            const dist = dr * dr + dg * dg + db * db
+            if (dist < bestDist) {
+              bestDist = dist
+              bestCode = lc.code
+              bestHex = getColorForCode(lc.code, detectedLegendBrand.value)
+            }
+          }
+          if (bestDist > MAX_COLOR_DISTANCE) {
+            bestCode = TRANSPARENT_KEY
+            bestHex = ''
+            emptyCount++
+          } else {
+            colorFallbackCount++
+          }
         }
-      }
-      // 超出距离阈值或无语录颜色 → 归为空格子
-      if (bestDist > MAX_COLOR_DISTANCE) {
+      } else {
+        // 无 OCR 识别结果 → 直接归为空格子
         bestCode = TRANSPARENT_KEY
         bestHex = ''
-      }
-      // Fallback: if no legend colors, use hex directly
-      if (legendColors.length === 0) {
-        bestHex = `rgb(${r},${g},${b})`
-          .replace(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/, (_, r, g, b) =>
-            '#' + [r, g, b].map(x => parseInt(x).toString(16).padStart(2, '0')).join('')
-          )
+        emptyCount++
       }
 
       cells.push({ row, col, rgb: dominantColor, hex: bestHex, code: bestCode })
@@ -1795,47 +1939,14 @@ async function extractPatternColorsWithOverlay() {
     }
   }
 
-  console.log('[OCR] 图纸颜色提取完成，共', cells.length, '个格子，', colorCounts.size, '种颜色')
+  console.log(`[OCR] 图纸颜色提取完成: 共${cells.length}格, OCR匹配=${ocrMatchedCount}, 颜色回退=${colorFallbackCount}, 空格=${emptyCount}`)
   console.log(`[OCR:extract] 各颜色实际数量:\n${Array.from(colorCounts.entries()).map(([code, data]) => `  ${code}: ${data.count}个`).join('\n')}`)
   patternColorData.value = cells
 
-  // Build diff data
-  const diff: DiffEntry[] = []
-
-  for (const [code, entry] of legendData.value) {
-    const actual = colorCounts.get(code)
-    diff.push({
-      code,
-      expectedCount: entry.expectedCount,
-      actualCount: actual?.count || 0,
-      diff: (actual?.count || 0) - entry.expectedCount,
-      cells: actual?.cells || []
-    })
-  }
-
-  for (const [code, data] of colorCounts) {
-    if (!legendData.value.has(code)) {
-      diff.push({
-        code,
-        expectedCount: 0,
-        actualCount: data.count,
-        diff: data.count,
-        cells: data.cells
-      })
-    }
-  }
-
-  diff.sort((a, b) => {
-    const aMismatch = Math.abs(a.diff)
-    const bMismatch = Math.abs(b.diff)
-    if (aMismatch > 0 && bMismatch === 0) return -1
-    if (aMismatch === 0 && bMismatch > 0) return 1
-    return bMismatch - aMismatch
-  })
-
-  diffData.value = diff
-  console.log('[OCR] 差异对比完成，共', diff.length, '个颜色')
-  for (const entry of diff) {
+  // ========== Step 4: 构建差异数据（共用函数） ==========
+  buildDiffFromColorCounts(colorCounts, totalCells)
+  console.log('[OCR] 差异对比完成，共', diffData.value.length, '个颜色')
+  for (const entry of diffData.value) {
     const status = entry.diff === 0 ? '✓一致' : (entry.diff > 0 ? `↑多${entry.diff}` : `↓少${Math.abs(entry.diff)}`)
     console.log(`[OCR:diff] ${entry.code} 期望=${entry.expectedCount} 实际=${entry.actualCount} ${status}`)
   }
@@ -1961,7 +2072,7 @@ function extractPatternColorsForDiff() {
   }
 
   for (const [code, data] of colorCounts) {
-    if (!legendData.value.has(code)) {
+    if (!legendData.value.has(code) && code !== TRANSPARENT_KEY) {
       diff.push({
         code,
         expectedCount: 0,
@@ -1970,6 +2081,24 @@ function extractPatternColorsForDiff() {
         cells: data.cells
       })
     }
+  }
+
+  // 空格子差异：总格子数 - 各图例期望数量 = 应有空格子数
+  const cols = autoGridCols.value || gridCols.value
+  const rows = autoGridRows.value || gridRows.value
+  const totalCells = rows * cols
+  const expectedLegendTotal = Array.from(legendData.value.values()).reduce((sum, entry) => sum + entry.expectedCount, 0)
+  const expectedEmptyCount = Math.max(0, totalCells - expectedLegendTotal)
+  const actualEmptyData = colorCounts.get(TRANSPARENT_KEY)
+  const actualEmptyCount = actualEmptyData?.count || 0
+  if (expectedEmptyCount > 0 || actualEmptyData) {
+    diff.push({
+      code: TRANSPARENT_KEY,
+      expectedCount: expectedEmptyCount,
+      actualCount: actualEmptyCount,
+      diff: actualEmptyCount - expectedEmptyCount,
+      cells: actualEmptyData?.cells || []
+    })
   }
 
   diff.sort((a, b) => {
@@ -2307,7 +2436,7 @@ function extractPatternColors() {
 
   // Add entries from pattern that are not in legend
   for (const [code, data] of colorCounts) {
-    if (!legendData.value.has(code)) {
+    if (!legendData.value.has(code) && code !== TRANSPARENT_KEY) {
       diff.push({
         code,
         expectedCount: 0,
@@ -2316,6 +2445,22 @@ function extractPatternColors() {
         cells: data.cells
       })
     }
+  }
+
+  // 空格子差异：总格子数 - 各图例期望数量 = 应有空格子数
+  const totalCellsExtract = rows * cols
+  const expectedLegendTotalExtract = Array.from(legendData.value.values()).reduce((sum, entry) => sum + entry.expectedCount, 0)
+  const expectedEmptyCountExtract = Math.max(0, totalCellsExtract - expectedLegendTotalExtract)
+  const actualEmptyDataExtract = colorCounts.get(TRANSPARENT_KEY)
+  const actualEmptyCountExtract = actualEmptyDataExtract?.count || 0
+  if (expectedEmptyCountExtract > 0 || actualEmptyDataExtract) {
+    diff.push({
+      code: TRANSPARENT_KEY,
+      expectedCount: expectedEmptyCountExtract,
+      actualCount: actualEmptyCountExtract,
+      diff: actualEmptyCountExtract - expectedEmptyCountExtract,
+      cells: actualEmptyDataExtract?.cells || []
+    })
   }
 
   // Sort: mismatches first (largest diff first), then matches
@@ -2927,13 +3072,17 @@ watch(ocrStep, () => {
             <p class="text-[10px] text-black/40 uppercase tracking-wider mb-3">颜色列表</p>
             <div class="space-y-2 max-h-80 overflow-y-auto">
               <div v-for="entry in diffData" :key="entry.code"
-                @click="selectedDiffColor = entry.code; extractColorSlices(entry.code)"
+                @click="entry.code !== TRANSPARENT_KEY && (selectedDiffColor = entry.code, extractColorSlices(entry.code))"
                 class="flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-colors"
                 :class="selectedDiffColor === entry.code ? 'bg-black/10' : 'bg-black/[0.04] hover:bg-black/[0.06]'"
               >
-                <div class="w-6 h-6 rounded border border-black/10" :style="{ backgroundColor: getColorHex(entry.code) }"></div>
+                <!-- 空格子用斜线图案 -->
+                <div v-if="entry.code === TRANSPARENT_KEY" class="w-6 h-6 rounded border border-black/10 relative overflow-hidden" style="background-color: #fafafa">
+                  <svg class="absolute inset-0 w-full h-full" viewBox="0 0 24 24"><line x1="0" y1="0" x2="24" y2="24" stroke="#d1d5db" stroke-width="1"/><line x1="24" y1="0" x2="0" y2="24" stroke="#d1d5db" stroke-width="1"/></svg>
+                </div>
+                <div v-else class="w-6 h-6 rounded border border-black/10" :style="{ backgroundColor: getColorHex(entry.code) }"></div>
                 <div class="flex-1 min-w-0">
-                  <p class="text-xs font-medium text-black/80">{{ entry.code }}</p>
+                  <p class="text-xs font-medium text-black/80">{{ entry.code === TRANSPARENT_KEY ? '空格' : entry.code }}</p>
                   <p class="text-[10px] text-black/40">期望: {{ entry.expectedCount }} | 实际: {{ entry.actualCount }}</p>
                 </div>
                 <div class="text-right">
