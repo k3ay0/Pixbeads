@@ -60,6 +60,14 @@ const mode = ref<"crop" | "grid">("crop");
 const gridCols = ref(10);
 const gridRows = ref(10);
 const gridStep = ref(16); // 颜色量化步长
+const showStepTooltip = ref(false);
+const tooltipX = ref(0);
+const tooltipY = ref(0);
+
+function updateTooltipPos(e: MouseEvent) {
+  tooltipX.value = e.clientX + 12;
+  tooltipY.value = e.clientY + 12;
+}
 const ocrEnabled = ref(false);
 
 // OCR smart workflow state
@@ -148,6 +156,48 @@ interface ColorSlice {
 }
 const colorSlices = ref<ColorSlice[]>([])
 const selectedSlice = ref<{ row: number; col: number } | null>(null)
+const selectedSlices = ref<{ row: number; col: number }[]>([])
+
+// Slice canvas refs for small canvas rendering
+const sliceCanvasRefs = ref<(HTMLCanvasElement | null)[]>([])
+
+function renderSliceCanvases() {
+  nextTick(() => {
+    const slices = colorSlices.value
+    for (let i = 0; i < slices.length; i++) {
+      const canvas = sliceCanvasRefs.value[i]
+      if (!canvas) continue
+      const slice = slices[i]
+      canvas.width = slice.imageData.width
+      canvas.height = slice.imageData.height
+      const ctx = canvas.getContext('2d')
+      if (ctx) {
+        ctx.putImageData(slice.imageData, 0, 0)
+      }
+    }
+  })
+}
+
+// Palette colors: all legend colors + transparent at the end
+const paletteColors = computed(() => {
+  const colors: { code: string; hex: string }[] = []
+  for (const [code] of legendData.value) {
+    colors.push({ code, hex: getColorHex(code) })
+  }
+  // Add transparent at the end if it's not already in legendData
+  if (!legendData.value.has(TRANSPARENT_KEY)) {
+    colors.push({ code: TRANSPARENT_KEY, hex: '#fafafa' })
+  }
+  return colors
+})
+
+// Diff summary stats
+const diffStats = computed(() => {
+  const total = diffData.value.length
+  const matchCount = diffData.value.filter(d => d.diff === 0).length
+  const mismatchCount = total - matchCount
+  return { total, matchCount, mismatchCount }
+})
 
 // Fullscreen overlay state for OCR processing
 const showProcessingOverlay = ref(false)
@@ -185,6 +235,8 @@ const detectedEdgesY = ref<number[]>([]);
 
 // 智能吸附函数 - 检测值是否接近检测到的边缘
 function snapToEdge(value: number): number {
+  // 放大比例 > 300% 时取消吸附
+  if (canvasScale.value > 3) return value;
   // 检查检测到的线条边缘
   for (const edge of detectedEdgesX.value) {
     if (Math.abs(value - edge) < SNAP_THRESHOLD) {
@@ -281,6 +333,42 @@ function mergeNearbyEdges(edges: number[], threshold: number): number[] {
   return merged;
 }
 
+/**
+ * 从源图片推断网格尺寸（色块识别模式使用）
+ * 在切换到色块识别模式时调用，作为默认网格值
+ */
+function inferGridFromSourceImage() {
+  if (!img.value) return;
+  
+  const tempCanvas = document.createElement('canvas');
+  const { width, height } = getEffectiveDimensions();
+  tempCanvas.width = width;
+  tempCanvas.height = height;
+  
+  const ctx = tempCanvas.getContext('2d')!;
+  ctx.save();
+  applyTransforms(ctx, width, height);
+  ctx.drawImage(img.value, 0, 0, width, height);
+  ctx.restore();
+  
+  const imageData = ctx.getImageData(0, 0, width, height);
+  const edgeResult = inferGridFromEdges(imageData);
+  
+  if (edgeResult.confidence > 0 && edgeResult.rows > 0 && edgeResult.cols > 0) {
+    console.log(`[色块识别] 边缘检测网格: ${edgeResult.cols}x${edgeResult.rows} (置信度: ${edgeResult.confidence})`);
+    autoGridCols.value = edgeResult.cols;
+    autoGridRows.value = edgeResult.rows;
+    gridCols.value = edgeResult.cols;
+    gridRows.value = edgeResult.rows;
+    detectionConfidence.value = {
+      rows: edgeResult.rows,
+      cols: edgeResult.cols,
+      confidence: edgeResult.confidence,
+      method: "边缘检测"
+    };
+  }
+}
+
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   ctx.beginPath()
   ctx.moveTo(x + r, y)
@@ -337,11 +425,12 @@ function getEffectiveDimensions() {
 }
 
 function initCrop() {
+  const padding = displayWidth.value * 0.025; // 2.5% padding each side = 5% total
   crop.value = {
-    x: 0,
-    y: 0,
-    width: displayWidth.value,
-    height: displayHeight.value,
+    x: padding,
+    y: padding,
+    width: displayWidth.value * 0.95,
+    height: displayHeight.value * 0.95,
   };
 }
 
@@ -427,7 +516,6 @@ function render() {
     } else if (ocrEnabled.value && ocrStep.value === 'legend-crop') {
       renderLegendCropOverlay(ctx);
     } else if (mode.value === "crop") {
-      renderDetectedEdges(ctx);
       renderCropOverlay(ctx);
     } else {
       renderGridOverlay(ctx);
@@ -449,6 +537,9 @@ function render() {
       const offsetX = (maxW - drawW) / 2;
       const offsetY = (maxH - drawH) / 2;
 
+      ctx.save();
+      ctx.translate(canvasTranslateX.value, canvasTranslateY.value);
+      ctx.scale(canvasScale.value, canvasScale.value);
       ctx.drawImage(lc, offsetX, offsetY, drawW, drawH);
 
       // Draw bounding box overlays for each legend entry
@@ -468,6 +559,7 @@ function render() {
         const label = `${entry.code} ×${entry.expectedCount}`;
         ctx.fillText(label, bx, by - 2);
       }
+      ctx.restore();
     } else {
       ctx.fillStyle = 'rgba(0,0,0,0.4)';
       ctx.font = '14px sans-serif';
@@ -478,169 +570,7 @@ function render() {
     }
   }
 
-  // diff-view: draw pattern grid or slice gallery (outside transform, raw canvas coords)
-  if (ocrEnabled.value && ocrStep.value === 'diff-view') {
-    if (colorSlices.value.length > 0 && selectedDiffColor.value) {
-      // === Slice Gallery Mode ===
-      const slices = colorSlices.value
-      const code = selectedDiffColor.value
-      const hex = getColorHex(code)
-
-      // Background
-      ctx.fillStyle = '#fafafa'
-      ctx.fillRect(0, 0, canvas.width, canvas.height)
-
-      // Title
-      ctx.fillStyle = '#111827'
-      ctx.font = 'bold 16px sans-serif'
-      ctx.textAlign = 'left'
-      ctx.textBaseline = 'top'
-      ctx.fillText(`色块切片: ${code}`, 24, 20)
-
-      // Subtitle with count
-      ctx.fillStyle = '#6b7280'
-      ctx.font = '12px sans-serif'
-      ctx.fillText(`共 ${slices.length} 个切片`, 24, 44)
-
-      // Calculate thumbnail grid layout
-      const thumbSize = 100
-      const gap = 12
-      const labelHeight = 20
-      const cellTotalH = thumbSize + labelHeight + gap
-      const padding = 24
-      const availableW = canvas.width - padding * 2
-      const cols = Math.max(1, Math.floor(availableW / (thumbSize + gap)))
-      const startY = 70
-
-      // Create offscreen canvas to render ImageData
-      const tmpCanvas = document.createElement('canvas')
-      const tmpCtx = tmpCanvas.getContext('2d')!
-
-      for (let i = 0; i < slices.length; i++) {
-        const slice = slices[i]
-        const gridCol = i % cols
-        const gridRow = Math.floor(i / cols)
-        const x = padding + gridCol * (thumbSize + gap)
-        const y = startY + gridRow * cellTotalH
-
-        // Card background
-        const isSelected = selectedSlice.value?.row === slice.row && selectedSlice.value?.col === slice.col
-        ctx.fillStyle = isSelected ? '#eff6ff' : '#ffffff'
-        ctx.strokeStyle = isSelected ? '#3b82f6' : '#e5e7eb'
-        ctx.lineWidth = isSelected ? 2 : 1
-        roundRect(ctx, x, y, thumbSize, thumbSize + labelHeight, 6)
-        ctx.fill()
-        ctx.stroke()
-
-        // Draw the cell image data as thumbnail
-        tmpCanvas.width = slice.imageData.width
-        tmpCanvas.height = slice.imageData.height
-        tmpCtx.putImageData(slice.imageData, 0, 0)
-
-        // Scale to fit thumbnail
-        const imgScale = Math.min(thumbSize / tmpCanvas.width, thumbSize / tmpCanvas.height)
-        const drawW = tmpCanvas.width * imgScale
-        const drawH = tmpCanvas.height * imgScale
-        const drawX = x + (thumbSize - drawW) / 2
-        const drawY = y + (thumbSize - drawH) / 2
-        ctx.drawImage(tmpCanvas, drawX, drawY, drawW, drawH)
-
-        // Label: row,col and color code
-        ctx.fillStyle = '#374151'
-        ctx.font = '10px sans-serif'
-        ctx.textAlign = 'center'
-        ctx.textBaseline = 'top'
-        ctx.fillText(`R${slice.row} C${slice.col}`, x + thumbSize / 2, y + thumbSize + 2)
-
-        // Color dot
-        ctx.beginPath()
-        ctx.arc(x + thumbSize / 2 - 14, y + thumbSize + 12, 4, 0, Math.PI * 2)
-        ctx.fillStyle = hex
-        ctx.fill()
-        ctx.strokeStyle = '#d1d5db'
-        ctx.lineWidth = 0.5
-        ctx.stroke()
-      }
-
-      // Reset text alignment
-      ctx.textAlign = 'start'
-    } else if (patternColorData.value.length > 0) {
-      const cols = autoGridCols.value || gridCols.value
-      const rows = autoGridRows.value || gridRows.value
-      
-      // Calculate grid area to center in canvas
-      const maxW = canvas.width
-      const maxH = canvas.height
-      const padding = 40
-      const availableW = maxW - padding * 2
-      const availableH = maxH - padding * 2
-      const cellSize = Math.floor(Math.min(availableW / cols, availableH / rows))
-      const gridW = cellSize * cols
-      const gridH = cellSize * rows
-      const offsetX = (maxW - gridW) / 2
-      const offsetY = (maxH - gridH) / 2
-
-      // Draw cells with matched colors
-      for (const cell of patternColorData.value) {
-        const x = offsetX + cell.col * cellSize
-        const y = offsetY + cell.row * cellSize
-        
-        if (cell.code === TRANSPARENT_KEY) {
-          // 空格子：白色背景 + 斜线标记
-          ctx.fillStyle = '#fafafa'
-          ctx.fillRect(x, y, cellSize, cellSize)
-          ctx.strokeStyle = '#d1d5db'
-          ctx.lineWidth = 0.5
-          ctx.beginPath()
-          ctx.moveTo(x, y)
-          ctx.lineTo(x + cellSize, y + cellSize)
-          ctx.moveTo(x + cellSize, y)
-          ctx.lineTo(x, y + cellSize)
-          ctx.stroke()
-        } else {
-          // Fill with matched hex color
-          ctx.fillStyle = cell.hex
-          ctx.fillRect(x, y, cellSize, cellSize)
-        }
-        
-        // Highlight selected diff color
-        if (selectedDiffColor.value && cell.code === selectedDiffColor.value) {
-          ctx.strokeStyle = '#3b82f6'
-          ctx.lineWidth = 2
-          ctx.strokeRect(x, y, cellSize, cellSize)
-        }
-      }
-
-      // Draw grid lines
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.1)'
-      ctx.lineWidth = 1
-      for (let i = 0; i <= cols; i++) {
-        ctx.beginPath()
-        ctx.moveTo(offsetX + i * cellSize, offsetY)
-        ctx.lineTo(offsetX + i * cellSize, offsetY + gridH)
-        ctx.stroke()
-      }
-      for (let i = 0; i <= rows; i++) {
-        ctx.beginPath()
-        ctx.moveTo(offsetX, offsetY + i * cellSize)
-        ctx.lineTo(offsetX + gridW, offsetY + i * cellSize)
-        ctx.stroke()
-      }
-
-      // Draw outer border
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)'
-      ctx.lineWidth = 2
-      ctx.strokeRect(offsetX, offsetY, gridW, gridH)
-    } else {
-      // No pattern data yet
-      ctx.fillStyle = 'rgba(0,0,0,0.4)';
-      ctx.font = '14px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('正在提取颜色...', canvas.width / 2, canvas.height / 2);
-      ctx.textAlign = 'start';
-    }
-  }
+  // diff-view: no canvas rendering needed — HTML layout handles it
 }
 
 // 渲染检测到的边缘线
@@ -873,6 +803,15 @@ function onPointerDown(e: MouseEvent | TouchEvent) {
   const x = (clientX - rect.left) * (canvas.width / rect.width);
   const y = (clientY - rect.top) * (canvas.height / rect.height);
 
+  // ocr-verify / diff-view: only pan, no crop box
+  if (ocrEnabled.value && (ocrStep.value === 'ocr-verify' || ocrStep.value === 'diff-view')) {
+    dragMode.value = "pan";
+    dragStart.value = { x: clientX, y: clientY };
+    canvasTranslateStart.value = { x: canvasTranslateX.value, y: canvasTranslateY.value };
+    e.preventDefault();
+    return;
+  }
+
   const useGridMode = (mode.value === "grid" && !ocrEnabled.value) || (ocrEnabled.value && ocrStep.value === 'pattern-crop');
   if (!useGridMode) {
     const hitMode = getCropHitMode(x, y);
@@ -903,6 +842,21 @@ function onPointerMove(e: MouseEvent | TouchEvent) {
   const rect = canvas.getBoundingClientRect();
   const x = (clientX - rect.left) * (canvas.width / rect.width);
   const y = (clientY - rect.top) * (canvas.height / rect.height);
+
+  // ocr-verify / diff-view: only pan
+  if (ocrEnabled.value && (ocrStep.value === 'ocr-verify' || ocrStep.value === 'diff-view')) {
+    if (!dragMode.value) {
+      canvas.style.cursor = "grab";
+      return;
+    }
+    if (dragMode.value === "pan") {
+      canvasTranslateX.value = canvasTranslateStart.value.x + (clientX - dragStart.value.x);
+      canvasTranslateY.value = canvasTranslateStart.value.y + (clientY - dragStart.value.y);
+      render();
+      e.preventDefault();
+    }
+    return;
+  }
 
   const useGridMode = (mode.value === "grid" && !ocrEnabled.value) || (ocrEnabled.value && ocrStep.value === 'pattern-crop');
   if (!useGridMode) {
@@ -954,6 +908,7 @@ function onPointerMove(e: MouseEvent | TouchEvent) {
         // 智能吸附
         newY = snapToEdge(newY);
         newH = c.y + c.height - newY;
+        newW = snapToEdge(c.x + newW) - c.x;
         break;
       case "sw":
         newX = Math.max(0, Math.min(c.x + c.width - MIN_CROP_SIZE, c.x + dx));
@@ -962,10 +917,14 @@ function onPointerMove(e: MouseEvent | TouchEvent) {
         // 智能吸附
         newX = snapToEdge(newX);
         newW = c.x + c.width - newX;
+        newH = snapToEdge(c.y + newH) - c.y;
         break;
       case "se":
         newW = Math.max(MIN_CROP_SIZE, Math.min(maxW - c.x, c.width + dx));
         newH = Math.max(MIN_CROP_SIZE, Math.min(maxH - c.y, c.height + dy));
+        // 智能吸附
+        newW = snapToEdge(c.x + newW) - c.x;
+        newH = snapToEdge(c.y + newH) - c.y;
         break;
       case "n":
         newY = Math.max(0, Math.min(c.y + c.height - MIN_CROP_SIZE, c.y + dy));
@@ -976,6 +935,8 @@ function onPointerMove(e: MouseEvent | TouchEvent) {
         break;
       case "s":
         newH = Math.max(MIN_CROP_SIZE, Math.min(maxH - c.y, c.height + dy));
+        // 智能吸附
+        newH = snapToEdge(c.y + newH) - c.y;
         break;
       case "w":
         newX = Math.max(0, Math.min(c.x + c.width - MIN_CROP_SIZE, c.x + dx));
@@ -986,6 +947,8 @@ function onPointerMove(e: MouseEvent | TouchEvent) {
         break;
       case "e":
         newW = Math.max(MIN_CROP_SIZE, Math.min(maxW - c.x, c.width + dx));
+        // 智能吸附
+        newW = snapToEdge(c.x + newW) - c.x;
         break;
     }
     // Update the correct crop based on mode
@@ -1036,6 +999,7 @@ function onPointerMove(e: MouseEvent | TouchEvent) {
           // 智能吸附
           newY = snapToEdge(newY);
           newH = c.y + c.height - newY;
+          newW = snapToEdge(c.x + newW) - c.x;
           break;
         case "sw":
           newX = Math.max(0, Math.min(c.x + c.width - MIN_CROP_SIZE, c.x + dx));
@@ -1044,10 +1008,14 @@ function onPointerMove(e: MouseEvent | TouchEvent) {
           // 智能吸附
           newX = snapToEdge(newX);
           newW = c.x + c.width - newX;
+          newH = snapToEdge(c.y + newH) - c.y;
           break;
         case "se":
           newW = Math.max(MIN_CROP_SIZE, Math.min(displayWidth.value - c.x, c.width + dx));
           newH = Math.max(MIN_CROP_SIZE, Math.min(displayHeight.value - c.y, c.height + dy));
+          // 智能吸附
+          newW = snapToEdge(c.x + newW) - c.x;
+          newH = snapToEdge(c.y + newH) - c.y;
           break;
         case "n":
           newY = Math.max(0, Math.min(c.y + c.height - MIN_CROP_SIZE, c.y + dy));
@@ -1058,6 +1026,8 @@ function onPointerMove(e: MouseEvent | TouchEvent) {
           break;
         case "s":
           newH = Math.max(MIN_CROP_SIZE, Math.min(displayHeight.value - c.y, c.height + dy));
+          // 智能吸附
+          newH = snapToEdge(c.y + newH) - c.y;
           break;
         case "w":
           newX = Math.max(0, Math.min(c.x + c.width - MIN_CROP_SIZE, c.x + dx));
@@ -1068,6 +1038,8 @@ function onPointerMove(e: MouseEvent | TouchEvent) {
           break;
         case "e":
           newW = Math.max(MIN_CROP_SIZE, Math.min(displayWidth.value - c.x, c.width + dx));
+          // 智能吸附
+          newW = snapToEdge(c.x + newW) - c.x;
           break;
       }
       gridCrop.value = { x: newX, y: newY, width: newW, height: newH };
@@ -1243,6 +1215,11 @@ function handleLegendConfirm() {
         showProcessingOverlay.value = false;
         ocrStep.value = 'ocr-verify';
         isLegendCrop.value = false;
+        // 重置canvas变换，居中显示
+        canvasScale.value = 1;
+        canvasTranslateX.value = 0;
+        canvasTranslateY.value = 0;
+        nextTick(() => render());
       }, 500)
     }
   });
@@ -1295,13 +1272,15 @@ function handlePatternConfirm() {
       const rows = autoGridRows.value || gridRows.value
       ocrCellResults.value = []
       try {
+        // 构建图例色号列表作为OCR字符白名单
+        const legendCodes = Array.from(legendData.value.keys())
         ocrCellResults.value = await ocrRecognition.recognizeGrid(canvas, cols, rows, (progress) => {
           let percent: number | undefined
           if (progress.percent != null) percent = progress.percent
           processingMessage.value = `正在识别图纸格子色号... ${percent != null ? percent + '%' : ''}`
           processingProgress.value = { phase: progress.phase, percent }
-        })
-        console.log(`[OCR] 格子OCR完成，识别到 ${ocrCellResults.value.length} 个格子有文字`)
+        }, legendCodes)
+        console.log(`[OCR] 格子OCR完成，识别到 ${ocrCellResults.value.length} 个格子有文字（白名单过滤已启用，${legendCodes.length} 个色号）`)
       } catch (err) {
         console.error('[OCR] 格子OCR识别失败:', err)
         ocrCellResults.value = []
@@ -1522,13 +1501,17 @@ function _parseLegendCore(
       // so downstream lookups like getColorForCode() work correctly
       tokens.push({ text: resolvedCode, bbox, centerX, centerY, isCode: true })
       classifiedCodes.push(resolvedCode)
-    } else if (/^\d+$/.test(text)) {
-      // Pure number → likely a quantity
-      tokens.push({ text, bbox, centerX, centerY, isCode: false })
-      classifiedNumbers.push(text)
     } else {
-      // Not a code or number → discard
-      discarded.push(text)
+      // 去掉各种括号后判断是否为数字
+      const stripped = text.replace(/^[（(]\s*/, '').replace(/\s*[)）]$/, '').trim()
+      if (/^\d+$/.test(stripped)) {
+        // 数字（可能带括号）→ 作为数量
+        tokens.push({ text: stripped, bbox, centerX, centerY, isCode: false })
+        classifiedNumbers.push(stripped)
+      } else {
+        // Not a code or number → discard
+        discarded.push(text)
+      }
     }
   }
 
@@ -1646,7 +1629,8 @@ function runGridDetection() {
     if (pCtx) {
       const edgeImageData = pCtx.getImageData(0, 0, patternCanvas.value.width, patternCanvas.value.height)
       edgeResult = inferGridFromEdges(edgeImageData)
-      if (edgeResult.confidence > 0) console.log(`[OCR] 边缘检测: ${edgeResult.cols} x ${edgeResult.rows}`)
+      console.log(`[OCR] 边缘检测: ${edgeResult.cols} x ${edgeResult.rows} (confidence: ${edgeResult.confidence})`)
+      console.log(`[OCR] 画布尺寸: ${patternCanvas.value.width} x ${patternCanvas.value.height}`)
     }
   }
 
@@ -1883,34 +1867,16 @@ async function extractPatternColorsWithOverlay() {
       if (ocrText) {
         // 有 OCR 识别结果 → 尝试匹配图例色号
         const resolvedCode = resolveCodeFromOcr(ocrText, brandCodes)
-        if (brandCodes.has(resolvedCode)) {
-          // OCR 文本匹配到已知色号
+        if (legendData.value.has(resolvedCode)) {
+          // OCR 文本匹配到图例中的色号
           bestCode = resolvedCode
           bestHex = getColorForCode(resolvedCode, detectedLegendBrand.value)
           ocrMatchedCount++
         } else {
-          // OCR 有结果但不匹配任何色号 → 回退到颜色距离匹配
-          let bestDist = Infinity
+          // OCR 有结果但不匹配图例中的色号 → 归为空格子
           bestCode = TRANSPARENT_KEY
           bestHex = ''
-          for (const lc of legendColors) {
-            const dr = r - lc.r
-            const dg = gVal - lc.g
-            const db = b - lc.b
-            const dist = dr * dr + dg * dg + db * db
-            if (dist < bestDist) {
-              bestDist = dist
-              bestCode = lc.code
-              bestHex = getColorForCode(lc.code, detectedLegendBrand.value)
-            }
-          }
-          if (bestDist > MAX_COLOR_DISTANCE) {
-            bestCode = TRANSPARENT_KEY
-            bestHex = ''
-            emptyCount++
-          } else {
-            colorFallbackCount++
-          }
+          emptyCount++
         }
       } else {
         // 无 OCR 识别结果 → 直接归为空格子
@@ -1965,9 +1931,59 @@ function handleBackToPattern() {
 function getColorHex(code: string): string {
   // 空格子返回特殊颜色
   if (code === TRANSPARENT_KEY) return '#fafafa'
-  // Find hex for this code from patternColorData
+  // 从颜色系统映射中查找 hex（避免从 patternColorData 循环引用）
+  try {
+    const mapping = colorSystemMappingJson as Record<string, Record<string, string>>
+    // 先尝试精确匹配
+    for (const [hex, systems] of Object.entries(mapping)) {
+      if (Object.values(systems).some(v => v === code)) {
+        return hex.startsWith('#') ? hex : `#${hex}`
+      }
+    }
+    // 尝试标准化匹配（OCR 可能丢掉前导零）
+    const candidates = normalizeOcrText(code)
+    for (const cand of candidates) {
+      if (cand === code.toUpperCase()) continue
+      for (const [hex, systems] of Object.entries(mapping)) {
+        if (Object.values(systems).some(v => v === cand)) {
+          return hex.startsWith('#') ? hex : `#${hex}`
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[getColorHex] lookup failed:', e)
+  }
+  // 回退：从 patternColorData 查找
   const cell = patternColorData.value.find(c => c.code === code)
   return cell?.hex || '#e5e7eb'
+}
+
+// 判断颜色是否为浅色（用于决定文字颜色）
+function isLightColor(hex: string): boolean {
+  const c = hex.replace('#', '')
+  const r = parseInt(c.substring(0, 2), 16)
+  const g = parseInt(c.substring(2, 4), 16)
+  const b = parseInt(c.substring(4, 6), 16)
+  // 使用相对亮度公式
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+  return luminance > 0.5
+}
+
+function getDiffEntry(code: string): DiffEntry | undefined {
+  return diffData.value.find(d => d.code === code)
+}
+
+function handleDiffColorSelect(code: string) {
+  if (selectedDiffColor.value === code) {
+    // 点击已选中的颜色，取消选中
+    selectedDiffColor.value = null
+    colorSlices.value = []
+    selectedSlice.value = null
+    selectedSlices.value = []
+  } else {
+    selectedDiffColor.value = code
+    extractColorSlices(code)
+  }
 }
 
 function extractColorSlices(code: string) {
@@ -2000,17 +2016,27 @@ function extractColorSlices(code: string) {
 }
 
 function handleSliceClick(row: number, col: number) {
-  if (selectedSlice.value?.row === row && selectedSlice.value?.col === col) {
-    selectedSlice.value = null
+  const idx = selectedSlices.value.findIndex(s => s.row === row && s.col === col)
+  if (idx >= 0) {
+    // 已选中，取消选中
+    selectedSlices.value.splice(idx, 1)
   } else {
-    selectedSlice.value = { row, col }
+    // 未选中，添加到选中列表
+    selectedSlices.value.push({ row, col })
   }
+  // 同步单选（保持兼容）
+  selectedSlice.value = selectedSlices.value.length > 0 ? selectedSlices.value[selectedSlices.value.length - 1] : null
+}
+
+function isSliceSelected(row: number, col: number): boolean {
+  return selectedSlices.value.some(s => s.row === row && s.col === col)
 }
 
 function handleBackToDiffList() {
   selectedDiffColor.value = null
   colorSlices.value = []
   selectedSlice.value = null
+  selectedSlices.value = []
 }
 
 // Available color codes from pattern data for the color picker
@@ -2041,6 +2067,37 @@ function changeSliceColor(row: number, col: number, newCode: string) {
 
   // Clear slice selection
   selectedSlice.value = null
+  selectedSlices.value = []
+}
+
+// 批量修改选中切片的颜色
+function changeSelectedSlicesColor(newCode: string) {
+  if (selectedSlices.value.length === 0) return
+  
+  const newHex = getColorHex(newCode)
+  
+  for (const slice of selectedSlices.value) {
+    const cell = patternColorData.value.find(c => c.row === slice.row && c.col === slice.col)
+    if (cell) {
+      cell.code = newCode
+      cell.hex = newHex
+    }
+  }
+
+  // Force reactivity
+  patternColorData.value = [...patternColorData.value]
+
+  // Re-extract slices for the current color
+  if (selectedDiffColor.value) {
+    extractColorSlices(selectedDiffColor.value)
+  }
+
+  // Rebuild diff data
+  extractPatternColorsForDiff()
+
+  // Clear slice selection
+  selectedSlice.value = null
+  selectedSlices.value = []
 }
 
 function extractPatternColorsForDiff() {
@@ -2116,6 +2173,11 @@ function extractPatternColorsForDiff() {
 function handleBackToVerify() {
   ocrStep.value = 'ocr-verify'
   selectedDiffColor.value = null
+  // 重置canvas变换，居中显示
+  canvasScale.value = 1;
+  canvasTranslateX.value = 0;
+  canvasTranslateY.value = 0;
+  nextTick(() => render());
 }
 
 function handleOcrComplete() {
@@ -2341,9 +2403,6 @@ function buildBrandCodeIndex(): Map<string, Set<string>> {
       }
     }
   }
-  for (const brand of brands) {
-    console.log(`[buildBrandCodeIndex] ${brand}: ${index.get(brand)!.size} codes`)
-  }
   return index
 }
 
@@ -2361,6 +2420,103 @@ function updateLegendCount(code: string, event: Event) {
 function deleteLegendEntry(code: string) {
   legendData.value.delete(code)
   legendData.value = new Map(legendData.value)
+}
+
+const colorPickerRefs = ref<Record<string, HTMLInputElement>>({})
+const editingCodeRef = ref<Record<string, HTMLInputElement>>({})
+
+function openColorPicker(code: string) {
+  const el = colorPickerRefs.value[code]
+  if (el) el.click()
+}
+
+function addLegendEntry() {
+  const newKey = `_new_${Date.now()}`
+  legendData.value.set(newKey, {
+    code: '',
+    expectedCount: 1,
+    rawText: '',
+    bbox: { x: 0, y: 0, width: 0, height: 0 }
+  })
+  legendData.value = new Map(legendData.value)
+  // 自动聚焦新输入框
+  nextTick(() => {
+    const el = editingCodeRef.value[newKey]
+    if (el) el.focus()
+  })
+}
+
+function updateLegendCode(oldKey: string, newCode: string) {
+  const entry = legendData.value.get(oldKey)
+  if (!entry) return
+  
+  // 空值自动删除
+  if (!newCode.trim()) {
+    legendData.value.delete(oldKey)
+    legendData.value = new Map(legendData.value)
+    return
+  }
+  
+  // 解析色号：标准化并检查是否在当前品牌中存在
+  const { code: resolvedCode, valid } = resolveLegendCode(newCode)
+  
+  // 如果色号无效，显示警告但仍然允许添加
+  if (!valid) {
+    console.warn(`[Legend] 色号 "${newCode}" 在品牌 "${detectedLegendBrand.value}" 中不存在，已标准化为 "${resolvedCode}"`)
+  }
+  
+  // 如果是新条目（key以_new_开头），用新code作为key
+  if (oldKey.startsWith('_new_')) {
+    legendData.value.delete(oldKey)
+  } else {
+    legendData.value.delete(oldKey)
+  }
+  entry.code = resolvedCode
+  legendData.value.set(resolvedCode, entry)
+  legendData.value = new Map(legendData.value)
+}
+
+function handleCodeKeydown(oldKey: string, event: KeyboardEvent) {
+  if (event.key === 'Enter') {
+    const el = event.target as HTMLInputElement
+    updateLegendCode(oldKey, el.value)
+  }
+}
+
+// 解析色号：标准化并检查是否在当前品牌中存在
+function resolveLegendCode(input: string): { code: string; valid: boolean; normalized: string } {
+  const brandIndex = buildBrandCodeIndex()
+  const brand = detectedLegendBrand.value
+  const brandCodes = brandIndex.get(brand) ?? new Set<string>()
+  const candidates = normalizeOcrText(input)
+  
+  // 在当前品牌中查找
+  for (const cand of candidates) {
+    if (brandCodes.has(cand)) {
+      return { code: cand, valid: true, normalized: cand }
+    }
+  }
+  
+  // 不在当前品牌中，返回第一个候选（标准化后的）
+  const normalized = candidates[0] || input.toUpperCase()
+  return { code: normalized, valid: false, normalized }
+}
+
+// 检查色号是否有效（在当前品牌中存在）
+function isLegendCodeValid(code: string): boolean {
+  if (!code) return true // 空值不算无效
+  const brandIndex = buildBrandCodeIndex()
+  const brand = detectedLegendBrand.value
+  const brandCodes = brandIndex.get(brand) ?? new Set<string>()
+  const candidates = normalizeOcrText(code)
+  return candidates.some(c => brandCodes.has(c))
+}
+
+// 获取色号提示信息
+function getLegendCodeTitle(code: string): string {
+  if (isLegendCodeValid(code)) return code
+  const brand = detectedLegendBrand.value || '当前品牌'
+  return `⚠ 色号 "${code}" 在 ${brand} 中不存在`
 }
 
 function extractPatternColors() {
@@ -2543,6 +2699,10 @@ watch(mode, (newMode) => {
     selectedSlice.value = null;
     showProcessingOverlay.value = false;
   }
+  // 切换到色块识别模式时，使用边缘检测计算默认网格
+  if (newMode === 'grid' && !ocrEnabled.value) {
+    inferGridFromSourceImage();
+  }
   render();
 });
 
@@ -2612,79 +2772,78 @@ onUnmounted(() => {
 watch(ocrStep, () => {
   nextTick(() => render())
 })
+
+// Render slice canvases when colorSlices change
+watch(colorSlices, () => {
+  renderSliceCanvases()
+})
 </script>
 
 <template>
-  <div ref="containerRef" class="flex bg-white rounded-xl overflow-hidden" style="min-height: 500px;">
+  <div ref="containerRef" class="flex flex-col bg-white rounded-xl overflow-hidden" style="min-height: 500px;">
+    <!-- 顶部标签栏 -->
+    <div class="flex items-center justify-between px-4 py-2 border-b border-black/10 bg-black/[0.02]">
+      <div class="flex items-center gap-1 p-0.5 rounded-lg bg-black/[0.04] border border-black/[0.08]">
+        <button
+          @click="mode = 'crop'; ocrEnabled = false"
+          class="flex-1 px-3 h-7 text-xs rounded-md font-medium transition-colors"
+          :class="mode === 'crop' && !ocrEnabled ? 'bg-black text-white shadow-sm' : 'text-black/45 hover:text-black'"
+        >
+          图纸生成
+        </button>
+        <button
+          @click="mode = 'grid'; ocrEnabled = false"
+          class="flex-1 px-3 h-7 text-xs rounded-md font-medium transition-colors"
+          :class="mode === 'grid' && !ocrEnabled ? 'bg-black text-white shadow-sm' : 'text-black/45 hover:text-black'"
+        >
+          色块识别
+        </button>
+        <button
+          @click="ocrEnabled = true; mode = 'grid'"
+          class="flex-1 px-3 h-7 text-xs rounded-md font-medium transition-colors"
+          :class="ocrEnabled ? 'bg-black text-white shadow-sm' : 'text-black/45 hover:text-black'"
+        >
+          图纸识别
+        </button>
+      </div>
+      <button
+        @click="handleCancel"
+        class="h-7 px-2 text-xs rounded-md text-black/60 hover:text-black hover:bg-black/[0.04] transition-colors"
+      >
+        ✕
+      </button>
+    </div>
+
+    <!-- 主体内容 -->
+    <div class="flex flex-1 min-h-0">
     <!-- 左侧工具栏 -->
     <div class="w-[200px] flex flex-col border-r border-black/10 bg-black/[0.02]">
-      <!-- 顶部操作 -->
-      <div class="flex items-center justify-between px-3 py-3 border-b border-black/10">
-        <button
-          @click="handleCancel"
-          class="h-7 px-2 text-xs rounded-md text-black/60 hover:text-black hover:bg-black/[0.04] transition-colors"
-        >
-          取消
-        </button>
-        <button
-          v-if="ocrEnabled && ocrStep === 'legend-crop'"
-          @click="handleLegendConfirm()"
-          class="h-7 px-3 text-xs rounded-md bg-blue-500 text-white hover:bg-blue-600 transition-colors font-medium"
-        >
-          确认
-        </button>
-        <button
-          v-else-if="ocrEnabled && ocrStep === 'pattern-crop'"
-          @click="handlePatternConfirm()"
-          class="h-7 px-3 text-xs rounded-md bg-emerald-500 text-white hover:bg-emerald-600 transition-colors font-medium"
-        >
-          确认
-        </button>
-        <button
-          v-else-if="ocrEnabled && ocrStep === 'ocr-verify'"
-          @click="handleConfirmOcrVerify()"
-          class="h-7 px-3 text-xs rounded-md bg-violet-500 text-white hover:bg-violet-600 transition-colors font-medium"
-        >
-          确认
-        </button>
-        <button
-          v-else-if="ocrEnabled && ocrStep === 'diff-view'"
-          @click="handleOcrComplete()"
-          class="h-7 px-3 text-xs rounded-md bg-green-500 text-white hover:bg-green-600 transition-colors font-medium"
-        >
-          完成
-        </button>
-        <button
-          v-else
-          @click="mode === 'crop' ? handleConfirm() : handleGridConfirm()"
-          class="h-7 px-3 text-xs rounded-md bg-black text-white hover:bg-black/80 transition-colors font-medium"
-        >
-          确认
-        </button>
-      </div>
-
-      <!-- 模式切换 (always visible) -->
-      <div class="px-3 py-2.5 border-b border-black/10">
-        <div class="flex items-center gap-1 p-0.5 rounded-lg bg-black/[0.04] border border-black/[0.08]">
-          <button
-            @click="mode = 'crop'"
-            class="flex-1 px-2 h-7 text-xs rounded-md font-medium transition-colors"
-            :class="mode === 'crop' ? 'bg-black text-white shadow-sm' : 'text-black/45 hover:text-black'"
-          >
-            图纸生成
-          </button>
-          <button
-            @click="mode = 'grid'"
-            class="flex-1 px-2 h-7 text-xs rounded-md font-medium transition-colors"
-            :class="mode === 'grid' ? 'bg-black text-white shadow-sm' : 'text-black/45 hover:text-black'"
-          >
-            图纸识别
-          </button>
-        </div>
-      </div>
 
       <!-- OCR 流程指示器 (所有OCR步骤公用) -->
       <div v-if="ocrEnabled" class="px-3 py-2.5 border-b border-black/10">
+        <!-- OCR 模型状态 -->
+        <div v-if="ocrProgress" class="mb-3 pb-2 border-b border-black/10">
+          <div class="flex items-center gap-2">
+            <div v-if="ocrProgress.phase !== 'ready' && ocrProgress.phase !== 'error'" class="w-3 h-3 border-2 border-black/20 border-t-black rounded-full animate-spin" />
+            <svg v-else-if="ocrProgress.phase === 'ready'" class="w-3 h-3 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+            </svg>
+            <svg v-else class="w-3 h-3 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+            <span class="text-[10px] text-black/50">
+              {{ ocrProgress.phaseLabel }}
+            </span>
+          </div>
+          <!-- 加载中显示进度条 -->
+          <div v-if="ocrProgress.percent != null" class="mt-1 w-full bg-black/10 rounded-full h-1">
+            <div
+              class="bg-black h-1 rounded-full transition-all duration-300"
+              :style="{ width: `${Math.min(100, Math.max(0, ocrProgress.percent))}%` }"
+            />
+          </div>
+        </div>
+
         <p class="text-[10px] text-black/40 uppercase tracking-wider mb-2">流程</p>
         <div class="flex flex-col gap-0.5">
           <template v-for="(step, index) in [
@@ -2720,79 +2879,29 @@ watch(ocrStep, () => {
         </div>
       </div>
 
+      <!-- 步长提示浮层 -->
+      <Teleport to="body">
+        <Transition name="tooltip">
+          <span
+            v-if="showStepTooltip"
+            class="fixed z-[9999] w-48 px-2.5 py-1.5 bg-gray-100 text-gray-600 text-[10px] rounded shadow-sm border border-black/5 pointer-events-none"
+            :style="{ left: tooltipX + 'px', top: tooltipY + 'px' }"
+          >
+            颜色采样间隔。值越小颜色越精细但计算越慢，值越大颜色越粗糙但速度越快
+          </span>
+        </Transition>
+      </Teleport>
+
       <!-- Legend crop tools (OCR step 1) -->
       <div v-if="ocrEnabled && ocrStep === 'legend-crop'" class="flex-1 px-3 py-3 space-y-3 overflow-y-auto">
-        <!-- OCR 开关 -->
-        <div class="space-y-2">
-          <label class="flex items-center justify-between cursor-pointer">
-            <span class="text-xs text-black/60 select-none">智能识别（OCR）</span>
-            <button
-              @click="ocrEnabled = !ocrEnabled"
-              :disabled="ocrLoading"
-              :class="[
-                'relative w-9 h-5 rounded-full transition-colors',
-                ocrLoading ? 'opacity-50 cursor-not-allowed' : '',
-                ocrEnabled ? 'bg-black' : 'bg-black/20'
-              ]"
-            >
-              <span
-                :class="[
-                  'absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform',
-                  ocrEnabled ? 'translate-x-4' : 'translate-x-0'
-                ]"
-              />
-            </button>
-          </label>
-          <!-- OCR 加载状态 -->
-          <div v-if="ocrProgress" class="mt-2">
-            <div class="flex items-center gap-2">
-              <div v-if="ocrProgress.phase !== 'ready' && ocrProgress.phase !== 'error'" class="w-3 h-3 border-2 border-black/20 border-t-black rounded-full animate-spin" />
-              <svg v-else-if="ocrProgress.phase === 'ready'" class="w-3 h-3 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-              </svg>
-              <svg v-else class="w-3 h-3 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-              <span class="text-[10px] text-black/50">
-                {{ ocrProgress.phaseLabel }}
-              </span>
-            </div>
-            <!-- 加载中显示进度条 -->
-            <div v-if="ocrProgress.percent != null" class="mt-1 w-full bg-black/10 rounded-full h-1">
-              <div
-                class="bg-black h-1 rounded-full transition-all duration-300"
-                :style="{ width: `${Math.min(100, Math.max(0, ocrProgress.percent))}%` }"
-              />
-            </div>
-          </div>
-        </div>
-
         <div>
           <p class="text-xs font-medium text-black/80 mb-1">裁剪图例区域</p>
           <p class="text-[10px] text-black/40 leading-relaxed">框选图例区域（包含色号和数量）</p>
         </div>
 
-        <div class="border-t border-black/10 pt-3">
-          <p class="text-[10px] text-black/40 uppercase tracking-wider mb-3">缩放</p>
-          <div class="flex items-center gap-2">
-            <button
-              @click="handleZoomOut"
-              :disabled="canvasScale <= 0.1"
-              class="flex-1 h-8 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] flex items-center justify-center text-sm font-bold disabled:opacity-30"
-            >
-              −
-            </button>
-            <span class="text-black/60 text-xs w-10 text-center tabular-nums">{{ canvasScale.toFixed(1) }}x</span>
-            <button
-              @click="handleZoomIn"
-              :disabled="canvasScale >= 10"
-              class="flex-1 h-8 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] flex items-center justify-center text-sm font-bold disabled:opacity-30"
-            >
-              +
-            </button>
-          </div>
-          <button @click="handleResetView" class="w-full h-8 mt-2 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] text-xs">
-            重置视图
+        <div class="border-t border-black/10 pt-3 space-y-2">
+          <button @click="handleLegendConfirm()" class="w-full h-8 rounded-lg bg-black text-white hover:bg-black/80 text-xs font-medium transition-colors">
+            下一步 →
           </button>
         </div>
 
@@ -2803,83 +2912,19 @@ watch(ocrStep, () => {
 
       <!-- Pattern crop tools (OCR step 2) -->
       <div v-else-if="ocrEnabled && ocrStep === 'pattern-crop'" class="flex-1 px-3 py-3 space-y-3 overflow-y-auto">
-        <!-- OCR 开关 -->
-        <div class="space-y-2">
-          <label class="flex items-center justify-between cursor-pointer">
-            <span class="text-xs text-black/60 select-none">智能识别（OCR）</span>
-            <button
-              @click="ocrEnabled = !ocrEnabled"
-              :disabled="ocrLoading"
-              :class="[
-                'relative w-9 h-5 rounded-full transition-colors',
-                ocrLoading ? 'opacity-50 cursor-not-allowed' : '',
-                ocrEnabled ? 'bg-black' : 'bg-black/20'
-              ]"
-            >
-              <span
-                :class="[
-                  'absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform',
-                  ocrEnabled ? 'translate-x-4' : 'translate-x-0'
-                ]"
-              />
-            </button>
-          </label>
-          <!-- OCR 加载状态 -->
-          <div v-if="ocrProgress" class="mt-2">
-            <div class="flex items-center gap-2">
-              <div v-if="ocrProgress.phase !== 'ready' && ocrProgress.phase !== 'error'" class="w-3 h-3 border-2 border-black/20 border-t-black rounded-full animate-spin" />
-              <svg v-else-if="ocrProgress.phase === 'ready'" class="w-3 h-3 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-              </svg>
-              <svg v-else class="w-3 h-3 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-              <span class="text-[10px] text-black/50">
-                {{ ocrProgress.phaseLabel }}
-              </span>
-            </div>
-            <!-- 加载中显示进度条 -->
-            <div v-if="ocrProgress.percent != null" class="mt-1 w-full bg-black/10 rounded-full h-1">
-              <div
-                class="bg-black h-1 rounded-full transition-all duration-300"
-                :style="{ width: `${Math.min(100, Math.max(0, ocrProgress.percent))}%` }"
-              />
-            </div>
-          </div>
-        </div>
-
         <div>
           <p class="text-xs font-medium text-black/80 mb-1">裁剪图纸区域</p>
           <p class="text-[10px] text-black/40 leading-relaxed">框选图纸区域（包含色块网格）</p>
         </div>
 
-        <div class="border-t border-black/10 pt-3">
-          <p class="text-[10px] text-black/40 uppercase tracking-wider mb-3">缩放</p>
-          <div class="flex items-center gap-2">
-            <button
-              @click="handleZoomOut"
-              :disabled="canvasScale <= 0.1"
-              class="flex-1 h-8 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] flex items-center justify-center text-sm font-bold disabled:opacity-30"
-            >
-              −
-            </button>
-            <span class="text-black/60 text-xs w-10 text-center tabular-nums">{{ canvasScale.toFixed(1) }}x</span>
-            <button
-              @click="handleZoomIn"
-              :disabled="canvasScale >= 10"
-              class="flex-1 h-8 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] flex items-center justify-center text-sm font-bold disabled:opacity-30"
-            >
-              +
-            </button>
-          </div>
-          <button @click="handleResetView" class="w-full h-8 mt-2 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] text-xs">
-            重置视图
+        <div class="border-t border-black/10 pt-3 space-y-2">
+          <button @click="handlePatternConfirm()" class="w-full h-8 rounded-lg bg-black text-white hover:bg-black/80 text-xs font-medium transition-colors">
+            下一步 →
+          </button>
+          <button @click="handleBackToVerify()" class="w-full h-8 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] text-xs transition-colors">
+            ← 上一步
           </button>
         </div>
-
-        <button @click="handleBackToVerify()" class="w-full h-8 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] text-xs transition-colors">
-          ← 上一步
-        </button>
 
         <p class="text-[10px] text-black/40 leading-relaxed">
           拖动红框调整图纸区域 · 滚轮缩放
@@ -2888,51 +2933,6 @@ watch(ocrStep, () => {
 
       <!-- OCR verify tools (Step 2) -->
       <div v-else-if="ocrEnabled && ocrStep === 'ocr-verify'" class="flex-1 px-3 py-3 space-y-3 overflow-y-auto">
-        <!-- OCR 开关 -->
-        <div class="space-y-2">
-          <label class="flex items-center justify-between cursor-pointer">
-            <span class="text-xs text-black/60 select-none">智能识别（OCR）</span>
-            <button
-              @click="ocrEnabled = !ocrEnabled"
-              :disabled="ocrLoading"
-              :class="[
-                'relative w-9 h-5 rounded-full transition-colors',
-                ocrLoading ? 'opacity-50 cursor-not-allowed' : '',
-                ocrEnabled ? 'bg-black' : 'bg-black/20'
-              ]"
-            >
-              <span
-                :class="[
-                  'absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform',
-                  ocrEnabled ? 'translate-x-4' : 'translate-x-0'
-                ]"
-              />
-            </button>
-          </label>
-          <!-- OCR 加载状态 -->
-          <div v-if="ocrProgress" class="mt-2">
-            <div class="flex items-center gap-2">
-              <div v-if="ocrProgress.phase !== 'ready' && ocrProgress.phase !== 'error'" class="w-3 h-3 border-2 border-black/20 border-t-black rounded-full animate-spin" />
-              <svg v-else-if="ocrProgress.phase === 'ready'" class="w-3 h-3 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-              </svg>
-              <svg v-else class="w-3 h-3 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-              <span class="text-[10px] text-black/50">
-                {{ ocrProgress.phaseLabel }}
-              </span>
-            </div>
-            <!-- 加载中显示进度条 -->
-            <div v-if="ocrProgress.percent != null" class="mt-1 w-full bg-black/10 rounded-full h-1">
-              <div
-                class="bg-black h-1 rounded-full transition-all duration-300"
-                :style="{ width: `${Math.min(100, Math.max(0, ocrProgress.percent))}%` }"
-              />
-            </div>
-          </div>
-        </div>
-
         <div>
           <p class="text-xs font-medium text-black/80 mb-1">识别核对</p>
           <p class="text-[10px] text-black/40 leading-relaxed">检查OCR识别结果，修正错误</p>
@@ -2941,7 +2941,7 @@ watch(ocrStep, () => {
         <!-- Navigation buttons -->
         <div class="border-t border-black/10 pt-3 space-y-2">
           <button @click="handleConfirmOcrVerify()" class="w-full h-8 rounded-lg bg-black text-white hover:bg-black/80 text-xs font-medium transition-colors">
-            确认识别
+            下一步 →
           </button>
           <button @click="handleBackToLegend()" class="w-full h-8 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] text-xs transition-colors">
             ← 上一步
@@ -2951,163 +2951,40 @@ watch(ocrStep, () => {
 
       <!-- Diff view tools (Step 4) -->
       <div v-else-if="ocrEnabled && ocrStep === 'diff-view'" class="flex-1 px-3 py-3 space-y-3 overflow-y-auto">
-        <!-- OCR 开关 -->
-        <div class="space-y-2">
-          <label class="flex items-center justify-between cursor-pointer">
-            <span class="text-xs text-black/60 select-none">智能识别（OCR）</span>
-            <button
-              @click="ocrEnabled = !ocrEnabled"
-              :disabled="ocrLoading"
-              :class="[
-                'relative w-9 h-5 rounded-full transition-colors',
-                ocrLoading ? 'opacity-50 cursor-not-allowed' : '',
-                ocrEnabled ? 'bg-black' : 'bg-black/20'
-              ]"
-            >
-              <span
-                :class="[
-                  'absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform',
-                  ocrEnabled ? 'translate-x-4' : 'translate-x-0'
-                ]"
-              />
-            </button>
-          </label>
-          <!-- OCR 加载状态 -->
-          <div v-if="ocrProgress" class="mt-2">
-            <div class="flex items-center gap-2">
-              <div v-if="ocrProgress.phase !== 'ready' && ocrProgress.phase !== 'error'" class="w-3 h-3 border-2 border-black/20 border-t-black rounded-full animate-spin" />
-              <svg v-else-if="ocrProgress.phase === 'ready'" class="w-3 h-3 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-              </svg>
-              <svg v-else class="w-3 h-3 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-              <span class="text-[10px] text-black/50">
-                {{ ocrProgress.phaseLabel }}
-              </span>
-            </div>
-            <!-- 加载中显示进度条 -->
-            <div v-if="ocrProgress.percent != null" class="mt-1 w-full bg-black/10 rounded-full h-1">
-              <div
-                class="bg-black h-1 rounded-full transition-all duration-300"
-                :style="{ width: `${Math.min(100, Math.max(0, ocrProgress.percent))}%` }"
-              />
-            </div>
+        <div>
+          <p class="text-xs font-medium text-black/80 mb-1">差异对比</p>
+          <p class="text-[10px] text-black/40 leading-relaxed">对比图例期望数量与实际数量，点击颜色查看切片</p>
+        </div>
+
+        <!-- Summary -->
+        <div class="border-t border-black/10 pt-3">
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-black/60">总颜色数</span>
+            <span class="font-medium text-black/80">{{ diffStats.total }}</span>
+          </div>
+          <div class="flex items-center justify-between text-xs mt-1">
+            <span class="text-black/60">一致</span>
+            <span class="font-medium text-green-600">{{ diffStats.matchCount }}</span>
+          </div>
+          <div class="flex items-center justify-between text-xs mt-1">
+            <span class="text-black/60">不一致</span>
+            <span class="font-medium text-red-600">{{ diffStats.mismatchCount }}</span>
           </div>
         </div>
 
-        <!-- Slice gallery mode -->
-        <template v-if="selectedDiffColor && colorSlices.length > 0">
-          <div>
-            <div class="flex items-center gap-2 mb-1">
-              <div class="w-4 h-4 rounded border border-black/10" :style="{ backgroundColor: getColorHex(selectedDiffColor) }"></div>
-              <p class="text-xs font-medium text-black/80">色块切片: {{ selectedDiffColor }}</p>
-            </div>
-            <p class="text-[10px] text-black/40 leading-relaxed">共 {{ colorSlices.length }} 个切片</p>
-          </div>
-
-          <!-- Slice list -->
-          <div class="border-t border-black/10 pt-3">
-            <p class="text-[10px] text-black/40 uppercase tracking-wider mb-3">切片列表</p>
-            <div class="space-y-1.5 max-h-60 overflow-y-auto">
-              <div v-for="(slice, idx) in colorSlices" :key="idx"
-                @click="handleSliceClick(slice.row, slice.col)"
-                class="flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors text-xs"
-                :class="selectedSlice?.row === slice.row && selectedSlice?.col === slice.col ? 'bg-blue-50 border border-blue-200' : 'bg-black/[0.04] hover:bg-black/[0.06]'"
-              >
-                <div class="w-4 h-4 rounded border border-black/10" :style="{ backgroundColor: getColorHex(selectedDiffColor) }"></div>
-                <span class="text-black/70">R{{ slice.row }} C{{ slice.col }}</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Color picker for selected slice -->
-          <div v-if="selectedSlice" class="border-t border-black/10 pt-3">
-            <p class="text-[10px] text-black/40 uppercase tracking-wider mb-2">修改颜色</p>
-            <p class="text-xs text-black/60 mb-2">R{{ selectedSlice.row }} C{{ selectedSlice.col }}</p>
-            <div class="grid grid-cols-6 gap-1.5">
-              <button v-for="code in availableColorCodes" :key="code"
-                @click="changeSliceColor(selectedSlice.row, selectedSlice.col, code)"
-                class="w-6 h-6 rounded border transition-colors"
-                :class="code === selectedDiffColor ? 'border-blue-400 ring-1 ring-blue-200' : 'border-black/10 hover:border-black/30'"
-                :style="{ backgroundColor: getColorHex(code) }"
-                :title="code"
-              />
-            </div>
-          </div>
-
-          <!-- Navigation -->
-          <div class="border-t border-black/10 pt-3 space-y-2">
-            <button @click="handleBackToDiffList()" class="w-full h-8 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] text-xs transition-colors">
-              ← 返回图纸
-            </button>
-          </div>
-        </template>
-
-        <!-- Normal diff list mode -->
-        <template v-else>
-          <div>
-            <p class="text-xs font-medium text-black/80 mb-1">差异对比</p>
-            <p class="text-[10px] text-black/40 leading-relaxed">对比图例期望数量与实际数量</p>
-          </div>
-
-          <!-- Summary -->
-          <div class="border-t border-black/10 pt-3">
-            <div class="flex items-center justify-between text-xs">
-              <span class="text-black/60">总颜色数</span>
-              <span class="font-medium text-black/80">{{ diffData.length }}</span>
-            </div>
-            <div class="flex items-center justify-between text-xs mt-1">
-              <span class="text-black/60">一致</span>
-              <span class="font-medium text-green-600">{{ diffData.filter(d => d.diff === 0).length }}</span>
-            </div>
-            <div class="flex items-center justify-between text-xs mt-1">
-              <span class="text-black/60">不一致</span>
-              <span class="font-medium text-red-600">{{ diffData.filter(d => d.diff !== 0).length }}</span>
-            </div>
-          </div>
-
-          <!-- Diff entries list -->
-          <div class="border-t border-black/10 pt-3">
-            <p class="text-[10px] text-black/40 uppercase tracking-wider mb-3">颜色列表</p>
-            <div class="space-y-2 max-h-80 overflow-y-auto">
-              <div v-for="entry in diffData" :key="entry.code"
-                @click="entry.code !== TRANSPARENT_KEY && (selectedDiffColor = entry.code, extractColorSlices(entry.code))"
-                class="flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-colors"
-                :class="selectedDiffColor === entry.code ? 'bg-black/10' : 'bg-black/[0.04] hover:bg-black/[0.06]'"
-              >
-                <!-- 空格子用斜线图案 -->
-                <div v-if="entry.code === TRANSPARENT_KEY" class="w-6 h-6 rounded border border-black/10 relative overflow-hidden" style="background-color: #fafafa">
-                  <svg class="absolute inset-0 w-full h-full" viewBox="0 0 24 24"><line x1="0" y1="0" x2="24" y2="24" stroke="#d1d5db" stroke-width="1"/><line x1="24" y1="0" x2="0" y2="24" stroke="#d1d5db" stroke-width="1"/></svg>
-                </div>
-                <div v-else class="w-6 h-6 rounded border border-black/10" :style="{ backgroundColor: getColorHex(entry.code) }"></div>
-                <div class="flex-1 min-w-0">
-                  <p class="text-xs font-medium text-black/80">{{ entry.code === TRANSPARENT_KEY ? '空格' : entry.code }}</p>
-                  <p class="text-[10px] text-black/40">期望: {{ entry.expectedCount }} | 实际: {{ entry.actualCount }}</p>
-                </div>
-                <div class="text-right">
-                  <span v-if="entry.diff === 0" class="text-[10px] text-green-600 font-medium">一致</span>
-                  <span v-else-if="entry.diff > 0" class="text-[10px] text-orange-500 font-medium">多 {{ entry.diff }}</span>
-                  <span v-else class="text-[10px] text-red-500 font-medium">少 {{ Math.abs(entry.diff) }}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Navigation buttons -->
-          <div class="border-t border-black/10 pt-3 space-y-2">
-            <button @click="handleOcrComplete()" class="w-full h-8 rounded-lg bg-black text-white hover:bg-black/80 text-xs font-medium transition-colors">
-              完成
-            </button>
-            <button @click="handleBackToPattern()" class="w-full h-8 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] text-xs transition-colors">
-              ← 上一步
-            </button>
-          </div>
-        </template>
+        <!-- Navigation buttons -->
+        <div class="border-t border-black/10 pt-3 space-y-2">
+          <button @click="handleOcrComplete()" class="w-full h-8 rounded-lg bg-black text-white hover:bg-black/80 text-xs font-medium transition-colors">
+            完成
+          </button>
+          <button @click="handleBackToPattern()" class="w-full h-8 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] text-xs transition-colors">
+            ← 上一步
+          </button>
+        </div>
       </div>
 
-      <!-- 裁剪工具 -->
-      <div v-else-if="mode === 'crop'" class="flex-1 px-3 py-3 space-y-2 overflow-y-auto">
+      <!-- 裁剪工具 (图纸生成模式) -->
+      <div v-else-if="mode === 'crop' && !ocrEnabled" class="flex-1 px-3 py-3 space-y-2 overflow-y-auto flex flex-col">
         <p class="text-[10px] text-black/40 uppercase tracking-wider mb-3">变换</p>
         <button @click="handleRotate" class="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-black/60 hover:text-black hover:bg-black/[0.04] transition-colors">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -3133,171 +3010,61 @@ watch(ocrStep, () => {
           </svg>
           <span class="text-xs">重置</span>
         </button>
-        
-        <div class="border-t border-black/10 pt-3">
-          <p class="text-[10px] text-black/40 uppercase tracking-wider mb-3">缩放</p>
-          <div class="flex items-center gap-2">
-            <button
-              @click="handleZoomOut"
-              :disabled="canvasScale <= 0.1"
-              class="flex-1 h-8 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] flex items-center justify-center text-sm font-bold disabled:opacity-30"
-            >
-              −
-            </button>
-            <span class="text-black/60 text-xs w-10 text-center tabular-nums">{{ canvasScale.toFixed(1) }}x</span>
-            <button
-              @click="handleZoomIn"
-              :disabled="canvasScale >= 10"
-              class="flex-1 h-8 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] flex items-center justify-center text-sm font-bold disabled:opacity-30"
-            >
-              +
-            </button>
-          </div>
-          <button @click="handleResetView" class="w-full h-8 mt-2 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] text-xs">
-            重置视图
+
+        <!-- 确认按钮 -->
+        <div class="mt-auto pt-3 border-t border-black/10">
+          <button
+            @click="handleConfirm()"
+            class="w-full h-9 rounded-lg bg-black text-white hover:bg-black/80 text-xs font-medium transition-colors"
+          >
+            确认
           </button>
         </div>
       </div>
 
-      <!-- 格子工具 -->
-      <div v-else class="flex-1 px-3 py-3 space-y-3 overflow-y-auto">
+      <!-- 格子工具 (色块识别模式，无OCR) -->
+      <div v-else-if="mode === 'grid' && !ocrEnabled" class="flex-1 px-3 py-3 space-y-3 overflow-y-auto flex flex-col">
         <p class="text-[10px] text-black/40 uppercase tracking-wider mb-3">网格设置</p>
         
-        <!-- 智能识别（OCR） -->
-        <div class="space-y-2">
-          <label class="flex items-center justify-between cursor-pointer">
-            <span class="text-xs text-black/60 select-none">智能识别（OCR）</span>
-            <button
-              @click="ocrEnabled = !ocrEnabled"
-              :disabled="ocrLoading"
-              :class="[
-                'relative w-9 h-5 rounded-full transition-colors',
-                ocrLoading ? 'opacity-50 cursor-not-allowed' : '',
-                ocrEnabled ? 'bg-black' : 'bg-black/20'
-              ]"
-            >
-              <span
-                :class="[
-                  'absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform',
-                  ocrEnabled ? 'translate-x-4' : 'translate-x-0'
-                ]"
-              />
-            </button>
-          </label>
-          <!-- OCR 加载状态 -->
-          <div v-if="ocrProgress" class="mt-2">
-            <div class="flex items-center gap-2">
-              <div v-if="ocrProgress.phase !== 'ready' && ocrProgress.phase !== 'error'" class="w-3 h-3 border-2 border-black/20 border-t-black rounded-full animate-spin" />
-              <svg v-else-if="ocrProgress.phase === 'ready'" class="w-3 h-3 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-              </svg>
-              <svg v-else class="w-3 h-3 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-              <span class="text-[10px] text-black/50">
-                {{ ocrProgress.phaseLabel }}
-              </span>
-            </div>
-            <!-- 加载中显示进度条 -->
-            <div v-if="ocrProgress.percent != null" class="mt-1 w-full bg-black/10 rounded-full h-1">
-              <div
-                class="bg-black h-1 rounded-full transition-all duration-300"
-                :style="{ width: `${Math.min(100, Math.max(0, ocrProgress.percent))}%` }"
-              />
-            </div>
-          </div>
-        </div>
-
         <div class="border-t border-black/10 pt-3">
           <p class="text-[10px] text-black/40 uppercase tracking-wider mb-3">网格参数</p>
           <div class="space-y-2">
-            <!-- Manual cols/rows (hidden when OCR enabled) -->
-            <template v-if="!ocrEnabled">
-              <label class="flex items-center justify-between">
-                <span class="text-xs text-black/60">横向</span>
-                <div class="flex items-center gap-1">
-                  <input
-                    v-model.number="gridCols"
-                    type="number"
-                    min="1"
-                    max="100"
-                    class="w-14 px-2 py-1 bg-white text-black text-center text-xs rounded-md border border-black/10 focus:border-black/30 focus:outline-none"
-                  />
-                  <span class="text-[10px] text-black/40">格</span>
-                </div>
-              </label>
-              <label class="flex items-center justify-between">
-                <span class="text-xs text-black/60">纵向</span>
-                <div class="flex items-center gap-1">
-                  <input
-                    v-model.number="gridRows"
-                    type="number"
-                    min="1"
-                    max="100"
-                    class="w-14 px-2 py-1 bg-white text-black text-center text-xs rounded-md border border-black/10 focus:border-black/30 focus:outline-none"
-                  />
-                  <span class="text-[10px] text-black/40">格</span>
-                </div>
-              </label>
-            </template>
-            <!-- Auto-detected dims (shown when OCR enabled) -->
-            <div v-else class="flex items-center justify-between">
-              <span class="text-xs text-black/60">网格尺寸</span>
-              <div v-if="!isEditingGrid" class="flex items-center gap-1 cursor-pointer group" @click="startEditGrid">
-                <span class="text-xs text-black/80">{{ autoGridCols }}×{{ autoGridRows }} (自动)</span>
-                <span
-                  v-if="detectionConfidence.confidence > 0"
-                  :class="[
-                    'text-[10px] px-1.5 py-0.5 rounded-full font-medium',
-                    detectionConfidence.confidence >= 0.8 ? 'bg-green-100 text-green-700' :
-                    detectionConfidence.confidence >= 0.5 ? 'bg-yellow-100 text-yellow-700' :
-                    'bg-red-100 text-red-700'
-                  ]"
-                >
-                  {{ detectionConfidence.confidence >= 0.8 ? '高' : detectionConfidence.confidence >= 0.5 ? '中' : '低' }}置信
-                </span>
-                <svg class="w-3 h-3 text-black/30 group-hover:text-black/60 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                </svg>
-              </div>
-              <div v-else class="flex items-center gap-1">
-                <input
-                  v-model.number="editGridCols"
-                  type="number"
-                  min="1"
-                  max="200"
-                  class="w-12 px-1.5 py-0.5 bg-white text-black text-center text-xs rounded-md border border-black/10 focus:border-black/30 focus:outline-none"
-                  @keydown.enter="confirmEditGrid"
-                />
-                <span class="text-[10px] text-black/40">×</span>
-                <input
-                  v-model.number="editGridRows"
-                  type="number"
-                  min="1"
-                  max="200"
-                  class="w-12 px-1.5 py-0.5 bg-white text-black text-center text-xs rounded-md border border-black/10 focus:border-black/30 focus:outline-none"
-                  @keydown.enter="confirmEditGrid"
-                />
-                <button
-                  @click="confirmEditGrid"
-                  class="w-5 h-5 rounded bg-black text-white flex items-center justify-center text-[10px] hover:bg-black/80 transition-colors"
-                >
-                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-                  </svg>
-                </button>
-                <button
-                  @click="cancelEditGrid"
-                  class="w-5 h-5 rounded bg-black/10 text-black/60 flex items-center justify-center text-[10px] hover:bg-black/20 transition-colors"
-                >
-                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            </div>
             <label class="flex items-center justify-between">
-              <span class="text-xs text-black/60">步长</span>
+              <span class="text-xs text-black/60">横向</span>
+              <div class="flex items-center gap-1">
+                <input
+                  v-model.number="gridCols"
+                  type="number"
+                  min="1"
+                  max="100"
+                  class="w-14 px-2 py-1 bg-white text-black text-center text-xs rounded-md border border-black/10 focus:border-black/30 focus:outline-none"
+                />
+                <span class="text-[10px] text-black/40">格</span>
+              </div>
+            </label>
+            <label class="flex items-center justify-between">
+              <span class="text-xs text-black/60">纵向</span>
+              <div class="flex items-center gap-1">
+                <input
+                  v-model.number="gridRows"
+                  type="number"
+                  min="1"
+                  max="100"
+                  class="w-14 px-2 py-1 bg-white text-black text-center text-xs rounded-md border border-black/10 focus:border-black/30 focus:outline-none"
+                />
+                <span class="text-[10px] text-black/40">格</span>
+              </div>
+            </label>
+            <label class="flex items-center justify-between">
+              <span class="text-xs text-black/60 flex items-center gap-1">
+                步长
+                <span
+                  class="relative text-[10px] text-black/30 cursor-help"
+                  @mouseenter="(e: MouseEvent) => { showStepTooltip = true; updateTooltipPos(e) }"
+                  @mouseleave="showStepTooltip = false"
+                  @mousemove="(e: MouseEvent) => updateTooltipPos(e)"
+                >ⓘ</span>
+              </span>
               <div class="flex items-center gap-1">
                 <input
                   v-model.number="gridStep"
@@ -3312,94 +3079,220 @@ watch(ocrStep, () => {
           </div>
         </div>
 
-        <div class="border-t border-black/10 pt-3">
-          <p class="text-[10px] text-black/40 uppercase tracking-wider mb-3">缩放</p>
-          <div class="flex items-center gap-2">
-            <button
-              @click="handleZoomOut"
-              :disabled="canvasScale <= 0.1"
-              class="flex-1 h-8 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] flex items-center justify-center text-sm font-bold disabled:opacity-30"
-            >
-              −
-            </button>
-            <span class="text-black/60 text-xs w-10 text-center tabular-nums">{{ canvasScale.toFixed(1) }}x</span>
-            <button
-              @click="handleZoomIn"
-              :disabled="canvasScale >= 10"
-              class="flex-1 h-8 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] flex items-center justify-center text-sm font-bold disabled:opacity-30"
-            >
-              +
-            </button>
-          </div>
-          <button @click="handleGridReset" class="w-full h-8 mt-2 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] text-xs">
-            重置
+        <!-- 确认按钮 -->
+        <div class="mt-auto pt-3 border-t border-black/10">
+          <button
+            @click="handleGridConfirm()"
+            class="w-full h-9 rounded-lg bg-black text-white hover:bg-black/80 text-xs font-medium transition-colors"
+          >
+            确认
           </button>
         </div>
-
-        <p class="text-[10px] text-black/40 leading-relaxed">
-          拖动空白平移 · 拖动红框调整 · 滚轮缩放
-        </p>
       </div>
     </div>
 
     <!-- 右侧画布 + 识别结果区域 -->
     <div class="flex-1 flex flex-col" style="width: 100%; height: 100%;">
-      <!-- Canvas -->
-      <div class="flex-1 flex items-center justify-center p-4 overflow-hidden relative bg-black/[0.02]">
-        <canvas
-          ref="canvasRef"
-          class="cursor-move shadow-sm rounded"
-          style="touch-action: none; width: 100%; height: 100%;"
-          @mousedown="onPointerDown"
-          @mousemove="onPointerMove"
-          @mouseup="onPointerUp"
-          @mouseleave="onPointerUp"
-          @wheel.prevent="onWheel"
-          @touchstart.passive="onPointerDown"
-          @touchmove="onPointerMove"
-          @touchend="onPointerUp"
-        />
-        <!-- Regular hints (shown when OCR is disabled) -->
-        <div
-          v-if="!ocrEnabled && mode === 'crop'"
-          class="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/60 text-white/80 text-xs px-3 py-1.5 rounded-full pointer-events-none"
-        >
-          拖动四角或边缘调整 · 滚轮缩放 · 自动吸附线条
-        </div>
-        <div
-          v-if="!ocrEnabled && mode === 'grid'"
-          class="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/60 text-white/80 text-xs px-3 py-1.5 rounded-full pointer-events-none"
-        >
-          将红框与图纸边框对齐 · 越精准误差越小
-        </div>
-      </div>
-      <!-- 识别结果 (shown during ocr-verify step, below canvas) -->
-      <div
-        v-if="ocrEnabled && ocrStep === 'ocr-verify'"
-        class="border-t border-black/10 px-4 py-3 bg-white"
-      >
-        <div class="flex items-center gap-2 mb-2">
-          <p class="text-[10px] text-black/40 uppercase tracking-wider">识别结果 ({{ legendData.size }})</p>
-          <span v-if="detectedLegendBrand" class="text-[10px] px-1.5 py-0.5 rounded bg-black text-white font-medium">{{ detectedLegendBrand }}</span>
-        </div>
-        <div class="flex flex-wrap gap-2">
-          <div v-for="[code, entry] in legendData" :key="code"
-            class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-black/[0.04]"
+      <!-- diff-view: HTML layout with slice grid + palette -->
+      <template v-if="ocrEnabled && ocrStep === 'diff-view'">
+        <div class="flex-1 flex flex-col overflow-hidden">
+          <!-- Slice preview area -->
+          <div class="flex-1 overflow-auto p-4">
+            <!-- No color selected -->
+            <div v-if="!selectedDiffColor" class="flex items-center justify-center h-full">
+              <p class="text-sm text-black/30">请从下方色板选择颜色</p>
+            </div>
+            <!-- No slices for this color -->
+            <div v-else-if="colorSlices.length === 0" class="flex items-center justify-center h-full">
+              <p class="text-sm text-black/30">该颜色无切片</p>
+            </div>
+            <!-- Slice grid -->
+            <div v-else>
+              <div class="flex items-center gap-2 mb-3">
+                <div class="w-4 h-4 rounded border border-black/10" :style="{ backgroundColor: getColorHex(selectedDiffColor) }"></div>
+                <p class="text-xs font-medium text-black/80">色号 {{ selectedDiffColor }} 的切片 ({{ colorSlices.length }}个)</p>
+                <span v-if="selectedSlices.length > 0" class="text-[10px] text-blue-500 font-medium">已选 {{ selectedSlices.length }} 个</span>
+              </div>
+              <div class="flex flex-wrap gap-1.5">
+                <button
+                  v-for="(slice, idx) in colorSlices"
+                  :key="idx"
+                  @click="handleSliceClick(slice.row, slice.col)"
+                  class="relative w-11 h-11 rounded-lg transition-all duration-100 flex items-center justify-center flex-shrink-0"
+                  :class="isSliceSelected(slice.row, slice.col)
+                    ? 'border-2 border-blue-500'
+                    : 'border-2 border-transparent opacity-70 hover:opacity-100 active:opacity-80'"
+                >
+                  <canvas
+                    :ref="el => { if (el) sliceCanvasRefs[idx] = el as HTMLCanvasElement }"
+                    class="w-full h-full rounded-lg block"
+                    style="image-rendering: pixelated;"
+                  />
+                  <div
+                    v-if="isSliceSelected(slice.row, slice.col)"
+                    class="absolute top-0 right-0 w-3 h-3 bg-blue-500 rounded-bl-md rounded-tr-[5px] flex items-center justify-center"
+                  >
+                    <svg class="w-2 h-2 text-white" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="3">
+                      <path d="M2 6l3 3 5-5" />
+                    </svg>
+                  </div>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Color palette (horizontal scroll) -->
+          <div
+            class="border-t border-black/10 bg-black/[0.02] px-4 py-3"
           >
-            <div class="w-5 h-5 rounded border border-black/10 shrink-0" :style="{ backgroundColor: getColorForCode(code, detectedLegendBrand) }"></div>
-            <span class="text-xs font-medium text-black/80">{{ code }}</span>
-            <input
-              type="number"
-              :value="entry.expectedCount"
-              @input="updateLegendCount(code, $event)"
-              class="w-14 px-1.5 py-0.5 bg-white text-black text-center text-xs rounded border border-black/10 focus:border-black/30 focus:outline-none"
-              min="0"
-            />
-            <button @click="deleteLegendEntry(code)" class="text-red-500 hover:text-red-700 text-xs ml-1">×</button>
+            <p class="text-[10px] text-black/40 uppercase tracking-wider mb-2">
+              {{ selectedSlices.length > 0 ? `色板 — 点击替换 ${selectedSlices.length} 个切片的颜色` : '色板 — 点击颜色查看切片' }}
+            </p>
+            <div class="flex gap-2 overflow-x-auto pb-1 scrollbar-thin" @wheel.prevent="e => { e.currentTarget.scrollLeft += e.deltaY }">
+              <div v-for="color in paletteColors" :key="color.code" class="flex flex-col items-center gap-0.5">
+                <button
+                  @click="selectedSlices.length > 0 ? changeSelectedSlicesColor(color.code) : handleDiffColorSelect(color.code)"
+                  class="relative w-11 h-11 rounded-lg transition-all duration-100 flex items-center justify-center flex-shrink-0"
+                  :class="color.code === selectedDiffColor
+                    ? 'border-2 border-blue-500'
+                    : 'border-2 border-transparent opacity-70 hover:opacity-100 active:opacity-80'"
+                  :style="{ backgroundColor: color.hex }"
+                  :title="color.code === TRANSPARENT_KEY ? '空格 (透明)' : color.code"
+                >
+                  <svg v-if="color.code === TRANSPARENT_KEY" class="w-4 h-4 text-black/30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="4" y1="4" x2="20" y2="20" /><line x1="20" y1="4" x2="4" y2="20" />
+                  </svg>
+                  <span
+                    v-else
+                    class="text-[9px] font-bold leading-none select-none"
+                    :style="{ color: isLightColor(color.hex) ? '#000' : '#fff' }"
+                  >
+                    {{ color.code }}
+                  </span>
+                  <div
+                    v-if="color.code === selectedDiffColor"
+                    class="absolute top-0 right-0 w-3 h-3 bg-blue-500 rounded-bl-md rounded-tr-[5px] flex items-center justify-center"
+                  >
+                    <svg class="w-2 h-2 text-white" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="3">
+                      <path d="M2 6l3 3 5-5" />
+                    </svg>
+                  </div>
+                </button>
+                <span v-if="getDiffEntry(color.code)" class="text-[9px] font-medium"
+                  :class="getDiffEntry(color.code)!.diff === 0 ? 'text-green-600' : getDiffEntry(color.code)!.diff > 0 ? 'text-orange-500' : 'text-red-500'"
+                >
+                  {{ getDiffEntry(color.code)!.diff === 0 ? '一致' : getDiffEntry(color.code)!.diff > 0 ? `+${getDiffEntry(color.code)!.diff}` : getDiffEntry(color.code)!.diff }}
+                </span>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      </template>
+
+      <!-- Non-diff-view: Canvas -->
+      <template v-else>
+        <div
+          class="flex items-center justify-center p-4 overflow-hidden relative bg-black/[0.02]"
+          :class="ocrEnabled && ocrStep === 'ocr-verify' ? '' : 'flex-1'"
+          :style="ocrEnabled && ocrStep === 'ocr-verify' ? { height: '30%', minHeight: '150px' } : {}"
+        >
+          <canvas
+            ref="canvasRef"
+            class="cursor-move shadow-sm rounded"
+            style="touch-action: none; width: 100%; height: 100%;"
+            @mousedown="onPointerDown"
+            @mousemove="onPointerMove"
+            @mouseup="onPointerUp"
+            @mouseleave="onPointerUp"
+            @wheel.prevent="onWheel"
+            @touchstart.passive="onPointerDown"
+            @touchmove="onPointerMove"
+            @touchend="onPointerUp"
+          />
+          <!-- 浮动缩放工具栏 -->
+          <div class="absolute bottom-4 right-4 flex items-center gap-1 bg-white/90 backdrop-blur-sm rounded-lg shadow-lg border border-black/10 px-2 py-1.5">
+            <button
+              @click="handleZoomOut"
+              :disabled="canvasScale <= 0.1"
+              class="w-7 h-7 rounded-md bg-black/[0.04] text-black/60 hover:bg-black/[0.08] flex items-center justify-center text-sm font-bold disabled:opacity-30 transition-colors"
+            >
+              −
+            </button>
+            <span class="text-black/60 text-xs w-12 text-center tabular-nums">{{ Math.round(canvasScale * 100) }}%</span>
+            <button
+              @click="handleZoomIn"
+              :disabled="canvasScale >= 10"
+              class="w-7 h-7 rounded-md bg-black/[0.04] text-black/60 hover:bg-black/[0.08] flex items-center justify-center text-sm font-bold disabled:opacity-30 transition-colors"
+            >
+              +
+            </button>
+            <div class="w-px h-4 bg-black/10 mx-0.5"></div>
+            <button
+              @click="handleResetView"
+              class="w-7 h-7 rounded-md bg-black/[0.04] text-black/60 hover:bg-black/[0.08] flex items-center justify-center transition-colors"
+              title="重置视图"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m0 0a8.001 8.001 0 0115.356 2M4.582 9H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <!-- 识别结果 (shown during ocr-verify step, below canvas) -->
+        <div
+          v-if="ocrEnabled && ocrStep === 'ocr-verify'"
+          class="border-t border-black/10 px-4 py-3 bg-white flex-1 overflow-y-auto"
+        >
+          <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center gap-2">
+              <p class="text-[10px] text-black/40 uppercase tracking-wider">识别结果 ({{ legendData.size }})</p>
+              <span v-if="detectedLegendBrand" class="text-[10px] px-1.5 py-0.5 rounded bg-black text-white font-medium">{{ detectedLegendBrand }}</span>
+            </div>
+            <button
+              @click="addLegendEntry"
+              class="w-6 h-6 rounded-md bg-black/[0.04] hover:bg-black/[0.08] flex items-center justify-center text-black/60 hover:text-black transition-colors"
+              title="新增颜色"
+            >
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+              </svg>
+            </button>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <div v-for="[code, entry] in legendData" :key="code"
+              class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-black/[0.04]"
+            >
+              <div
+                class="w-5 h-5 rounded border shrink-0"
+                :class="isLegendCodeValid(code) ? 'border-black/10' : 'border-orange-300'"
+                :style="{ backgroundColor: getColorForCode(code, detectedLegendBrand) }"
+                :title="getLegendCodeTitle(code)"
+              ></div>
+              <input
+                type="text"
+                :ref="el => { if (el) editingCodeRef[code] = el as HTMLInputElement }"
+                :value="code"
+                @blur="updateLegendCode(code, $event.target.value)"
+                @keydown="handleCodeKeydown(code, $event)"
+                placeholder="色号"
+                class="w-16 px-1.5 py-0.5 bg-white text-black text-xs rounded border focus:outline-none uppercase"
+                :class="isLegendCodeValid(code) ? 'border-black/10 focus:border-black/30' : 'border-orange-300 focus:border-orange-400'"
+                maxlength="10"
+              />
+              <input
+                type="number"
+                :value="entry.expectedCount"
+                @input="updateLegendCount(code, $event)"
+                class="w-14 px-1.5 py-0.5 bg-white text-black text-center text-xs rounded border border-black/10 focus:border-black/30 focus:outline-none"
+                min="0"
+              />
+              <button @click="deleteLegendEntry(code)" class="text-red-500 hover:text-red-700 text-xs ml-1">×</button>
+            </div>
+          </div>
+        </div>
+      </template>
     </div>
+    </div> <!-- /flex body wrapper -->
 
     <!-- Fullscreen processing overlay -->
     <div
@@ -3429,3 +3322,15 @@ watch(ocrStep, () => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.tooltip-enter-active,
+.tooltip-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.tooltip-enter-from,
+.tooltip-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(4px);
+}
+</style>

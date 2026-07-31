@@ -74,8 +74,20 @@ export function useOcrRecognition() {
     cols: number,
     rows: number,
     onProgress?: OcrProgressCallback,
+    validCodes?: string[],
   ): Promise<GridCellResult[]> {
     const ocr = getOrCreateInstance()
+
+    // 构建字符白名单：图例色号中出现的所有字符
+    let allowedChars: Set<string> | null = null
+    if (validCodes && validCodes.length > 0) {
+      allowedChars = new Set<string>()
+      for (const code of validCodes) {
+        for (const ch of code) {
+          allowedChars.add(ch)
+        }
+      }
+    }
 
     const result = await ocr.ocr(canvas, {
       onProgress: (progress) => {
@@ -111,6 +123,18 @@ export function useOcrRecognition() {
 
       const text = line.text.trim().toUpperCase()
       if (text.length === 0) continue
+
+      // 字符白名单过滤：如果文本包含不在白名单中的字符，丢弃
+      if (allowedChars) {
+        let valid = true
+        for (const ch of text) {
+          if (!allowedChars.has(ch)) {
+            valid = false
+            break
+          }
+        }
+        if (!valid) continue
+      }
 
       const key = `${row},${col}`
       const existing = cellMap.get(key)
