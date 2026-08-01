@@ -1,355 +1,487 @@
 /**
- * Grid detection utilities for OCR table extraction.
- * Provides median calculation, IQR outlier filtering, gap-based clustering,
- * and spacing statistics.
+ * Grid detection utilities using flood-fill based detection.
  */
 
 /**
- * Calculate the median of a numeric array.
- * Returns 0 for empty arrays.
+ * Bounding box of a connected region.
  */
-export function median(arr: number[]): number {
-  if (arr.length === 0) return 0;
-  const sorted = [...arr].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 !== 0
-    ? sorted[mid]
-    : (sorted[mid - 1] + sorted[mid]) / 2;
+interface BoundingBox {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
 }
 
 /**
- * Filter values using IQR (Interquartile Range) outlier detection.
- * Returns values within [Q1 - 1.5*IQR, Q3 + 1.5*IQR].
- * Returns empty array for empty input.
- */
-export function iqrFilter(values: number[]): number[] {
-  if (values.length === 0) return [];
-  const sorted = [...values].sort((a, b) => a - b);
-  const len = sorted.length;
-
-  // Q1 = 25th percentile, Q3 = 75th percentile
-  const q1Idx = Math.floor(len * 0.25);
-  const q3Idx = Math.floor(len * 0.75);
-  const q1 = sorted[q1Idx];
-  const q3 = sorted[q3Idx];
-  const iqr = q3 - q1;
-
-  const lower = q1 - 1.5 * iqr;
-  const upper = q3 + 1.5 * iqr;
-  return values.filter((v) => v >= lower && v <= upper);
-}
-
-/**
- * Cluster centers by gaps between them.
- * A gap larger than medianGap * multiplier starts a new cluster.
- * Returns empty array for empty input.
- */
-export function clusterByGaps(centers: number[], multiplier: number = 2.5): number[][] {
-  if (centers.length === 0) return [];
-  const sorted = [...centers].sort((a, b) => a - b);
-  if (sorted.length === 1) return [sorted];
-
-  const gaps: number[] = [];
-  for (let i = 1; i < sorted.length; i++) {
-    gaps.push(sorted[i] - sorted[i - 1]);
-  }
-
-  const medianGap = median(gaps);
-  const threshold = medianGap * multiplier;
-
-  const clusters: number[][] = [[sorted[0]]];
-  for (let i = 1; i < sorted.length; i++) {
-    const gap = sorted[i] - sorted[i - 1];
-    if (gap > threshold) {
-      clusters.push([sorted[i]]);
-    } else {
-      clusters[clusters.length - 1].push(sorted[i]);
-    }
-  }
-
-  return clusters;
-}
-
-/**
- * Type for OCR line objects with bounding box points.
- */
-interface OcrBoxLine {
-  box: {
-    points: Array<{ x: number; y: number }>;
-  };
-}
-
-/**
- * Infer grid dimensions (rows, cols) from OCR bounding box centers.
- * Extracts the center of each text box, clusters X coordinates for columns
- * and Y coordinates for rows using gap-based clustering.
- *
- * @param lines - OCR result lines, each with box.points (4 corner coordinates)
- * @returns { rows, cols, confidence } where confidence is 0.8 if clusters are
- *          meaningful (≥2 clusters with ≥2 points each), otherwise 0
- */
-export function inferGridFromOcrBoxes(
-  lines: OcrBoxLine[]
-): { rows: number; cols: number; confidence: number } {
-  if (lines.length < 4) {
-    return { rows: 0, cols: 0, confidence: 0 };
-  }
-
-  // Extract center points from each OCR box
-  const xCenters: number[] = [];
-  const yCenters: number[] = [];
-
-  for (const line of lines) {
-    const pts = line.box.points;
-    if (!pts || pts.length < 4) continue;
-    const cx = (pts[0].x + pts[1].x + pts[2].x + pts[3].x) / 4;
-    const cy = (pts[0].y + pts[1].y + pts[2].y + pts[3].y) / 4;
-    xCenters.push(cx);
-    yCenters.push(cy);
-  }
-
-  if (xCenters.length < 4) {
-    return { rows: 0, cols: 0, confidence: 0 };
-  }
-
-  // Cluster X centers → columns, Y centers → rows
-  const colClusters = clusterByGaps(xCenters);
-  const rowClusters = clusterByGaps(yCenters);
-
-  // Confidence: meaningful if ≥2 clusters each with ≥2 points
-  let confidence = 0;
-  if (colClusters.length >= 2 && rowClusters.length >= 2) {
-    const colSufficient = colClusters.every((c) => c.length >= 2);
-    const rowSufficient = rowClusters.every((c) => c.length >= 2);
-    if (colSufficient && rowSufficient) {
-      confidence = 0.8;
-    }
-  }
-
-  return {
-    rows: rowClusters.length,
-    cols: colClusters.length,
-    confidence,
-  };
-}
-
-/**
- * Infer grid dimensions from edge signals using Sobel operator and autocorrelation.
- * Computes per-row and per-column edge strength, then uses autocorrelation
- * to detect the fundamental period (grid cell size). Returns rows, cols, and
- * a confidence score (0.7 when both axes have strong periodic signals, 0 otherwise).
- */
-export function inferGridFromEdges(imageData: ImageData): { rows: number; cols: number; confidence: number } {
-  const { width, height, data } = imageData;
-
-  if (width < 10 || height < 10) {
-    return { rows: 0, cols: 0, confidence: 0 };
-  }
-
-  // Step 1: Convert to grayscale
-  const gray = new Uint8Array(width * height);
-  for (let i = 0; i < gray.length; i++) {
-    const idx = i * 4;
-    gray[i] = Math.round(0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2]);
-  }
-
-  // Step 2: Horizontal edge signal — sum |SobelY| per row
-  const edgeY = new Float64Array(height);
-  for (let y = 1; y < height - 1; y++) {
-    let sum = 0;
-    for (let x = 1; x < width - 1; x++) {
-      const sobelY =
-        -gray[(y - 1) * width + x - 1] - 2 * gray[(y - 1) * width + x] - gray[(y - 1) * width + x + 1]
-        + gray[(y + 1) * width + x - 1] + 2 * gray[(y + 1) * width + x] + gray[(y + 1) * width + x + 1];
-      sum += Math.abs(sobelY);
-    }
-    edgeY[y] = sum;
-  }
-
-  // Step 3: Vertical edge signal — sum |SobelX| per column
-  const edgeX = new Float64Array(width);
-  for (let x = 1; x < width - 1; x++) {
-    let sum = 0;
-    for (let y = 1; y < height - 1; y++) {
-      const sobelX =
-        -gray[(y - 1) * width + x - 1] - 2 * gray[y * width + x - 1] - gray[(y + 1) * width + x - 1]
-        + gray[(y - 1) * width + x + 1] + 2 * gray[y * width + x + 1] + gray[(y + 1) * width + x + 1];
-      sum += Math.abs(sobelX);
-    }
-    edgeX[x] = sum;
-  }
-
-  // Step 4: Autocorrelation-based period detection
-  function findPeriod(signal: Float64Array): { period: number; strength: number } {
-    const n = signal.length;
-    if (n < 10) return { period: 0, strength: 0 };
-
-    const minPeriod = Math.max(3, Math.floor(n / 40));
-    const maxLag = Math.floor(n / 2);
-
-    // Compute normalized autocorrelation r[k] for k = 0..maxLag
-    const r = new Float64Array(maxLag + 1);
-    for (let k = 0; k <= maxLag; k++) {
-      let sum = 0;
-      for (let i = 0; i < n - k; i++) {
-        sum += signal[i] * signal[i + k];
-      }
-      r[k] = sum;
-    }
-
-    const dc = r[0];
-    if (dc === 0) return { period: 0, strength: 0 };
-
-    // Find first peak after DC that exceeds 15% of DC value
-    for (let k = minPeriod; k < maxLag; k++) {
-      if (r[k] > r[k - 1] && r[k] >= r[k + 1] && r[k] > 0.15 * dc) {
-        return { period: k, strength: r[k] / dc };
-      }
-    }
-
-    return { period: 0, strength: 0 };
-  }
-
-  const periodY = findPeriod(edgeY); // row signal → vertical period → rows count
-  const periodX = findPeriod(edgeX); // col signal → horizontal period → cols count
-
-  // Step 5: Grid dimensions
-  const cols = periodX.period > 0 ? Math.round(width / periodX.period) : 0;
-  const rows = periodY.period > 0 ? Math.round(height / periodY.period) : 0;
-
-  // Step 6: Confidence — binary: 0.7 when both axes are periodic, 0 otherwise
-  const confidence = (periodX.strength > 0.15 && periodY.strength > 0.15) ? 0.7 : 0;
-
-  return { rows, cols, confidence };
-}
-
-/**
- * Combined result with voting metadata.
+ * Combined result with method metadata.
  */
 export interface GridDimensionsResult {
   rows: number;
   cols: number;
   confidence: number;
   method: string;
+  gridLineThickness: number;
 }
 
 /**
- * Combine three detection methods via majority voting.
- *
- * 1. All three agree → confidence 0.95, method "三重验证"
- * 2. Two agree → confidence 0.8, method "双重验证"
- * 3. Only one valid → use that method's own confidence
- * 4. None valid → confidence 0, method "手动输入"
- *
- * A result is "valid" when rows > 0 and cols > 0. For ocrBoxResult and
- * edgeResult confidence > 0 is additionally required. Two results "agree"
- * when both rows and cols match.
+ * Convert RGBA image data to grayscale.
  */
-export function detectGridDimensions(
-  ocrResult: { rows: number; cols: number },
-  ocrBoxResult: { rows: number; cols: number; confidence: number },
-  edgeResult: { rows: number; cols: number; confidence: number }
-): GridDimensionsResult {
-  const METHOD_LABELS: Record<string, string> = {
-    ocr: "OCR间距",
-    box: "OCR框聚类",
-    edge: "边缘检测",
-  };
-  const DEFAULT_OCR_CONFIDENCE = 0.75;
-
-  // Collect valid results
-  const valid: Array<{ key: string; rows: number; cols: number; confidence: number }> = [];
-
-  if (ocrResult.rows > 0 && ocrResult.cols > 0) {
-    valid.push({ key: "ocr", rows: ocrResult.rows, cols: ocrResult.cols, confidence: DEFAULT_OCR_CONFIDENCE });
+function toGrayscale(data: Uint8ClampedArray, width: number, height: number): Uint8Array {
+  const gray = new Uint8Array(width * height);
+  for (let i = 0; i < gray.length; i++) {
+    const idx = i * 4;
+    gray[i] = Math.round(0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2]);
   }
-  if (ocrBoxResult.rows > 0 && ocrBoxResult.cols > 0 && ocrBoxResult.confidence > 0) {
-    valid.push({ key: "box", ...ocrBoxResult });
-  }
-  if (edgeResult.rows > 0 && edgeResult.cols > 0 && edgeResult.confidence > 0) {
-    valid.push({ key: "edge", ...edgeResult });
+  return gray;
+}
+
+/**
+ * Check if two grayscale pixels are "similar" (within tolerance).
+ */
+function isSimilar(a: number, b: number, tolerance: number): boolean {
+  return Math.abs(a - b) <= tolerance;
+}
+
+/**
+ * Flood-fill from a seed pixel, returning the bounding box of the connected region.
+ * Uses a stack-based approach for performance.
+ *
+ * @param gray - grayscale image data
+ * @param width - image width
+ * @param height - image height
+ * @param seedX - seed pixel X
+ * @param seedY - seed pixel Y
+ * @param tolerance - grayscale similarity tolerance (default 30)
+ * @returns bounding box of the filled region
+ */
+function floodFillBBox(
+  gray: Uint8Array,
+  width: number,
+  height: number,
+  seedX: number,
+  seedY: number,
+  tolerance: number = 30
+): BoundingBox {
+  const visited = new Uint8Array(width * height);
+  const stack: Array<[number, number]> = [[seedX, seedY]];
+  const seedVal = gray[seedY * width + seedX];
+
+  let minX = seedX, maxX = seedX, minY = seedY, maxY = seedY;
+
+  while (stack.length > 0) {
+    const [x, y] = stack.pop()!;
+    const idx = y * width + x;
+
+    if (visited[idx]) continue;
+    if (!isSimilar(gray[idx], seedVal, tolerance)) continue;
+
+    visited[idx] = 1;
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+
+    // 4-connected neighbors
+    if (x > 0) stack.push([x - 1, y]);
+    if (x < width - 1) stack.push([x + 1, y]);
+    if (y > 0) stack.push([x, y - 1]);
+    if (y < height - 1) stack.push([x, y + 1]);
   }
 
-  if (valid.length === 0) {
-    return { rows: 0, cols: 0, confidence: 0, method: "手动输入" };
-  }
+  return { minX, maxX, minY, maxY };
+}
 
-  if (valid.length === 1) {
-    return {
-      rows: valid[0].rows,
-      cols: valid[0].cols,
-      confidence: valid[0].confidence,
-      method: METHOD_LABELS[valid[0].key],
-    };
-  }
+/**
+ * Find non-background seed pixels for flood fill.
+ * Randomly samples positions and returns seeds whose grayscale is between lowThresh and highThresh.
+ *
+ * @param count - number of seeds to find (default 10)
+ * @returns array of [x, y] seed positions
+ */
+function findSeeds(
+  gray: Uint8Array,
+  width: number,
+  height: number,
+  count: number = 10,
+  lowThresh: number = 40,
+  highThresh: number = 215
+): Array<[number, number]> {
+  const seeds: Array<[number, number]> = [];
+  const totalPixels = width * height;
+  const maxAttempts = Math.min(count * 20, 2000);
 
-  // Group by (rows, cols) signature to find agreement
-  const groups = new Map<string, Array<{ key: string; confidence: number }>>();
-  for (const r of valid) {
-    const sig = `${r.rows}x${r.cols}`;
-    const g = groups.get(sig) ?? [];
-    g.push({ key: r.key, confidence: r.confidence });
-    groups.set(sig, g);
-  }
-
-  // Find the largest agreement group
-  let bestSig = "";
-  let bestCount = 0;
-  for (const [sig, g] of groups) {
-    if (g.length > bestCount) {
-      bestCount = g.length;
-      bestSig = sig;
+  for (let attempt = 0; attempt < maxAttempts && seeds.length < count; attempt++) {
+    const idx = Math.floor(Math.random() * totalPixels);
+    const val = gray[idx];
+    if (val > lowThresh && val < highThresh) {
+      seeds.push([idx % width, Math.floor(idx / width)]);
     }
   }
 
-  const bestGroup = groups.get(bestSig)!;
-  const [finalRows, finalCols] = bestSig.split("x").map(Number);
-
-  if (bestCount === 3) {
-    return { rows: finalRows, cols: finalCols, confidence: 0.95, method: "三重验证" };
+  // Fallback: scan top-left quadrant if not enough seeds
+  for (let y = 10; y < Math.min(height - 10, Math.floor(height / 3)) && seeds.length < count; y++) {
+    for (let x = 10; x < Math.min(width - 10, Math.floor(width / 3)) && seeds.length < count; x++) {
+      const val = gray[y * width + x];
+      if (val > lowThresh && val < highThresh) {
+        seeds.push([x, y]);
+      }
+    }
   }
 
-  if (bestCount === 2) {
-    const names = bestGroup.map((r) => METHOD_LABELS[r.key]).join("+");
-    return { rows: finalRows, cols: finalCols, confidence: 0.8, method: `双重验证(${names})` };
-  }
-
-  // bestCount === 1 but valid.length > 1 → all differ, use highest confidence
-  const sorted = [...valid].sort((a, b) => b.confidence - a.confidence);
-  return {
-    rows: sorted[0].rows,
-    cols: sorted[0].cols,
-    confidence: sorted[0].confidence,
-    method: METHOD_LABELS[sorted[0].key],
-  };
+  return seeds;
 }
 
 /**
- * Calculate spacing statistics between sorted entries.
- * Returns average and median of dx and dy differences.
- * Returns all zeros for empty input.
+ * Calculate the mode (most frequent value) of a numeric array.
+ * Returns the first occurring mode if there are ties.
  */
-export function calculateSpacing(
-  sortedEntries: { x: number; y: number }[]
-): { avgX: number; avgY: number; medX: number; medY: number } {
-  if (sortedEntries.length < 2) {
-    return { avgX: 0, avgY: 0, medX: 0, medY: 0 };
+function mode(arr: number[]): number {
+  if (arr.length === 0) return 0;
+  const counts = new Map<number, number>();
+  for (const v of arr) {
+    counts.set(v, (counts.get(v) ?? 0) + 1);
+  }
+  let maxCount = 0;
+  let maxVal = arr[0];
+  for (const [val, cnt] of counts) {
+    if (cnt > maxCount) {
+      maxCount = cnt;
+      maxVal = val;
+    }
+  }
+  return maxVal;
+}
+
+/**
+ * 剔除偏离参考值过大的异常数据，同时返回保留项在原始数组中的索引。
+ * 以中位数（比众数更稳健）为参考，剔除偏差超过参考值 ratio 比例的数据。
+ *
+ * @param arr - 原始数据数组
+ * @param ratio - 允许的最大相对偏差比例（默认 0.25，即允许 ±25%）
+ * @returns { values, indices } 过滤后的值数组与对应的原始索引数组；
+ *          若过滤后为空则回退到原始数据（indices 为 0..n-1）
+ */
+function filterOutliersWithIndices(
+  arr: number[],
+  ratio: number = 0.25
+): { values: number[]; indices: number[] } {
+  if (arr.length <= 1) {
+    return { values: [...arr], indices: arr.map((_, i) => i) };
   }
 
-  const dxs: number[] = [];
-  const dys: number[] = [];
-  for (let i = 1; i < sortedEntries.length; i++) {
-    dxs.push(sortedEntries[i].x - sortedEntries[i - 1].x);
-    dys.push(sortedEntries[i].y - sortedEntries[i - 1].y);
+  const sorted = [...arr].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 === 0
+    ? (sorted[mid - 1] + sorted[mid]) / 2
+    : sorted[mid];
+
+  if (median <= 0) {
+    return { values: [...arr], indices: arr.map((_, i) => i) };
   }
 
-  const avgX = dxs.reduce((s, v) => s + v, 0) / dxs.length;
-  const avgY = dys.reduce((s, v) => s + v, 0) / dys.length;
+  const values: number[] = [];
+  const indices: number[] = [];
+  arr.forEach((v, i) => {
+    if (Math.abs(v - median) <= median * ratio) {
+      values.push(v);
+      indices.push(i);
+    }
+  });
 
-  return {
-    avgX,
-    avgY,
-    medX: median(dxs),
-    medY: median(dys),
+  if (values.length === 0) {
+    return { values: [...arr], indices: arr.map((_, i) => i) };
+  }
+  return { values, indices };
+}
+
+/**
+ * 剔除偏离参考值过大的异常数据。
+ * 以中位数（比众数更稳健）为参考，剔除偏差超过参考值 ratio 比例的数据。
+ *
+ * @param arr - 原始数据数组
+ * @param ratio - 允许的最大相对偏差比例（默认 0.25，即允许 ±25%）
+ * @returns 过滤后的数组；若过滤后为空则回退到原始数组
+ */
+function filterOutliers(arr: number[], ratio: number = 0.25): number[] {
+  return filterOutliersWithIndices(arr, ratio).values;
+}
+
+/**
+ * Measure the grid line thickness by scanning outward from a cell boundary.
+ *
+ * @param gray - grayscale image data
+ * @param width - image width
+ * @param height - image height
+ * @param bbox - bounding box of the cell to scan from
+ * @param direction - 'right' for vertical lines, 'down' for horizontal lines
+ * @param tolerance - grayscale similarity tolerance
+ * @returns thickness in pixels, or 0 if detection fails
+ */
+function measureLineThickness(
+  gray: Uint8Array,
+  width: number,
+  height: number,
+  bbox: BoundingBox,
+  direction: 'right' | 'down',
+  tolerance: number = 30
+): number {
+  if (direction === 'right') {
+    const startX = bbox.maxX + 1;
+    const midY = Math.floor((bbox.minY + bbox.maxY) / 2);
+
+    if (startX >= width) return 0;
+
+    // Get the seed value (last pixel of the cell)
+    const seedVal = gray[midY * width + bbox.maxX];
+
+    // Scan right: skip pixels similar to seed (remaining cell edge)
+    let gapStart = startX;
+    while (gapStart < width && isSimilar(gray[midY * width + gapStart], seedVal, tolerance)) {
+      gapStart++;
+    }
+
+    // Now at start of line/gap: scan until we find a new cell (different region)
+    let lineEnd = gapStart;
+    while (lineEnd < width && !isSimilar(gray[midY * width + lineEnd], seedVal, tolerance)) {
+      lineEnd++;
+    }
+
+    // The line thickness is the gap between cells
+    return lineEnd - gapStart;
+  } else {
+    // direction === 'down'
+    const startY = bbox.maxY + 1;
+    const midX = Math.floor((bbox.minX + bbox.maxX) / 2);
+
+    if (startY >= height) return 0;
+
+    const seedVal = gray[bbox.maxY * width + midX];
+
+    // Scan down: skip pixels similar to seed
+    let gapStart = startY;
+    while (gapStart < height && isSimilar(gray[gapStart * width + midX], seedVal, tolerance)) {
+      gapStart++;
+    }
+
+    // Now at start of line/gap: scan until we find a new cell
+    let lineEnd = gapStart;
+    while (lineEnd < height && !isSimilar(gray[lineEnd * width + midX], seedVal, tolerance)) {
+      lineEnd++;
+    }
+
+    return lineEnd - gapStart;
+  }
+}
+
+/**
+ * Calculate cell dimensions from a bounding box.
+ * Returns { cellWidth, cellHeight } or null if the box is too small.
+ */
+function calculateCellDimensions(bbox: BoundingBox): { cellWidth: number; cellHeight: number } | null {
+  const cellWidth = bbox.maxX - bbox.minX + 1;
+  const cellHeight = bbox.maxY - bbox.minY + 1;
+
+  // Sanity check: a cell must be at least 3px in each dimension
+  if (cellWidth < 3 || cellHeight < 3) return null;
+
+  return { cellWidth, cellHeight };
+}
+
+/**
+ * Infer grid dimensions from image data using flood-fill based detection.
+ *
+ * Algorithm:
+ * 1. Convert to grayscale
+ * 2. Randomly sample multiple seed pixels and flood-fill each to detect cells
+ * 3. Collect cell sizes from all detected cells
+ * 4. Filter out outliers, take the mode of widths/heights separately, then average
+ * 5. Measure grid line thickness (merge h/v, filter outliers, take mode)
+ * 6. Divide image dimensions by cell size and grid line thickness to get rows and cols
+ * 7. Compute confidence from fit and consistency
+ *
+ * @param imageData - raw RGBA image data
+ * @param sampleCount - number of random samples (default 10)
+ * @returns { rows, cols, confidence, gridLineThickness }
+ */
+export function inferGridFromEdges(
+  imageData: ImageData,
+  sampleCount: number = 10
+): {
+  rows: number;
+  cols: number;
+  confidence: number;
+  gridLineThickness: number;
+} {
+  const { width, height, data } = imageData;
+
+  const defaultReturn = {
+    rows: 0,
+    cols: 0,
+    confidence: 0,
+    gridLineThickness: 0,
   };
+
+  if (width < 20 || height < 20) {
+    console.log(`[网格检测] 图像太小，跳过: ${width}x${height}`);
+    return defaultReturn;
+  }
+
+  // Step 1: Convert to grayscale
+  const gray = toGrayscale(data, width, height);
+
+  // Step 2: Find multiple seeds and flood-fill each
+  const seeds = findSeeds(gray, width, height, sampleCount);
+  if (seeds.length === 0) {
+    console.log(`[网格检测] 未找到种子像素`);
+    return defaultReturn;
+  }
+  console.log(`[网格检测] 找到 ${seeds.length} 个种子点:`, seeds.map(s => `(${s[0]},${s[1]})`).join(' '));
+
+  // Step 3: Collect cell dimensions from all detected cells
+  const cellWidths: number[] = [];
+  const cellHeights: number[] = [];
+  const bboxes: BoundingBox[] = [];
+
+  for (const [seedX, seedY] of seeds) {
+    const bbox = floodFillBBox(gray, width, height, seedX, seedY, 30);
+    const cellDims = calculateCellDimensions(bbox);
+    if (cellDims) {
+      cellWidths.push(cellDims.cellWidth);
+      cellHeights.push(cellDims.cellHeight);
+      bboxes.push(bbox);
+    }
+    console.log(
+      `[网格检测] 种子(${seedX},${seedY}) 填充区域 bbox=[${bbox.minX},${bbox.minY}]-[${bbox.maxX},${bbox.maxY}] ` +
+      `尺寸=${cellDims ? `${cellDims.cellWidth}x${cellDims.cellHeight}` : '无效(太小)'}`
+    );
+  }
+
+  if (cellWidths.length === 0) {
+    console.log(`[网格检测] 所有种子填充区域均无效`);
+    return defaultReturn;
+  }
+  console.log(`[网格检测] 所有格子宽度: ${cellWidths.join(',')}`);
+  console.log(`[网格检测] 所有格子高度: ${cellHeights.join(',')}`);
+
+  // Step 4: 宽高分别剔除异常值后取众数，再取平均作为统一格子尺寸（正方形格子）
+  const { values: cleanCellWidths, indices: validWidthIndices } = filterOutliersWithIndices(cellWidths);
+  const { values: cleanCellHeights, indices: validHeightIndices } = filterOutliersWithIndices(cellHeights);
+  const modeCellWidth = mode(cleanCellWidths);
+  const modeCellHeight = mode(cleanCellHeights);
+  const cellSize = Math.round((modeCellWidth + modeCellHeight) / 2);
+  if (cleanCellWidths.length < cellWidths.length) {
+    console.log(`[网格检测] 宽度剔除异常值: ${cellWidths.join(',')} → ${cleanCellWidths.join(',')}`);
+  }
+  if (cleanCellHeights.length < cellHeights.length) {
+    console.log(`[网格检测] 高度剔除异常值: ${cellHeights.join(',')} → ${cleanCellHeights.join(',')}`);
+  }
+  console.log(`[网格检测] 宽度众数=${modeCellWidth}, 高度众数=${modeCellHeight}, 统一格子尺寸=${cellSize}`);
+
+  // 有效格子 = 宽高均非异常的格子（其网格线测量才可信）
+  const validWidthSet = new Set(validWidthIndices);
+  const validCellIndices = validHeightIndices.filter(i => validWidthSet.has(i));
+  console.log(`[网格检测] 有效格子 ${validCellIndices.length}/${cellWidths.length}: [${validCellIndices.join(',')}]`);
+
+  // Step 5: Measure grid line thickness (横竖合并后剔除异常值，直接取众数)
+  const hThicknesses: number[] = [];
+  const vThicknesses: number[] = [];
+
+  // 从有效格子底部向下扫描（水平网格线）
+  for (let i = 0; i < Math.min(5, validCellIndices.length); i++) {
+    const bbox = bboxes[validCellIndices[i]];
+    const h = measureLineThickness(gray, width, height, bbox, 'down');
+    if (h > 0) hThicknesses.push(h);
+    console.log(`[网格检测] 水平线测量[格子${validCellIndices[i]}]: ${h}`);
+  }
+
+  // 从有效格子右侧向右扫描（垂直网格线）
+  for (let i = 0; i < Math.min(5, validCellIndices.length); i++) {
+    const bbox = bboxes[validCellIndices[i]];
+    const v = measureLineThickness(gray, width, height, bbox, 'right');
+    if (v > 0) vThicknesses.push(v);
+    console.log(`[网格检测] 垂直线测量[格子${validCellIndices[i]}]: ${v}`);
+  }
+
+  // 横竖合并为一个数组，剔除异常值后直接取众数作为统一网格线厚度
+  const allThicknesses = [...hThicknesses, ...vThicknesses];
+  const cleanThickness = filterOutliers(allThicknesses);
+  if (cleanThickness.length < allThicknesses.length) {
+    console.log(`[网格检测] 网格线厚度剔除异常值: ${allThicknesses.join(',')} → ${cleanThickness.join(',')}`);
+  }
+
+  const gridLineThickness = cleanThickness.length > 0 ? mode(cleanThickness) : 0;
+  console.log(`[网格检测] 网格线厚度众数=${gridLineThickness}`);
+
+  // Step 6: Calculate grid count, accounting for grid line thickness
+  // 总宽度 = cols * cellSize + (cols - 1) * gridLineThickness
+  // → cols = (width + gridLineThickness) / (cellSize + gridLineThickness)
+  const rawCols = gridLineThickness > 0
+    ? (width + gridLineThickness) / (cellSize + gridLineThickness)
+    : width / cellSize;
+  const rawRows = gridLineThickness > 0
+    ? (height + gridLineThickness) / (cellSize + gridLineThickness)
+    : height / cellSize;
+
+  const cols = Math.round(rawCols);
+  const rows = Math.round(rawRows);
+
+  if (rows < 2 || cols < 2) {
+    console.log(`[网格检测] 网格过小: ${cols}x${rows}`);
+    return defaultReturn;
+  }
+  console.log(`[网格检测] 原始格数: ${rawCols.toFixed(2)}x${rawRows.toFixed(2)}, 取整后: ${cols}x${rows}`);
+
+  // Step 7: Calculate confidence based on fit and consistency
+  const colRemainder = Math.abs(rawCols - cols) / cols;
+  const rowRemainder = Math.abs(rawRows - rows) / rows;
+  const fitScore = 1 - (colRemainder + rowRemainder) / 2;
+
+  // Consistency: 过滤异常值后，宽高分别匹配众数的比例，取平均
+  const widthConsistency = cleanCellWidths.filter(w => w === modeCellWidth).length / cleanCellWidths.length;
+  const heightConsistency = cleanCellHeights.filter(h => h === modeCellHeight).length / cleanCellHeights.length;
+  const consistencyScore = (widthConsistency + heightConsistency) / 2;
+
+  // Combined confidence: fit score (60%) + consistency (40%)
+  const combinedScore = fitScore * 0.6 + consistencyScore * 0.4;
+
+  let confidence = 0;
+  if (combinedScore > 0.9 && rows >= 3 && cols >= 3) {
+    confidence = 0.85;
+  } else if (combinedScore > 0.8 && rows >= 2 && cols >= 2) {
+    confidence = 0.7;
+  } else if (rows >= 2 && cols >= 2) {
+    confidence = 0.5;
+  }
+  console.log(
+    `[网格检测] 拟合度=${fitScore.toFixed(3)}, 一致性=${consistencyScore.toFixed(3)}, ` +
+    `综合=${combinedScore.toFixed(3)}, 置信度=${confidence}`
+  );
+
+  return { rows, cols, confidence, gridLineThickness };
+}
+
+/**
+ * Detect grid dimensions using flood-fill based edge detection only.
+ */
+export function detectGridDimensions(
+  _ocrResult: { rows: number; cols: number },
+  _ocrBoxResult: { rows: number; cols: number; confidence: number },
+  edgeResult: {
+    rows: number;
+    cols: number;
+    confidence: number;
+    gridLineThickness?: number;
+  }
+): GridDimensionsResult {
+  if (edgeResult.rows > 0 && edgeResult.cols > 0 && edgeResult.confidence > 0) {
+    return {
+      rows: edgeResult.rows,
+      cols: edgeResult.cols,
+      confidence: edgeResult.confidence,
+      method: "物理检测",
+      gridLineThickness: edgeResult.gridLineThickness ?? 0,
+    };
+  }
+
+  return { rows: 0, cols: 0, confidence: 0, method: "手动输入", gridLineThickness: 0 };
 }

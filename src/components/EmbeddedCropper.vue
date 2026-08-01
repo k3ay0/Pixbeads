@@ -90,7 +90,7 @@ const legendData = ref<Map<string, LegendEntry>>(new Map())
 const detectedLegendBrand = ref<string>('')  // 检测到的图例品牌，用于 getColorForCode 精确匹配
 const autoGridCols = ref(0)
 const autoGridRows = ref(0)
-const detectionConfidence = ref<GridDimensionsResult>({ rows: 0, cols: 0, confidence: 0, method: "手动输入" })
+const detectionConfidence = ref<GridDimensionsResult>({ rows: 0, cols: 0, confidence: 0, method: "手动输入", gridLineThickness: 0 })
 const ocrCellResults = ref<GridCellResult[]>([])  // 图纸 OCR 逐格识别结果，供网格检测+颜色匹配共用
 
 // Editable grid override for auto-detected dimensions
@@ -102,6 +102,23 @@ function startEditGrid() {
   editGridCols.value = autoGridCols.value || 1
   editGridRows.value = autoGridRows.value || 1
   isEditingGrid.value = true
+}
+
+/**
+ * 计算格子尺寸（正方形格子，长宽合并为一个值）。
+ * 考虑网格线厚度：总尺寸 = 格数 * cellSize + (格数-1) * 线厚
+ */
+function calcCellSize(
+  totalWidth: number,
+  totalHeight: number,
+  cols: number,
+  rows: number,
+  thickness: number
+): number {
+  const cellW = thickness > 0 ? (totalWidth - (cols - 1) * thickness) / cols : totalWidth / cols
+  const cellH = thickness > 0 ? (totalHeight - (rows - 1) * thickness) / rows : totalHeight / rows
+  // 正方形格子：取两个方向的平均作为统一格子尺寸
+  return (cellW + cellH) / 2
 }
 
 function confirmEditGrid() {
@@ -352,10 +369,11 @@ function inferGridFromSourceImage() {
   ctx.restore();
   
   const imageData = ctx.getImageData(0, 0, width, height);
+  console.log(`[色块识别] 开始网格检测，源图尺寸: ${width}x${height}`);
   const edgeResult = inferGridFromEdges(imageData);
   
   if (edgeResult.confidence > 0 && edgeResult.rows > 0 && edgeResult.cols > 0) {
-    console.log(`[色块识别] 边缘检测网格: ${edgeResult.cols}x${edgeResult.rows} (置信度: ${edgeResult.confidence})`);
+    console.log(`[色块识别] 边缘检测网格: ${edgeResult.cols}x${edgeResult.rows} (置信度: ${edgeResult.confidence}, 线厚: ${edgeResult.gridLineThickness})`);
     autoGridCols.value = edgeResult.cols;
     autoGridRows.value = edgeResult.rows;
     gridCols.value = edgeResult.cols;
@@ -364,8 +382,11 @@ function inferGridFromSourceImage() {
       rows: edgeResult.rows,
       cols: edgeResult.cols,
       confidence: edgeResult.confidence,
-      method: "边缘检测"
+      method: "边缘检测",
+      gridLineThickness: edgeResult.gridLineThickness,
     };
+  } else {
+    console.log(`[色块识别] 网格检测失败，置信度=${edgeResult.confidence}`);
   }
 }
 
@@ -1623,14 +1644,14 @@ async function parseLegendWithOcrWithOverlay() {
  * Must be called AFTER pattern crop is done (patternCanvas available).
  */
 function runGridDetection() {
-  let edgeResult = { rows: 0, cols: 0, confidence: 0 }
+  let edgeResult = { rows: 0, cols: 0, confidence: 0, gridLineThickness: 0 }
   if (patternCanvas.value) {
     const pCtx = patternCanvas.value.getContext('2d')
     if (pCtx) {
       const edgeImageData = pCtx.getImageData(0, 0, patternCanvas.value.width, patternCanvas.value.height)
+      console.log(`[OCR] 开始边缘检测，画布尺寸: ${patternCanvas.value.width} x ${patternCanvas.value.height}`)
       edgeResult = inferGridFromEdges(edgeImageData)
-      console.log(`[OCR] 边缘检测: ${edgeResult.cols} x ${edgeResult.rows} (confidence: ${edgeResult.confidence})`)
-      console.log(`[OCR] 画布尺寸: ${patternCanvas.value.width} x ${patternCanvas.value.height}`)
+      console.log(`[OCR] 边缘检测结果: ${edgeResult.cols} x ${edgeResult.rows} (confidence: ${edgeResult.confidence}, 线厚: ${edgeResult.gridLineThickness})`)
     }
   }
 
@@ -1645,6 +1666,9 @@ function runGridDetection() {
     autoGridRows.value = combined.rows
     autoGridCols.value = combined.cols
     console.log(`[OCR] 最终网格: ${combined.cols}x${combined.rows} (${combined.method}, ${combined.confidence})`)
+    console.log(`[OCR] 网格线厚度: ${combined.gridLineThickness}`)
+  } else {
+    console.log(`[OCR] 网格检测失败，使用手动输入`)
   }
 }
 
@@ -1789,11 +1813,11 @@ async function extractPatternColorsWithOverlay() {
   const ctx = canvas.getContext('2d')!
   const cols = autoGridCols.value || gridCols.value
   const rows = autoGridRows.value || gridRows.value
-  const cellW = canvas.width / cols
-  const cellH = canvas.height / rows
-  const borderTrim = Math.max(1, Math.min(cellW, cellH) * 0.1)
+  const thickness = detectionConfidence.value.gridLineThickness ?? 0
+  const cellSize = calcCellSize(canvas.width, canvas.height, cols, rows, thickness)
+  const borderTrim = Math.max(1, cellSize * 0.1)
 
-  console.log(`[OCR] 图纸尺寸: ${canvas.width} x ${canvas.height}, 网格: ${cols} x ${rows}, 格子: ${cellW.toFixed(1)} x ${cellH.toFixed(1)}`)
+  console.log(`[OCR] 图纸尺寸: ${canvas.width} x ${canvas.height}, 网格: ${cols} x ${rows}, 格子: ${cellSize.toFixed(1)}, 网格线: ${thickness}`)
 
   // ========== Step 1: 使用 handlePatternConfirm 中预计算的 OCR 结果 ==========
   const ocrResults = ocrCellResults.value
@@ -1845,10 +1869,11 @@ async function extractPatternColorsWithOverlay() {
 
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
-      const x = Math.round(col * cellW)
-      const y = Math.round(row * cellH)
-      const w = Math.round(cellW)
-      const h = Math.round(cellH)
+      const cellPitch = cellSize + thickness
+      const x = Math.round(col * cellPitch)
+      const y = Math.round(row * cellPitch)
+      const w = Math.round(cellSize)
+      const h = Math.round(cellSize)
 
       const imageData = ctx.getImageData(x, y, w, h)
       const dominantColor = getDominantColorByArea(imageData, borderTrim, { step: gridStep.value })
@@ -1993,8 +2018,8 @@ function extractColorSlices(code: string) {
   const ctx = canvas.getContext('2d')!
   const cols = autoGridCols.value || gridCols.value
   const rows = autoGridRows.value || gridRows.value
-  const cellW = canvas.width / cols
-  const cellH = canvas.height / rows
+  const thickness = detectionConfidence.value.gridLineThickness ?? 0
+  const cellSize = calcCellSize(canvas.width, canvas.height, cols, rows, thickness)
 
   const slices: ColorSlice[] = []
 
@@ -2003,10 +2028,11 @@ function extractColorSlices(code: string) {
   if (!entry) return
 
   for (const cell of entry.cells) {
-    const x = Math.round(cell.col * cellW)
-    const y = Math.round(cell.row * cellH)
-    const w = Math.round(cellW)
-    const h = Math.round(cellH)
+    const cellPitch = cellSize + thickness
+    const x = Math.round(cell.col * cellPitch)
+    const y = Math.round(cell.row * cellPitch)
+    const w = Math.round(cellSize)
+    const h = Math.round(cellSize)
     const imageData = ctx.getImageData(x, y, w, h)
     slices.push({ row: cell.row, col: cell.col, imageData })
   }
@@ -2526,10 +2552,10 @@ function extractPatternColors() {
   const ctx = canvas.getContext('2d')!
   const cols = autoGridCols.value || gridCols.value
   const rows = autoGridRows.value || gridRows.value
+  const thickness = detectionConfidence.value.gridLineThickness ?? 0
 
-  const cellW = canvas.width / cols
-  const cellH = canvas.height / rows
-  const borderTrim = Math.max(1, Math.min(cellW, cellH) * 0.1)
+  const cellSize = calcCellSize(canvas.width, canvas.height, cols, rows, thickness)
+  const borderTrim = Math.max(1, cellSize * 0.1)
 
   const cells: PatternCell[] = []
   const colorCounts = new Map<string, { count: number, cells: Array<{ row: number, col: number }> }>()
@@ -2539,10 +2565,11 @@ function extractPatternColors() {
 
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
-      const x = Math.round(col * cellW)
-      const y = Math.round(row * cellH)
-      const w = Math.round(cellW)
-      const h = Math.round(cellH)
+      const cellPitch = cellSize + thickness
+      const x = Math.round(col * cellPitch)
+      const y = Math.round(row * cellPitch)
+      const w = Math.round(cellSize)
+      const h = Math.round(cellSize)
 
       const imageData = ctx.getImageData(x, y, w, h)
       const dominantColor = getDominantColorByArea(imageData, borderTrim, { step: gridStep.value })
@@ -2635,6 +2662,7 @@ function handleGridConfirm() {
   if (!img.value) return;
   const cols = gridCols.value;
   const rows = gridRows.value;
+  const thickness = detectionConfidence.value.gridLineThickness ?? 0;
   const imgGridArea = displayToImage(gridCrop.value);
   const { width: effW, height: effH } = getEffectiveDimensions();
   const tempCanvas = document.createElement("canvas");
@@ -2652,18 +2680,18 @@ function handleGridConfirm() {
   const resultCtx = resultCanvas.getContext("2d")!;
   resultCtx.drawImage(tempCanvas, imgGridArea.x, imgGridArea.y, imgGridArea.width, imgGridArea.height, 0, 0, imgGridArea.width, imgGridArea.height);
 
-  const cellW = imgGridArea.width / cols;
-  const cellH = imgGridArea.height / rows;
+  const cellSize = calcCellSize(imgGridArea.width, imgGridArea.height, cols, rows, thickness);
   const pixelColors: string[][] = [];
-  const borderTrim = Math.max(1, Math.min(cellW, cellH) * 0.1);
+  const borderTrim = Math.max(1, cellSize * 0.1);
 
   for (let row = 0; row < rows; row++) {
     const rowColors: string[] = [];
     for (let col = 0; col < cols; col++) {
-      const x = Math.round(col * cellW);
-      const y = Math.round(row * cellH);
-      const w = Math.round(cellW);
-      const h = Math.round(cellH);
+      const cellPitch = cellSize + thickness;
+      const x = Math.round(col * cellPitch);
+      const y = Math.round(row * cellPitch);
+      const w = Math.round(cellSize);
+      const h = Math.round(cellSize);
       const imageData = resultCtx.getImageData(x, y, w, h);
       const dominantColor = getDominantColorByArea(imageData, borderTrim, { step: gridStep.value });
       rowColors.push(dominantColor);
