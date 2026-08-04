@@ -41,7 +41,6 @@ import DownloadSettingsModal from './components/DownloadSettingsModal.vue'
 import ImportConvertDialog from './components/ImportConvertDialog.vue'
 import ImportFlowDialog from './components/ImportFlowDialog.vue'
 import InstallPWA from './components/InstallPWA.vue'
-import ImageCropper from './components/ImageCropper.vue'
 import AppHeader from './components/AppHeader.vue'
 import CanvasArea from './components/CanvasArea.vue'
 import OptimizeSidebar from './components/OptimizeSidebar.vue'
@@ -81,7 +80,7 @@ const ocrRecognition = useOcrRecognition()
 
 // ========== 从 Store 映射状态 ==========
 const {
-  originalImageSrc, showCropper, mappedPixelData, gridDimensions,
+  originalImageSrc, mappedPixelData, gridDimensions,
   colorCounts, granularity, 
   granularityY, lockAspectRatio,
   similarityThreshold, pixelationMode,
@@ -125,6 +124,7 @@ const previewOverlayCanvas = ref<HTMLCanvasElement | null>(null)
 const showImportFlow = ref(false)
 const showImportConfirm = ref(false)
 const isGridImport = ref(false)
+const pendingImportFile = ref<File | null>(null)
 
 // CanvasArea ref for accessing overlay canvas
 const canvasAreaRef = ref<any>(null)
@@ -175,6 +175,17 @@ function handleOpenImportFlow() {
   }
 }
 
+// 图片文件统一走新版导入流程（直接进入裁剪步骤）
+function openImportFlowWithFile(file: File) {
+  pendingImportFile.value = file
+  uiStore.closeAllMenus()
+  if (mappedPixelData.value) {
+    showImportConfirm.value = true
+  } else {
+    showImportFlow.value = true
+  }
+}
+
 function handleImportConfirm() {
   showImportConfirm.value = false
   showImportFlow.value = true
@@ -182,6 +193,7 @@ function handleImportConfirm() {
 
 function handleImportCancel() {
   showImportConfirm.value = false
+  pendingImportFile.value = null
 }
 
 function handleCloseImportFlow() {
@@ -206,12 +218,12 @@ function handleFileDrop(e: DragEvent) {
   const file = e.dataTransfer?.files?.[0]
   if (!file) return
   if (file.name.toLowerCase().endsWith('.pbds')) loadPbds(file)
-  else if (file.type.startsWith('image/')) fileIO.loadImage(file)
+  else if (file.type.startsWith('image/')) openImportFlowWithFile(file)
 }
 
 function handleFileChange(e: Event) {
   const file = (e.target as HTMLInputElement)?.files?.[0]
-  if (file) fileIO.loadImage(file)
+  if (file) openImportFlowWithFile(file)
 }
 
 async function handlePbdsFileChange(e: Event) {
@@ -228,12 +240,9 @@ async function handlePbdsDropFromFlow(file: File) {
 
 function handleImportConfirmFromDialog(data: any) { fileIO.handleImportConfirm(data); pendingPbdsData.value = null }
 function handlePbdsImportCancel() { uiStore.showImportDialog = false; pendingPbdsData.value = null }
-function handleCropConfirm(canvas: HTMLCanvasElement) { fileIO.handleCropConfirm(canvas); processImage() }
-function handleCropSkip() { fileIO.handleCropSkip(); processImage() }
 async function handleGridConfirm(data: { canvas: HTMLCanvasElement, cols: number, rows: number, pixelColors: string[][]; ocrEnabled: boolean }) {
   // 设置裁剪后的画布
   beadStore.setCroppedCanvas(data.canvas)
-  beadStore.showCropper = false
 
   // 设置网格维度
   beadStore.updateGranularity(data.cols)
@@ -415,10 +424,6 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
 </script>
 
 <template>
-  <!-- 裁剪工具 -->
-  <ImageCropper v-if="showCropper && originalImageSrc" :image-src="originalImageSrc" @confirm="handleCropConfirm"
-    @grid-confirm="handleGridConfirm" @skip="handleCropSkip" />
-
   <!-- 主布局 -->
   <div class="h-screen flex flex-col bg-white overflow-hidden font-sans">
     <!-- Header -->
@@ -490,10 +495,12 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
   <!-- Import flow dialog -->
   <ImportFlowDialog
     :is-open="showImportFlow"
+    :pending-file="pendingImportFile"
     @close="handleCloseImportFlow"
     @crop-confirm="handleCropConfirmFromFlow"
     @grid-confirm="handleGridConfirmFromFlow"
     @pbds-drop="handlePbdsDropFromFlow"
+    @pending-file-consumed="pendingImportFile = null"
   />
 
   <!-- Import confirm dialog -->

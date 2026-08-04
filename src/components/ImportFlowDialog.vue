@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import EmbeddedCropper from './EmbeddedCropper.vue'
 
 interface Props {
   isOpen: boolean
+  pendingFile?: File | null
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  pendingFile: null,
+})
 
 const emit = defineEmits<{
   close: []
@@ -19,7 +22,18 @@ const emit = defineEmits<{
     ocrEnabled: boolean
   }]
   pbdsDrop: [file: File]
+  pendingFileConsumed: []
 }>()
+
+// 外部（文件选择/拖拽导入）传入的图片文件：直接加载并进入裁剪步骤
+watch(
+  () => props.pendingFile,
+  (file) => {
+    if (!file) return
+    loadImageFile(file)
+    emit('pendingFileConsumed')
+  }
+)
 
 // 步骤状态
 type Step = 'select' | 'crop'
