@@ -482,47 +482,42 @@ export async function exportPbds({
     index++
   }
 
-  // 生成 metadata.csv
-  const metadataLines = [
-    'key,value',
-    `version,1.0`,
-    `gridWidth,${N}`,
-    `gridHeight,${M}`,
-    `colorSystem,${selectedColorSystem}`,
-    `totalBeads,${totalBeadCount}`,
-    `exportDate,${new Date().toISOString()}`
-  ]
-  const metadataCsv = metadataLines.join('\n')
-
-  // 生成 colormap.csv
-  const colormapLines = ['index,hex,colorKey,count']
-  for (const entry of colorList) {
-    colormapLines.push(`${entry.index},${entry.hex},${entry.key},${entry.count}`)
+  // 生成 metadata.json
+  const metadata = {
+    version: '1.0',
+    gridWidth: N,
+    gridHeight: M,
+    colorSystem: selectedColorSystem,
+    totalBeads: totalBeadCount,
+    exportDate: new Date().toISOString()
   }
-  const colormapCsv = colormapLines.join('\n')
+  const metadataJson = JSON.stringify(metadata)
 
-  // 生成 pattern.csv
-  const patternLines: string[] = []
+  // 生成 colormap.json
+  const colormapJson = JSON.stringify(colorList)
+
+  // 生成 pattern.json
+  const patternMatrix: number[][] = []
   for (let row = 0; row < M; row++) {
-    const rowData: string[] = []
+    const rowData: number[] = []
     for (let col = 0; col < N; col++) {
       const cell = mappedPixelData[row][col]
       if (cell && !cell.isExternal) {
         const idx = colorIndexMap.get(cell.color.toUpperCase())
-        rowData.push(idx !== undefined ? idx.toString() : '-1')
+        rowData.push(idx !== undefined ? idx : -1)
       } else {
-        rowData.push('-1')
+        rowData.push(-1)
       }
     }
-    patternLines.push(rowData.join(','))
+    patternMatrix.push(rowData)
   }
-  const patternCsv = patternLines.join('\n')
+  const patternJson = JSON.stringify(patternMatrix)
 
   // 创建 ZIP
   const zip = new JSZip()
-  zip.file('metadata.csv', metadataCsv)
-  zip.file('colormap.csv', colormapCsv)
-  zip.file('pattern.csv', patternCsv)
+  zip.file('metadata.json', metadataJson)
+  zip.file('colormap.json', colormapJson)
+  zip.file('pattern.json', patternJson)
 
   const blob = await zip.generateAsync({ type: 'blob' })
   triggerBlobDownload(blob, `pixbeads-${N}x${M}-${selectedColorSystem}.pbds`)
@@ -534,21 +529,21 @@ export async function exportPbds({
 export async function importPbds(file: File): Promise<PbdsImportResult> {
   const zip = await JSZip.loadAsync(file)
 
-  // 读取 metadata.csv
-  const metadataFile = zip.file('metadata.csv')
-  if (!metadataFile) throw new Error('缺少 metadata.csv 文件')
+  // 读取 metadata.json
+  const metadataFile = zip.file('metadata.json')
+  if (!metadataFile) throw new Error('缺少 metadata.json 文件')
   const metadataText = await metadataFile.async('text')
   const metadata = parseMetadata(metadataText)
 
-  // 读取 colormap.csv
-  const colormapFile = zip.file('colormap.csv')
-  if (!colormapFile) throw new Error('缺少 colormap.csv 文件')
+  // 读取 colormap.json
+  const colormapFile = zip.file('colormap.json')
+  if (!colormapFile) throw new Error('缺少 colormap.json 文件')
   const colormapText = await colormapFile.async('text')
   const colorMap = parseColorMap(colormapText)
 
-  // 读取 pattern.csv
-  const patternFile = zip.file('pattern.csv')
-  if (!patternFile) throw new Error('缺少 pattern.csv 文件')
+  // 读取 pattern.json
+  const patternFile = zip.file('pattern.json')
+  if (!patternFile) throw new Error('缺少 pattern.json 文件')
   const patternText = await patternFile.async('text')
   const pattern = parsePattern(patternText, colorMap)
 
@@ -567,59 +562,44 @@ function parseMetadata(text: string): {
   colorSystem: ColorSystem
   totalBeads: number
 } {
-  const lines = text.trim().split('\n')
-  const data: Record<string, string> = {}
-  for (let i = 1; i < lines.length; i++) {
-    const [key, value] = lines[i].split(',')
-    if (key && value) data[key.trim()] = value.trim()
-  }
-
+  const data = JSON.parse(text)
   return {
-    gridWidth: parseInt(data.gridWidth, 10),
-    gridHeight: parseInt(data.gridHeight, 10),
+    gridWidth: data.gridWidth,
+    gridHeight: data.gridHeight,
     colorSystem: data.colorSystem as ColorSystem,
-    totalBeads: parseInt(data.totalBeads, 10)
+    totalBeads: data.totalBeads
   }
 }
 
 function parseColorMap(text: string): Map<number, { hex: string; key: string }> {
-  const lines = text.trim().split('\n')
+  const entries: ColorEntry[] = JSON.parse(text)
   const colorMap = new Map<number, { hex: string; key: string }>()
 
-  for (let i = 1; i < lines.length; i++) {
-    const parts = lines[i].split(',')
-    if (parts.length >= 2) {
-      const idx = parseInt(parts[0], 10)
-      const hex = parts[1].trim().toUpperCase()
-      const key = parts.length >= 3 ? parts[2].trim() : hex
-      colorMap.set(idx, { hex, key: key || hex })
-    }
+  for (const entry of entries) {
+    colorMap.set(entry.index, { hex: entry.hex.toUpperCase(), key: entry.key || entry.hex })
   }
   return colorMap
 }
 
 function parsePattern(text: string, colorMap: Map<number, { hex: string; key: string }>): MappedPixel[][] {
-  const lines = text.trim().split('\n')
+  const matrix: number[][] = JSON.parse(text)
   const result: MappedPixel[][] = []
 
-  for (const line of lines) {
-    const row: MappedPixel[] = []
-    const indices = line.split(',')
-
-    for (const idxStr of indices) {
-      const idx = parseInt(idxStr.trim(), 10)
-      if (idx === -1 || isNaN(idx)) {
-        row.push({ key: 'ERASE', color: '#FFFFFF', isExternal: true })
+  for (const row of matrix) {
+    const mappedRow: MappedPixel[] = []
+    for (const idx of row) {
+      if (idx === -1) {
+        mappedRow.push({ key: 'ERASE', color: '#FFFFFF', isExternal: true })
       } else {
         const entry = colorMap.get(idx)
         if (entry) {
-          row.push({ key: entry.key, color: entry.hex, isExternal: false })
+          mappedRow.push({ key: entry.key, color: entry.hex, isExternal: false })
         } else {
-          row.push({ key: 'ERASE', color: '#FFFFFF', isExternal: true })
+          mappedRow.push({ key: 'ERASE', color: '#FFFFFF', isExternal: true })
         }
       }
     }
-    result.push(row)
+    result.push(mappedRow)
   }
   return result
 }

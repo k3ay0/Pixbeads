@@ -1,0 +1,264 @@
+:root {
+  --color-bg: #ffffff;
+  --color-text: #000000;
+  --color-text-secondary: rgba(0, 0, 0, 0.55);
+  --color-border: rgba(0, 0, 0, 0.10);
+  --color-btn-primary-bg: #000000;
+  --color-btn-primary-text: #ffffff;
+  --color-btn-secondary-bg: rgba(0, 0, 0, 0.06);
+  --color-focus-ring: #000000;
+  --color-tooltip-bg: #000000;
+  --color-tooltip-text: #ffffff;
+  --color-sidebar-bg: #fafafa;
+  --color-success: #00a63e;
+  --color-error: #f4422f;
+  --color-info: #007be5;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  letter-spacing: -0.01em;
+}
+
+*:focus-visible {
+  outline: 2px dashed var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===== Voxel Theme Variables ===== */
+/* Default light theme values */
+.voxoB-layout, body {
+  --b0: #e6e9ee;
+  --b1: #f2f4f7;
+  --b2: #ebeeef;
+  --b3: #e0e3e8;
+  --b4: #d4d8df;
+  --tx: #2c3240;
+  --t2: #656c80;
+  --t3: #9097aa;
+  --bd: #c4c8d4;
+  --bh: #bcc0cc;
+  --ac: #007be5;
+  --a2: #d04080;
+  --a3: #7040c0;
+}
+
+/* Dark theme */
+.voxoB-layout[data-theme="dark"], body[data-theme="dark"] {
+  --b0: #08090d;
+  --b1: #0e1018;
+  --b2: #151820;
+  --b3: #1c2030;
+  --b4: #252a3c;
+  --tx: #e0e4f0;
+  --t2: #8890a8;
+  --t3: #555c74;
+  --ac: #00d4f0;
+  --a2: #f03070;
+  --a3: #9050f0;
+  --bd: #202840;
+  --bh: #2a3450;
+}
+
+.voxoB-layout[data-theme="light"], body[data-theme="light"] {
+  --b0: #e6e9ee;
+  --b1: #f2f4f7;
+  --b2: #ebeeef;
+  --b3: #e0e3e8;
+  --b4: #d4d8df;
+  --tx: #2c3240;
+  --t2: #656c80;
+  --t3: #9097aa;
+  --bd: #c4c8d4;
+  --bh: #bcc0cc;
+  --ac: #007be5;
+  --a2: #d04080;
+  --a3: #7040c0;
+}
+
+.voxoB-layout[data-theme="grey"], body[data-theme="grey"] {
+  --b0: #1a1a1a;
+  --b1: #222222;
+  --b2: #2a2a2a;
+  --b3: #333333;
+  --b4: #3c3c3c;
+  --tx: #dddddd;
+  --t2: #999999;
+  --t3: #666666;
+  --bd: #3a3a3a;
+  --bh: #444444;
+  --ac: #80c0d0;
+  --a2: #d07080;
+}
+
+.voxoB-layout[data-theme="warm"], body[data-theme="warm"] {
+  --b0: #1a1410;
+  --b1: #221c16;
+  --b2: #2a221a;
+  --b3: #342a20;
+  --b4: #3e3228;
+  --tx: #e8ddd0;
+  --t2: #a09080;
+  --t3: #706050;
+  --bd: #3a3020;
+  --bh: #4a3e30;
+  --ac: #f0a020;
+  --a2: #e05040;
+  --a3: #c08040;
+}
+
+.voxoB-layout[data-theme="sepia"], body[data-theme="sepia"] {
+  --b0: #1c1814;
+  --b1: #24201a;
+  --b2: #2c2820;
+  --b3: #3a3428;
+  --b4: #4a4030;
+  --tx: #e0d8c8;
+  --t2: #a09878;
+  --t3: #787060;
+  --bd: #3a3420;
+  --bh: #4a4030;
+  --ac: #c0a060;
+  --a2: #c07040;
+  --a3: #a08050;
+}
+
+.voxoB-layout[data-theme="forest"], body[data-theme="forest"] {
+  --b0: #0a100a;
+  --b1: #101810;
+  --b2: #162016;
+  --b3: #1c2a1c;
+  --b4: #253425;
+  --tx: #d0e8d0;
+  --t2: #80a880;
+  --t3: #507050;
+  --bd: #203820;
+  --bh: #2a4428;
+  --ac: #40d080;
+  --a2: #80d040;
+  --a3: #50b060;
+}
+
+.voxoB-layout[data-theme="ocean"], body[data-theme="ocean"] {
+  --b0: #0a1018;
+  --b1: #101820;
+  --b2: #142028;
+  --b3: #1a2838;
+  --b4: #203448;
+  --tx: #d0e0f0;
+  --t2: #7090b0;
+  --t3: #506880;
+  --bd: #1a2840;
+  --bh: #203450;
+  --ac: #40a0d0;
+  --a2: #60b0c0;
+  --a3: #5080b0;
+}
+
+/* ===== Theme Utility Classes ===== */
+.v-theme-bg0 { background-color: var(--b0); }
+.v-theme-bg1 { background-color: var(--b1); }
+.v-theme-bg2 { background-color: var(--b2); }
+.v-theme-bg3 { background-color: var(--b3); }
+.v-theme-bg4 { background-color: var(--b4); }
+.v-theme-border { border-color: var(--bd); }
+.v-theme-border-h:hover { border-color: var(--bh); }
+.v-theme-text { color: var(--tx); }
+.v-theme-text2 { color: var(--t2); }
+.v-theme-text3 { color: var(--t3); }
+.v-theme-accent { color: var(--ac); }
+.v-theme-accent2 { color: var(--a2); }
+
+/* ===== VoxelTheme: Override hardcoded Tailwind colors ===== */
+.voxoB-layout .bg-gray-900,
+body[data-theme] .bg-gray-900 { background-color: var(--b0) !important; }
+.voxoB-layout .bg-gray-800,
+body[data-theme] .bg-gray-800 { background-color: var(--b2) !important; }
+.voxoB-layout .bg-gray-700,
+body[data-theme] .bg-gray-700 { background-color: var(--b3) !important; }
+.voxoB-layout .bg-gray-600,
+body[data-theme] .bg-gray-600 { background-color: var(--bd) !important; }
+.voxoB-layout .bg-gray-100,
+body[data-theme] .bg-gray-100 { background-color: var(--b3) !important; }
+.voxoB-layout .bg-gray-200,
+body[data-theme] .bg-gray-200 { background-color: var(--b4) !important; }
+.voxoB-layout .bg-gray-300,
+body[data-theme] .bg-gray-300 { background-color: var(--bh) !important; }
+.voxoB-layout .bg-white,
+body[data-theme] .bg-white { background-color: var(--b1) !important; }
+.voxoB-layout .text-gray-300,
+body[data-theme] .text-gray-300 { color: var(--tx) !important; }
+.voxoB-layout .text-gray-400,
+body[data-theme] .text-gray-400 { color: var(--t2) !important; }
+.voxoB-layout .text-gray-500,
+body[data-theme] .text-gray-500 { color: var(--t3) !important; }
+.voxoB-layout .text-gray-600,
+body[data-theme] .text-gray-600 { color: var(--t2) !important; }
+.voxoB-layout .text-gray-700,
+body[data-theme] .text-gray-700 { color: var(--tx) !important; }
+.voxoB-layout .border-gray-600,
+body[data-theme] .border-gray-600 { border-color: var(--bd) !important; }
+.voxoB-layout .border-gray-200,
+body[data-theme] .border-gray-200 { border-color: var(--bd) !important; }
+.voxoB-layout .border-black\/10,
+body[data-theme] .border-black\/10 { border-color: var(--bd) !important; }
+.voxoB-layout .border-b,
+body[data-theme] .border-b { border-color: var(--bd) !important; }
+.voxoB-layout .border-t,
+body[data-theme] .border-t { border-color: var(--bd) !important; }
+.voxoB-layout .border-l,
+body[data-theme] .border-l { border-color: var(--bd) !important; }
+.voxoB-layout .border,
+body[data-theme] .border { border-color: var(--bd) !important; }
+.voxoB-layout .hover\:bg-gray-700:hover,
+body[data-theme] .hover\:bg-gray-700:hover { background-color: var(--b4) !important; }
+.voxoB-layout .hover\:bg-gray-600:hover,
+body[data-theme] .hover\:bg-gray-600:hover { background-color: var(--b4) !important; }
+.voxoB-layout .hover\:bg-gray-200:hover,
+body[data-theme] .hover\:bg-gray-200:hover { background-color: var(--b4) !important; }
+.voxoB-layout .active\:bg-gray-300:active,
+body[data-theme] .active\:bg-gray-300:active { background-color: var(--bh) !important; }
+.voxoB-layout .active\:bg-gray-200:active,
+body[data-theme] .active\:bg-gray-200:active { background-color: var(--b4) !important; }
+.voxoB-layout .hover\:border-cyan-400:hover,
+body[data-theme] .hover\:border-cyan-400:hover { border-color: var(--ac) !important; }
+.voxoB-layout .hover\:border-pink-400:hover,
+body[data-theme] .hover\:border-pink-400:hover { border-color: var(--a2) !important; }
+.voxoB-layout .hover\:text-white:hover,
+body[data-theme] .hover\:text-white:hover { color: var(--tx) !important; }
+.voxoB-layout .accent-gray-900,
+body[data-theme] .accent-gray-900 { accent-color: var(--tx) !important; }
+.voxoB-layout .ring-gray-900\/20,
+body[data-theme] .ring-gray-900\/20 { --tw-ring-color: rgba(224, 228, 240, 0.2) !important; }
+.voxoB-layout .ring-gray-900\/30,
+body[data-theme] .ring-gray-900\/30 { --tw-ring-color: rgba(224, 228, 240, 0.3) !important; }
+.voxoB-layout .bg-black\/50,
+body[data-theme] .bg-black\/50 { background-color: rgba(0, 0, 0, 0.5) !important; }
+.voxoB-layout .bg-black\/40,
+body[data-theme] .bg-black\/40 { background-color: rgba(0, 0, 0, 0.4) !important; }
+.voxoB-layout .placeholder-gray-500::placeholder,
+body[data-theme] .placeholder-gray-500::placeholder { color: var(--t3) !important; }
+.voxoB-layout input[type="number"],
+body[data-theme] input[type="number"] { color: var(--tx); background-color: var(--b3); border-color: var(--bd); }
+.voxoB-layout input[type="number"]:focus,
+body[data-theme] input[type="number"]:focus { border-color: var(--ac); outline: none; }
+.voxoB-layout select option,
+body[data-theme] select option { background-color: var(--b2); color: var(--tx); }
+.voxoB-layout input[type="range"],
+body[data-theme] input[type="range"] { accent-color: var(--ac); }
+.voxoB-layout .v-theme-text2:hover,
+body[data-theme] .v-theme-text2:hover { background-color: var(--b4); }
+
+/* 隐藏滚动条但仍可滚动 */
+.scrollbar-hide {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;  /* Chrome, Safari and Opera */
+}
