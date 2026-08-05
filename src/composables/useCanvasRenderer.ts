@@ -80,6 +80,7 @@ export function useCanvasRenderer(
     canvas.style.height = `${containerH}px`
 
     const ctx = canvas.getContext('2d')
+    if (!ctx) return
     ctx.imageSmoothingEnabled = false
 
     // 网格逻辑尺寸
