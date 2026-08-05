@@ -34,12 +34,13 @@ import type { PbdsImportResult } from './utils/downloader'
 import type { IroningPreviewConfig } from './utils/ironingPreview'
 import { DEFAULT_IRONING_CONFIG } from './utils/ironingPreview'
 import type { MappedPixel } from './types'
+import { TRANSPARENT_KEY, transparentColorData } from './types'
 
 // Components
 import DownloadSettingsModal from './components/DownloadSettingsModal.vue'
 import ImportConvertDialog from './components/ImportConvertDialog.vue'
+import ImportFlowDialog from './components/ImportFlowDialog.vue'
 import InstallPWA from './components/InstallPWA.vue'
-import ImageCropper from './components/ImageCropper.vue'
 import AppHeader from './components/AppHeader.vue'
 import CanvasArea from './components/CanvasArea.vue'
 import OptimizeSidebar from './components/OptimizeSidebar.vue'
@@ -79,7 +80,7 @@ const ocrRecognition = useOcrRecognition()
 
 // ========== 从 Store 映射状态 ==========
 const {
-  originalImageSrc, showCropper, mappedPixelData, gridDimensions,
+  originalImageSrc, mappedPixelData, gridDimensions,
   colorCounts, granularity, 
   granularityY, lockAspectRatio,
   similarityThreshold, pixelationMode,
@@ -120,6 +121,10 @@ const isPainting = ref(false)
 const lastPaintCell = ref<{ row: number; col: number } | null>(null)
 const hoverCell = ref<{ row: number; col: number } | null>(null)
 const previewOverlayCanvas = ref<HTMLCanvasElement | null>(null)
+const showImportFlow = ref(false)
+const showImportConfirm = ref(false)
+const isGridImport = ref(false)
+const pendingImportFile = ref<File | null>(null)
 
 // CanvasArea ref for accessing overlay canvas
 const canvasAreaRef = ref<any>(null)
@@ -129,7 +134,7 @@ const ironingPreviewRef = ref<InstanceType<typeof IroningPreview> | null>(null)
 const ironingConfig = ref<IroningPreviewConfig>(DEFAULT_IRONING_CONFIG)
 
 // OCR 状态
-const ocrProgress = ref<{ phase: string; percent?: number } | null>(null)
+const ocrProgress = ref<{ phase: string; phaseLabel: string; percent?: number } | null>(null)
 const ocrError = ref<string | null>(null)
 
 // ========== 初始化 Composables ==========
@@ -160,17 +165,65 @@ const {
 function triggerFileInput() { uiStore.closeAllMenus(); fileInput.value?.click() }
 function triggerPbdsInput() { uiStore.closeAllMenus(); pbdsFileInput.value?.click() }
 
+function handleOpenImportFlow() {
+  uiStore.closeAllMenus()
+  // 如果画布中有内容，显示确认弹窗
+  if (mappedPixelData.value) {
+    showImportConfirm.value = true
+  } else {
+    showImportFlow.value = true
+  }
+}
+
+// 图片文件统一走新版导入流程（直接进入裁剪步骤）
+function openImportFlowWithFile(file: File) {
+  pendingImportFile.value = file
+  uiStore.closeAllMenus()
+  if (mappedPixelData.value) {
+    showImportConfirm.value = true
+  } else {
+    showImportFlow.value = true
+  }
+}
+
+function handleImportConfirm() {
+  showImportConfirm.value = false
+  showImportFlow.value = true
+}
+
+function handleImportCancel() {
+  showImportConfirm.value = false
+  pendingImportFile.value = null
+}
+
+function handleCloseImportFlow() {
+  showImportFlow.value = false
+}
+
+function handleCropConfirmFromFlow(canvas: HTMLCanvasElement) {
+  showImportFlow.value = false
+  isGridImport.value = false
+  fileIO.handleCropConfirm(canvas)
+  processImage()
+}
+
+async function handleGridConfirmFromFlow(data: { canvas: HTMLCanvasElement, cols: number, rows: number, pixelColors: string[][]; ocrEnabled: boolean }) {
+  showImportFlow.value = false
+  isGridImport.value = true
+  await handleGridConfirm(data)
+}
+
 function handleFileDrop(e: DragEvent) {
   e.preventDefault()
   const file = e.dataTransfer?.files?.[0]
   if (!file) return
   if (file.name.toLowerCase().endsWith('.pbds')) loadPbds(file)
-  else if (file.type.startsWith('image/')) fileIO.loadImage(file)
+  else if (file.type.startsWith('image/')) openImportFlowWithFile(file)
 }
 
 function handleFileChange(e: Event) {
   const file = (e.target as HTMLInputElement)?.files?.[0]
-  if (file) fileIO.loadImage(file)
+  if (file) openImportFlowWithFile(file)
 }
 
 async function handlePbdsFileChange(e: Event) {
@@ -180,14 +233,16 @@ async function handlePbdsFileChange(e: Event) {
   if (result) { pendingPbdsData.value = result; uiStore.showImportDialog = true }
 }
 
+async function handlePbdsDropFromFlow(file: File) {
+  const result = await fileIO.loadPbds(file)
+  if (result) { pendingPbdsData.value = result; uiStore.showImportDialog = true }
+}
+
 function handleImportConfirmFromDialog(data: any) { fileIO.handleImportConfirm(data); pendingPbdsData.value = null }
-function handleImportCancel() { uiStore.showImportDialog = false; pendingPbdsData.value = null }
-function handleCropConfirm(canvas: HTMLCanvasElement) { fileIO.handleCropConfirm(canvas); processImage() }
-function handleCropSkip() { fileIO.handleCropSkip(); processImage() }
+function handlePbdsImportCancel() { uiStore.showImportDialog = false; pendingPbdsData.value = null }
 async function handleGridConfirm(data: { canvas: HTMLCanvasElement, cols: number, rows: number, pixelColors: string[][]; ocrEnabled: boolean }) {
   // 设置裁剪后的画布
   beadStore.setCroppedCanvas(data.canvas)
-  beadStore.showCropper = false
 
   // 设置网格维度
   beadStore.updateGranularity(data.cols)
@@ -209,36 +264,29 @@ async function handleGridConfirm(data: { canvas: HTMLCanvasElement, cols: number
     rgb: { r: c.rgb.r, g: c.rgb.g, b: c.rgb.b }
   }))
 
-  // Oklab 色彩匹配 - 将每个 RGB 颜色映射到最近的拼豆颜色
-  const mappedPixelData: MappedPixel[][] = data.pixelColors.map(row =>
-    row.map(color => {
-      const rgb = parseRgb(color)
-      const closest = findClosestPaletteColor(rgb, palette)
-      return { key: closest.key, color: closest.hex }
-    })
-  )
-
-  // OCR 识别色号
+  // OCR 模式下跳过 Oklab 色彩匹配，直接使用已在 EmbeddedCropper 中匹配好的色号
+  let mappedPixelData: MappedPixel[][]
   if (data.ocrEnabled) {
-    try {
-      ocrProgress.value = { phase: 'loading', percent: 0 }
-      const ocrResults = await ocrRecognition.recognizeGrid(
-        data.canvas, data.cols, data.rows,
-        (info) => { ocrProgress.value = info }
-      )
-      for (const result of ocrResults) {
-        if (mappedPixelData[result.row] && mappedPixelData[result.row][result.col]) {
-          mappedPixelData[result.row][result.col].ocrKey = result.text
-          mappedPixelData[result.row][result.col].ocrConfidence = result.confidence
+    mappedPixelData = data.pixelColors.map(row =>
+      row.map(hex => {
+        // 无 OCR 色号的空格子 → TRANSPARENT_KEY
+        if (hex === TRANSPARENT_KEY) {
+          return { ...transparentColorData }
         }
-      }
-      ocrProgress.value = null
-    } catch (err) {
-      ocrProgress.value = null
-      ocrError.value = 'OCR 识别失败，已使用颜色匹配结果'
-      console.error('[OCR] recognition failed:', err)
-      setTimeout(() => { ocrError.value = null }, 3000)
-    }
+        const hexLower = hex.replace('#', '').toUpperCase()
+        const match = palette.find(c => c.hex.replace('#', '').toUpperCase() === hexLower)
+        return match ? { key: match.key, color: match.hex } : { key: '?', color: hex }
+      })
+    )
+  } else {
+    // Oklab 色彩匹配 - 将每个 RGB 颜色映射到最近的拼豆颜色
+    mappedPixelData = data.pixelColors.map(row =>
+      row.map(color => {
+        const rgb = parseRgb(color)
+        const closest = findClosestPaletteColor(rgb, palette)
+        return { key: closest.key, color: closest.hex }
+      })
+    )
   }
 
   // 设置像素数据
@@ -376,16 +424,12 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
 </script>
 
 <template>
-  <!-- 裁剪工具 -->
-  <ImageCropper v-if="showCropper && originalImageSrc" :image-src="originalImageSrc" @confirm="handleCropConfirm"
-    @grid-confirm="handleGridConfirm" @skip="handleCropSkip" />
-
   <!-- 主布局 -->
   <div class="h-screen flex flex-col bg-white overflow-hidden font-sans">
     <!-- Header -->
     <AppHeader @switch-mode="switchMode" @trigger-file-input="triggerFileInput" @trigger-pbds-input="triggerPbdsInput"
-      @open-palette-editor="showPaletteEditor = true" @export-pbds="handleExportPbds"
-      @download-image="handleDownloadImage" @download-stats="handleDownloadStats" />
+      @open-palette-editor="showPaletteEditor = true" @open-import-flow="handleOpenImportFlow"
+      @export-pbds="handleExportPbds" @download-image="handleDownloadImage" @download-stats="handleDownloadStats" />
 
     <input ref="fileInput" type="file" accept="image/*" class="hidden" @change="handleFileChange" />
     <input ref="pbdsFileInput" type="file" accept=".pbds" class="hidden" @change="handlePbdsFileChange" />
@@ -409,7 +453,7 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
         <div v-if="mappedPixelData"
           class="absolute top-0 bottom-0 right-0 z-30 flex flex-col bg-white border-l border-black/10"
           style="width: 320px;">
-          <OptimizeSidebar v-if="activeMode === 'optimize'" @trigger-file-input="triggerFileInput"
+          <OptimizeSidebar v-if="activeMode === 'optimize'" :is-grid-import="isGridImport" @trigger-file-input="triggerFileInput"
             @auto-remove-background="handleAutoRemoveBackground" @undo-bg-removal="handleUndoBgRemoval" />
           <EditSidebar v-if="activeMode === 'edit'" @color-select="handlePaletteColorSelect"
             @color-replace="handlePaletteColorReplace" @mirror-horizontal="handleMirrorHorizontal" />
@@ -446,7 +490,48 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
   <!-- Import convert dialog -->
   <ImportConvertDialog :is-open="showImportDialog" :import-data="pendingPbdsData"
     :current-color-system="selectedColorSystem" :full-palette="fullBeadPalette" @confirm="handleImportConfirmFromDialog"
-    @close="handleImportCancel" />
+    @close="handlePbdsImportCancel" />
+
+  <!-- Import flow dialog -->
+  <ImportFlowDialog
+    :is-open="showImportFlow"
+    :pending-file="pendingImportFile"
+    @close="handleCloseImportFlow"
+    @crop-confirm="handleCropConfirmFromFlow"
+    @grid-confirm="handleGridConfirmFromFlow"
+    @pbds-drop="handlePbdsDropFromFlow"
+    @pending-file-consumed="pendingImportFile = null"
+  />
+
+  <!-- Import confirm dialog -->
+  <Teleport to="body">
+    <div
+      v-if="showImportConfirm"
+      class="fixed inset-0 bg-black/5 flex items-center justify-center z-[80] p-4"
+      @click.self="handleImportCancel"
+    >
+      <div class="bg-white rounded-xl shadow-lg border border-black/10 p-6 max-w-sm w-full">
+        <h3 class="text-base font-semibold text-black mb-2">确认导入</h3>
+        <p class="text-sm text-black/60 mb-6">
+          当前画布中有未保存的内容，导入新文件后将无法恢复。是否继续？
+        </p>
+        <div class="flex justify-end gap-3">
+          <button
+            @click="handleImportCancel"
+            class="h-9 px-4 text-sm rounded-lg border border-black/10 text-black/60 hover:bg-black/[0.04] transition-colors"
+          >
+            取消
+          </button>
+          <button
+            @click="handleImportConfirm"
+            class="h-9 px-4 text-sm rounded-lg bg-black text-white hover:bg-black/80 transition-colors font-medium"
+          >
+            继续导入
+          </button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 
   <!-- Custom palette editor -->
   <CustomPaletteEditor v-if="showPaletteEditor" :all-colors="fullBeadPalette"
@@ -464,14 +549,20 @@ function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdi
 
   <!-- OCR Loading 遮罩 -->
   <Teleport to="body">
-    <div v-if="ocrProgress" class="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center">
-      <div class="bg-gray-900 rounded-xl p-6 flex flex-col items-center gap-3 min-w-[240px]">
-        <div class="w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin"></div>
-        <p class="text-white text-sm">
-          {{ ocrProgress.phase === 'loading' ? '正在加载 OCR 模型…' : '正在识别色号…' }}
+    <div v-if="ocrProgress" class="fixed inset-0 flex items-center justify-center z-[70]">
+      <div class="bg-white rounded-xl shadow-lg border border-black/10 p-6 flex flex-col items-center gap-3 min-w-[240px]">
+        <div class="w-8 h-8 border-2 border-black border-t-transparent rounded-full animate-spin"></div>
+        <p class="text-black text-sm font-medium">
+          {{ ocrProgress.phaseLabel }}
         </p>
-        <p v-if="ocrProgress.percent != null" class="text-white/60 text-xs">
-          {{ ocrProgress.percent }}%
+        <div v-if="ocrProgress.percent != null" class="w-full bg-black/10 rounded-full h-1.5">
+          <div
+            class="bg-black h-1.5 rounded-full transition-all duration-300"
+            :style="{ width: `${Math.min(100, Math.max(0, ocrProgress.percent))}%` }"
+          ></div>
+        </div>
+        <p v-if="ocrProgress.percent != null" class="text-black/60 text-xs">
+          {{ Math.min(100, Math.max(0, Math.round(ocrProgress.percent))) }}%
         </p>
       </div>
     </div>

@@ -26,23 +26,6 @@ export function useFileIO() {
     pbdsFileInput?.click()
   }
 
-  function loadImage(file: File) {
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      beadStore.setImage(e.target?.result as string)
-      editorStore.clearBgRemovalSnapshot()
-      beadStore.updateGranularityY(0)
-
-      const img = new Image()
-      img.onload = () => {
-        beadStore.originalImage = img
-        beadStore.showCropper = true
-      }
-      img.src = e.target?.result as string
-    }
-    reader.readAsDataURL(file)
-  }
-
   async function loadPbds(file: File) {
     try {
       const result = await importPbds(file)
@@ -76,16 +59,9 @@ export function useFileIO() {
 
   function handleCropConfirm(canvas: HTMLCanvasElement) {
     beadStore.setCroppedCanvas(canvas)
-    beadStore.showCropper = false
     const aspectRatio = canvas.height / canvas.width
     const defaultY = Math.max(1, Math.round(beadStore.granularity * aspectRatio))
     beadStore.updateGranularityY(defaultY)
-  }
-
-  function handleCropSkip() {
-    beadStore.setCroppedCanvas(null)
-    beadStore.showCropper = false
-    beadStore.updateGranularityY(0)
   }
 
   function handleDownloadGrid() {
@@ -129,43 +105,15 @@ export function useFileIO() {
     uiStore.showToast('导出成功')
   }
 
-  function handleFileDrop(e: DragEvent) {
-    e.preventDefault()
-    const file = e.dataTransfer?.files?.[0]
-    if (!file) return
-    if (file.name.toLowerCase().endsWith('.pbds')) {
-      loadPbds(file)
-    } else if (file.type.startsWith('image/')) {
-      loadImage(file)
-    }
-  }
-
-  function handleFileChange(e: Event) {
-    const file = (e.target as HTMLInputElement)?.files?.[0]
-    if (!file) return
-    loadImage(file)
-  }
-
-  function handlePbdsFileChange(e: Event) {
-    const file = (e.target as HTMLInputElement)?.files?.[0]
-    if (!file) return
-    loadPbds(file)
-  }
-
   return {
     triggerFileInput,
     triggerPbdsInput,
-    loadImage,
     loadPbds,
     handleImportConfirm,
     handleCropConfirm,
-    handleCropSkip,
     handleDownloadGrid,
     handleDownloadImage,
     handleDownloadStats,
     handleExportPbds,
-    handleFileDrop,
-    handleFileChange,
-    handlePbdsFileChange,
   }
 }

@@ -9,7 +9,6 @@ export const useBeadStore = defineStore('bead', () => {
   // ========== 图片相关 ==========
   const originalImageSrc = ref<string | null>(null)
   const originalImage = ref<HTMLImageElement | null>(null)
-  const showCropper = ref(false)
   const croppedImageCanvas = ref<HTMLCanvasElement | null>(null)
 
   // ========== 像素数据 ==========
@@ -78,7 +77,6 @@ export const useBeadStore = defineStore('bead', () => {
   function reset() {
     originalImageSrc.value = null
     originalImage.value = null
-    showCropper.value = false
     croppedImageCanvas.value = null
     mappedPixelData.value = null
     gridDimensions.value = null
@@ -92,7 +90,6 @@ export const useBeadStore = defineStore('bead', () => {
     // State
     originalImageSrc,
     originalImage,
-    showCropper,
     croppedImageCanvas,
     mappedPixelData,
     gridDimensions,

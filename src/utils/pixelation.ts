@@ -360,6 +360,7 @@ export interface DominantColorOptions {
   whiteMin?: number;
   ratioThreshold?: number;
   forceIgnoreBlackWhite?: boolean;
+  step?: number; // 颜色量化步长
 }
 
 export function getDominantColorByArea(
@@ -372,6 +373,7 @@ export function getDominantColorByArea(
     whiteMin = 200,
     ratioThreshold = 0.2,
     forceIgnoreBlackWhite = false,
+    step = 16, // 默认步长16
   } = options;
 
   const data = imageData.data;
@@ -414,8 +416,7 @@ export function getDominantColorByArea(
   const blackWhiteRatio = blackWhitePixels / totalPixels;
   const shouldIgnoreBlackWhite = forceIgnoreBlackWhite || blackWhiteRatio < ratioThreshold;
 
-  // Step 3: Count colors with quantization (step 16)
-  const step = 16;
+  // Step 3: Count colors with quantization
   const colorMap = new Map<string, number>();
 
   for (let y = startY; y < endY; y++) {
