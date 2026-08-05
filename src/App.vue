@@ -550,7 +550,7 @@ function handleNew3DCanvas() {
   if (voxelStore.voxelCount > 0) {
     if (!confirm('当前 3D 画布数据将被清空，是否继续？')) return
   }
-  voxelStore.reset()
+  voxelStore.resetAll()
   uiStore.switchMode('voxel')
 }
 

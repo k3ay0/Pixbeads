@@ -115,7 +115,7 @@ interface AnchorState {
 }
 
 export function useVoxelInteraction(
-  canvas: THREE.HTMLCanvasElement,
+  canvas: HTMLCanvasElement,
   camera: THREE.PerspectiveCamera,
   voxelGroup: THREE.Group,
   ghostGroup: THREE.Group,

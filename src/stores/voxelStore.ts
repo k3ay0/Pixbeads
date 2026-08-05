@@ -11,7 +11,7 @@ export interface VoxelData {
 
 export type VoxelKey = string  // "x,y,z"
 export type VoxelMap = Map<VoxelKey, VoxelData>
-export type VoxelTool = 'pen' | 'line' | 'rect' | 'frect' | 'circle' | 'fcircle' | 'ellipse' | 'fellipse' | 'fill' | 'fillSlice' | 'eyedropper' | 'spray' | 'scatter' | 'noisePen' | 'sel' | 'paste'
+export type VoxelTool = 'pen' | 'eraser' | 'line' | 'rect' | 'frect' | 'circle' | 'fcircle' | 'ellipse' | 'fellipse' | 'fill' | 'fillSlice' | 'eyedropper' | 'spray' | 'scatter' | 'noisePen' | 'sel' | 'paste'
 export type EditMode = 'draw' | 'del' | 'recolor'
 export type Point3D = { x: number; y: number; z: number }
 
@@ -342,7 +342,7 @@ export const useVoxelStore = defineStore('voxel', () => {
     })
 
     // Move names with their layers (replace entire Map to trigger reactivity)
-    const oldNames = new Map<string, string>()
+    const oldNames = new Map<number, string>()
     sortedVals.forEach(v => {
       const name = layerNames.value.get(layerKey(axis, v))
       if (name) oldNames.set(v, name)
@@ -358,7 +358,7 @@ export const useVoxelStore = defineStore('voxel', () => {
     layerNames.value = newNames
 
     // Move visibility with their layers (replace entire Map to trigger reactivity)
-    const oldVis = new Map<string, boolean>()
+    const oldVis = new Map<number, boolean>()
     sortedVals.forEach(v => {
       const vis = layerVisibility.value.get(layerKey(axis, v))
       if (vis !== undefined) oldVis.set(v, vis)

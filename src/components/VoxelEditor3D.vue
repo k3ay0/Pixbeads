@@ -812,5 +812,5 @@ function setBackground(bg: { type: string; color1: string; color2: string; image
   }
 }
 
-defineExpose({ dispose, cancelAnchor, setBackground, getRendererDomElement: () => renderer?.domElement ?? null, getVoxelGroup: () => voxelGroup })
+defineExpose({ dispose, cancelAnchor, setBackground, rebuildAllMeshes, getRendererDomElement: () => renderer?.domElement ?? null, getVoxelGroup: () => voxelGroup })
 </script>
