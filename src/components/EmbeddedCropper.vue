@@ -106,17 +106,17 @@ function startEditGrid() {
 
 /**
  * 计算格子尺寸（正方形格子，长宽合并为一个值）。
- * 考虑网格线厚度：总尺寸 = 格数 * cellSize + (格数-1) * 线厚
+ * 纯按行数列数均分画布,不计网格线厚度。
  */
 function calcCellSize(
   totalWidth: number,
   totalHeight: number,
   cols: number,
   rows: number,
-  thickness: number
+  _thickness: number
 ): number {
-  const cellW = thickness > 0 ? (totalWidth - (cols - 1) * thickness) / cols : totalWidth / cols
-  const cellH = thickness > 0 ? (totalHeight - (rows - 1) * thickness) / rows : totalHeight / rows
+  const cellW = totalWidth / cols
+  const cellH = totalHeight / rows
   // 正方形格子：取两个方向的平均作为统一格子尺寸
   return (cellW + cellH) / 2
 }
@@ -129,6 +129,50 @@ function confirmEditGrid() {
   autoGridCols.value = cols
   autoGridRows.value = rows
   isEditingGrid.value = false
+}
+
+// 校正网格后重算差异:确认行列 → 重跑 OCR 识别 → 重跑颜色提取 → 重算差异
+function confirmEditGridAndRecompute() {
+  confirmEditGrid()
+  if (!patternCanvas.value) return
+  showProcessingOverlay.value = true
+  processingMessage.value = '正在按校正网格重新识别...'
+  processingProgress.value = { phase: 'recomputing', percent: 0 }
+  nextTick(async () => {
+    try {
+      const canvas = patternCanvas.value!
+      const cols = autoGridCols.value || gridCols.value
+      const rows = autoGridRows.value || gridRows.value
+      // 重跑 OCR 识别(用新网格尺寸)
+      const legendCodes = Array.from(legendData.value.keys())
+      ocrCellResults.value = []
+      try {
+        processingMessage.value = '正在识别图纸格子色号...'
+        ocrCellResults.value = await ocrRecognition.recognizeGrid(canvas, cols, rows, (progress) => {
+          let percent: number | undefined
+          if (progress.percent != null) percent = progress.percent
+          processingMessage.value = `正在识别图纸格子色号... ${percent != null ? percent + '%' : ''}`
+          processingProgress.value = { phase: progress.phase, percent }
+        }, legendCodes)
+        console.log(`[OCR] 校正后重识别完成, 识别到 ${ocrCellResults.value.length} 个格子有文字`)
+      } catch (err) {
+        console.error('[OCR] 校正后重识别失败:', err)
+        ocrCellResults.value = []
+      }
+      // 重跑颜色提取
+      processingMessage.value = '正在提取图纸颜色...'
+      processingProgress.value = { phase: 'extracting', percent: 0 }
+      await extractPatternColorsWithOverlay()
+      console.log('[OCR] 校正后重算差异完成')
+    } catch (err) {
+      console.error('[OCR] 校正后重算失败:', err)
+      processingMessage.value = '重算失败,请重试'
+    } finally {
+      setTimeout(() => {
+        showProcessingOverlay.value = false
+      }, 500)
+    }
+  })
 }
 
 function cancelEditGrid() {
@@ -975,7 +1019,6 @@ function onPointerMove(e: MouseEvent | TouchEvent) {
     // Update the correct crop based on mode
     if (ocrEnabled.value && ocrStep.value === 'legend-crop') {
       legendCrop.value = { x: newX, y: newY, width: newW, height: newH };
-      console.log('[OCR] 图例裁剪区域更新:', legendCrop.value);
     } else {
       crop.value = { x: newX, y: newY, width: newW, height: newH };
     }
@@ -1673,79 +1716,7 @@ function runGridDetection() {
 }
 
 
-// 回退方案：纯颜色距离匹配（无 OCR 格子识别）
-function extractPatternColorsByColorDistance(
-  canvas: HTMLCanvasElement,
-  ctx: CanvasRenderingContext2D,
-  cols: number,
-  rows: number,
-  cellW: number,
-  cellH: number,
-  borderTrim: number,
-) {
-  const totalCells = rows * cols
-  const cells: PatternCell[] = []
-  const colorCounts = new Map<string, { count: number, cells: Array<{ row: number, col: number }> }>()
-
-  // Build legend color lookup
-  const legendColors: { code: string, r: number, g: number, b: number }[] = []
-  for (const [code] of legendData.value) {
-    const hex = getColorForCode(code, detectedLegendBrand.value)
-    const hexMatch = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex)
-    if (hexMatch) {
-      legendColors.push({ code, r: parseInt(hexMatch[1], 16), g: parseInt(hexMatch[2], 16), b: parseInt(hexMatch[3], 16) })
-    }
-  }
-
-  const MAX_COLOR_DISTANCE = 3000
-  let processedCells = 0
-
-  for (let row = 0; row < rows; row++) {
-    for (let col = 0; col < cols; col++) {
-      const x = Math.round(col * cellW)
-      const y = Math.round(row * cellH)
-      const w = Math.round(cellW)
-      const h = Math.round(cellH)
-
-      const imageData = ctx.getImageData(x, y, w, h)
-      const dominantColor = getDominantColorByArea(imageData, borderTrim, { step: gridStep.value })
-
-      const match = dominantColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/)
-      const r = match ? parseInt(match[1], 10) : 0
-      const gVal = match ? parseInt(match[2], 10) : 0
-      const b = match ? parseInt(match[3], 10) : 0
-
-      let bestCode = TRANSPARENT_KEY
-      let bestHex = ''
-      let bestDist = Infinity
-      for (const lc of legendColors) {
-        const dr = r - lc.r
-        const dg = gVal - lc.g
-        const db = b - lc.b
-        const dist = dr * dr + dg * dg + db * db
-        if (dist < bestDist) { bestDist = dist; bestCode = lc.code; bestHex = getColorForCode(lc.code, detectedLegendBrand.value) }
-      }
-      if (bestDist > MAX_COLOR_DISTANCE) { bestCode = TRANSPARENT_KEY; bestHex = '' }
-
-      cells.push({ row, col, rgb: dominantColor, hex: bestHex, code: bestCode })
-
-      const existing = colorCounts.get(bestCode)
-      if (existing) { existing.count++; existing.cells.push({ row, col }) }
-      else { colorCounts.set(bestCode, { count: 1, cells: [{ row, col }] }) }
-
-      processedCells++
-      if (processedCells % 50 === 0 || processedCells === totalCells) {
-        processingMessage.value = `正在提取图纸颜色... ${Math.round((processedCells / totalCells) * 100)}%`
-      }
-    }
-  }
-
-  patternColorData.value = cells
-  buildDiffFromColorCounts(colorCounts, totalCells)
-  processingProgress.value = { phase: 'complete', percent: 100 }
-}
-
-// 从 colorCounts 构建差异数据（extractPatternColorsWithOverlay 和回退方案共用）
+// 从 colorCounts 构建差异数据（extractPatternColorsWithOverlay 共用）
 function buildDiffFromColorCounts(
   colorCounts: Map<string, { count: number, cells: Array<{ row: number, col: number }> }>,
   totalCells: number,
@@ -1839,39 +1810,20 @@ async function extractPatternColorsWithOverlay() {
   const brandIndex = buildBrandCodeIndex()
   const brandCodes = brandIndex.get(detectedLegendBrand.value) ?? new Set<string>()
 
-  // ========== Step 2: 构建图例颜色查找表（用于无OCR匹配时回退） ==========
-  const legendColors: { code: string, r: number, g: number, b: number }[] = []
-  for (const [code] of legendData.value) {
-    const hex = getColorForCode(code, detectedLegendBrand.value)
-    const hexMatch = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex)
-    if (hexMatch) {
-      legendColors.push({
-        code,
-        r: parseInt(hexMatch[1], 16),
-        g: parseInt(hexMatch[2], 16),
-        b: parseInt(hexMatch[3], 16),
-      })
-    }
-  }
-  console.log(`[OCR] 图例颜色查找表: ${legendColors.length} 个色号`)
-
   // ========== Step 3: 遍历每个格子，按OCR结果归类 ==========
   const totalCells = rows * cols
   let processedCells = 0
   let ocrMatchedCount = 0
-  let colorFallbackCount = 0
   let emptyCount = 0
 
   const cells: PatternCell[] = []
   const colorCounts = new Map<string, { count: number, cells: Array<{ row: number, col: number }> }>()
 
-  const MAX_COLOR_DISTANCE = 3000
-
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
-      const cellPitch = cellSize + thickness
-      const x = Math.round(col * cellPitch)
-      const y = Math.round(row * cellPitch)
+      // 纯按 cols/rows 均分画布,不计线厚:每格步长 = cellSize,起点 = col/row × cellSize
+      const x = Math.round(col * cellSize)
+      const y = Math.round(row * cellSize)
       const w = Math.round(cellSize)
       const h = Math.round(cellSize)
 
@@ -1930,7 +1882,7 @@ async function extractPatternColorsWithOverlay() {
     }
   }
 
-  console.log(`[OCR] 图纸颜色提取完成: 共${cells.length}格, OCR匹配=${ocrMatchedCount}, 颜色回退=${colorFallbackCount}, 空格=${emptyCount}`)
+  console.log(`[OCR] 图纸颜色提取完成: 共${cells.length}格, OCR匹配=${ocrMatchedCount}, 空格=${emptyCount}`)
   console.log(`[OCR:extract] 各颜色实际数量:\n${Array.from(colorCounts.entries()).map(([code, data]) => `  ${code}: ${data.count}个`).join('\n')}`)
   patternColorData.value = cells
 
@@ -1959,7 +1911,16 @@ function getColorHex(code: string): string {
   // 从颜色系统映射中查找 hex（避免从 patternColorData 循环引用）
   try {
     const mapping = colorSystemMappingJson as Record<string, Record<string, string>>
-    // 先尝试精确匹配
+    const brand = detectedLegendBrand.value
+    // 优先使用检测到的品牌精确匹配,避免跨品牌色号碰撞(如 MARD:H07=#000000 vs COCO:H07=#01ACEB)
+    if (brand) {
+      for (const [hex, systems] of Object.entries(mapping)) {
+        if (systems[brand] === code) {
+          return hex.startsWith('#') ? hex : `#${hex}`
+        }
+      }
+    }
+    // 回退:全品牌搜索
     for (const [hex, systems] of Object.entries(mapping)) {
       if (Object.values(systems).some(v => v === code)) {
         return hex.startsWith('#') ? hex : `#${hex}`
@@ -1969,6 +1930,14 @@ function getColorHex(code: string): string {
     const candidates = normalizeOcrText(code)
     for (const cand of candidates) {
       if (cand === code.toUpperCase()) continue
+      // 标准化后也优先品牌匹配
+      if (brand) {
+        for (const [hex, systems] of Object.entries(mapping)) {
+          if (systems[brand] === cand) {
+            return hex.startsWith('#') ? hex : `#${hex}`
+          }
+        }
+      }
       for (const [hex, systems] of Object.entries(mapping)) {
         if (Object.values(systems).some(v => v === cand)) {
           return hex.startsWith('#') ? hex : `#${hex}`
@@ -2028,9 +1997,9 @@ function extractColorSlices(code: string) {
   if (!entry) return
 
   for (const cell of entry.cells) {
-    const cellPitch = cellSize + thickness
-    const x = Math.round(cell.col * cellPitch)
-    const y = Math.round(cell.row * cellPitch)
+    // 纯按 cols/rows 均分画布,不计线厚
+    const x = Math.round(cell.col * cellSize)
+    const y = Math.round(cell.row * cellSize)
     const w = Math.round(cellSize)
     const h = Math.round(cellSize)
     const imageData = ctx.getImageData(x, y, w, h)
@@ -2565,9 +2534,9 @@ function extractPatternColors() {
 
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
-      const cellPitch = cellSize + thickness
-      const x = Math.round(col * cellPitch)
-      const y = Math.round(row * cellPitch)
+      // 纯按 cols/rows 均分画布,不计线厚
+      const x = Math.round(col * cellSize)
+      const y = Math.round(row * cellSize)
       const w = Math.round(cellSize)
       const h = Math.round(cellSize)
 
@@ -2687,9 +2656,9 @@ function handleGridConfirm() {
   for (let row = 0; row < rows; row++) {
     const rowColors: string[] = [];
     for (let col = 0; col < cols; col++) {
-      const cellPitch = cellSize + thickness;
-      const x = Math.round(col * cellPitch);
-      const y = Math.round(row * cellPitch);
+      // 纯按 cols/rows 均分画布,不计线厚
+      const x = Math.round(col * cellSize);
+      const y = Math.round(row * cellSize);
       const w = Math.round(cellSize);
       const h = Math.round(cellSize);
       const imageData = resultCtx.getImageData(x, y, w, h);
@@ -2984,6 +2953,46 @@ watch(colorSlices, () => {
           <p class="text-[10px] text-black/40 leading-relaxed">对比图例期望数量与实际数量，点击颜色查看切片</p>
         </div>
 
+        <!-- 识别出的行列数 + 校正入口 -->
+        <div class="border-t border-black/10 pt-3">
+          <p class="text-[10px] text-black/40 uppercase tracking-wider mb-2">网格尺寸</p>
+          <template v-if="!isEditingGrid">
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-black/60">识别列数</span>
+              <span class="font-medium text-black/80">{{ autoGridCols }}</span>
+            </div>
+            <div class="flex items-center justify-between text-xs mt-1">
+              <span class="text-black/60">识别行数</span>
+              <span class="font-medium text-black/80">{{ autoGridRows }}</span>
+            </div>
+            <button @click="startEditGrid" class="mt-2 w-full px-2 py-1 rounded-md bg-black/[0.04] hover:bg-black/[0.08] text-xs text-black/60 transition-colors">
+              校正网格
+            </button>
+          </template>
+          <template v-else>
+            <div class="space-y-2">
+              <div class="flex items-center gap-2">
+                <label class="text-xs text-black/60 w-12">列数</label>
+                <input type="number" v-model.number="editGridCols" min="1" max="200"
+                  class="flex-1 px-2 py-1 bg-white text-black text-xs rounded border border-black/10 focus:border-black/30 focus:outline-none" />
+              </div>
+              <div class="flex items-center gap-2">
+                <label class="text-xs text-black/60 w-12">行数</label>
+                <input type="number" v-model.number="editGridRows" min="1" max="200"
+                  class="flex-1 px-2 py-1 bg-white text-black text-xs rounded border border-black/10 focus:border-black/30 focus:outline-none" />
+              </div>
+              <div class="flex gap-2">
+                <button @click="confirmEditGridAndRecompute" class="flex-1 px-2 py-1 rounded-md bg-black/80 hover:bg-black text-xs text-white transition-colors">
+                  确认并重算
+                </button>
+                <button @click="cancelEditGrid" class="px-2 py-1 rounded-md bg-black/[0.04] hover:bg-black/[0.08] text-xs text-black/60 transition-colors">
+                  取消
+                </button>
+              </div>
+            </div>
+          </template>
+        </div>
+
         <!-- Summary -->
         <div class="border-t border-black/10 pt-3">
           <div class="flex items-center justify-between text-xs">
@@ -3176,7 +3185,7 @@ watch(colorSlices, () => {
             <p class="text-[10px] text-black/40 uppercase tracking-wider mb-2">
               {{ selectedSlices.length > 0 ? `色板 — 点击替换 ${selectedSlices.length} 个切片的颜色` : '色板 — 点击颜色查看切片' }}
             </p>
-            <div class="flex gap-2 overflow-x-auto pb-1 scrollbar-thin" @wheel.prevent="e => { e.currentTarget.scrollLeft += e.deltaY }">
+            <div class="flex gap-2 overflow-x-auto pb-1 scrollbar-thin" @wheel.prevent="e => { const t = e.currentTarget as HTMLElement; if (t) t.scrollLeft += e.deltaY }">
               <div v-for="color in paletteColors" :key="color.code" class="flex flex-col items-center gap-0.5">
                 <button
                   @click="selectedSlices.length > 0 ? changeSelectedSlicesColor(color.code) : handleDiffColorSelect(color.code)"
@@ -3300,7 +3309,7 @@ watch(colorSlices, () => {
                 type="text"
                 :ref="el => { if (el) editingCodeRef[code] = el as HTMLInputElement }"
                 :value="code"
-                @blur="updateLegendCode(code, $event.target.value)"
+                @blur="updateLegendCode(code, ($event.target as HTMLInputElement)?.value ?? '')"
                 @keydown="handleCodeKeydown(code, $event)"
                 placeholder="色号"
                 class="w-16 px-1.5 py-0.5 bg-white text-black text-xs rounded border focus:outline-none uppercase"
