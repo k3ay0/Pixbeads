@@ -68,10 +68,10 @@ function toggleNewMenu() {
   <header class="h-12 bg-white border-b border-black/10 sticky top-0 z-40">
     <div class="mx-auto w-full h-full px-2 sm:px-4 flex items-center gap-2 sm:gap-3">
       <!-- Logo -->
-      <div class="flex items-center gap-2 flex-shrink-0">
+      <router-link to="/" class="flex items-center gap-2 flex-shrink-0" title="返回首页">
         <img src="/logos/favicon.ico" alt="Pixbeads" class="w-7 h-7 rounded-md" />
         <span class="hidden md:inline text-sm font-semibold text-black">PIXBEADS</span>
-      </div>
+      </router-link>
 
       <!-- Mode tabs -->
       <div class="flex-1 min-w-0 flex justify-center">
