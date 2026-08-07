@@ -2783,29 +2783,29 @@ watch(colorSlices, () => {
       <div class="flex items-center gap-1 p-0.5 rounded-lg bg-black/[0.04] border border-black/[0.08]">
         <button
           @click="mode = 'crop'; ocrEnabled = false"
-          class="flex-1 px-3 h-7 text-xs rounded-md font-medium transition-colors"
-          :class="mode === 'crop' && !ocrEnabled ? 'bg-black text-white shadow-sm' : 'text-black/45 hover:text-black'"
+          class="tab flex-1 min-w-0 h-7"
+          :class="mode === 'crop' && !ocrEnabled ? 'tab-active' : ''"
         >
           图纸生成
         </button>
         <button
           @click="mode = 'grid'; ocrEnabled = false"
-          class="flex-1 px-3 h-7 text-xs rounded-md font-medium transition-colors"
-          :class="mode === 'grid' && !ocrEnabled ? 'bg-black text-white shadow-sm' : 'text-black/45 hover:text-black'"
+          class="tab flex-1 min-w-0 h-7"
+          :class="mode === 'grid' && !ocrEnabled ? 'tab-active' : ''"
         >
           色块识别
         </button>
         <button
           @click="ocrEnabled = true; mode = 'grid'"
-          class="flex-1 px-3 h-7 text-xs rounded-md font-medium transition-colors"
-          :class="ocrEnabled ? 'bg-black text-white shadow-sm' : 'text-black/45 hover:text-black'"
+          class="tab flex-1 min-w-0 h-7"
+          :class="ocrEnabled ? 'tab-active' : ''"
         >
           图纸识别
         </button>
       </div>
       <button
         @click="handleCancel"
-        class="h-7 px-2 text-xs rounded-md text-black/60 hover:text-black hover:bg-black/[0.04] transition-colors"
+        class="btn btn-ghost h-7"
       >
         ✕
       </button>
@@ -2897,7 +2897,7 @@ watch(colorSlices, () => {
         </div>
 
         <div class="border-t border-black/10 pt-3 space-y-2">
-          <button @click="handleLegendConfirm()" class="w-full h-8 rounded-lg bg-black text-white hover:bg-black/80 text-xs font-medium transition-colors">
+          <button @click="handleLegendConfirm()" class="btn btn-primary w-full h-8 rounded-lg">
             下一步 →
           </button>
         </div>
@@ -2915,10 +2915,10 @@ watch(colorSlices, () => {
         </div>
 
         <div class="border-t border-black/10 pt-3 space-y-2">
-          <button @click="handlePatternConfirm()" class="w-full h-8 rounded-lg bg-black text-white hover:bg-black/80 text-xs font-medium transition-colors">
+          <button @click="handlePatternConfirm()" class="btn btn-primary w-full h-8 rounded-lg">
             下一步 →
           </button>
-          <button @click="handleBackToVerify()" class="w-full h-8 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] text-xs transition-colors">
+          <button @click="handleBackToVerify()" class="btn btn-secondary w-full h-8 rounded-lg">
             ← 上一步
           </button>
         </div>
@@ -2937,10 +2937,10 @@ watch(colorSlices, () => {
 
         <!-- Navigation buttons -->
         <div class="border-t border-black/10 pt-3 space-y-2">
-          <button @click="handleConfirmOcrVerify()" class="w-full h-8 rounded-lg bg-black text-white hover:bg-black/80 text-xs font-medium transition-colors">
+          <button @click="handleConfirmOcrVerify()" class="btn btn-primary w-full h-8 rounded-lg">
             下一步 →
           </button>
-          <button @click="handleBackToLegend()" class="w-full h-8 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] text-xs transition-colors">
+          <button @click="handleBackToLegend()" class="btn btn-secondary w-full h-8 rounded-lg">
             ← 上一步
           </button>
         </div>
@@ -2965,7 +2965,7 @@ watch(colorSlices, () => {
               <span class="text-black/60">识别行数</span>
               <span class="font-medium text-black/80">{{ autoGridRows }}</span>
             </div>
-            <button @click="startEditGrid" class="mt-2 w-full px-2 py-1 rounded-md bg-black/[0.04] hover:bg-black/[0.08] text-xs text-black/60 transition-colors">
+            <button @click="startEditGrid" class="btn btn-ghost mt-2 w-full">
               校正网格
             </button>
           </template>
@@ -2982,10 +2982,10 @@ watch(colorSlices, () => {
                   class="flex-1 px-2 py-1 bg-white text-black text-xs rounded border border-black/10 focus:border-black/30 focus:outline-none" />
               </div>
               <div class="flex gap-2">
-                <button @click="confirmEditGridAndRecompute" class="flex-1 px-2 py-1 rounded-md bg-black/80 hover:bg-black text-xs text-white transition-colors">
+                <button @click="confirmEditGridAndRecompute" class="btn btn-primary flex-1 h-8 rounded-lg">
                   确认并重算
                 </button>
-                <button @click="cancelEditGrid" class="px-2 py-1 rounded-md bg-black/[0.04] hover:bg-black/[0.08] text-xs text-black/60 transition-colors">
+                <button @click="cancelEditGrid" class="btn btn-secondary px-3 h-8 rounded-lg">
                   取消
                 </button>
               </div>
@@ -3011,10 +3011,10 @@ watch(colorSlices, () => {
 
         <!-- Navigation buttons -->
         <div class="border-t border-black/10 pt-3 space-y-2">
-          <button @click="handleOcrComplete()" class="w-full h-8 rounded-lg bg-black text-white hover:bg-black/80 text-xs font-medium transition-colors">
+          <button @click="handleOcrComplete()" class="btn btn-primary w-full h-8 rounded-lg">
             完成
           </button>
-          <button @click="handleBackToPattern()" class="w-full h-8 rounded-lg bg-black/[0.04] text-black/60 hover:bg-black/[0.08] text-xs transition-colors">
+          <button @click="handleBackToPattern()" class="btn btn-secondary w-full h-8 rounded-lg">
             ← 上一步
           </button>
         </div>
@@ -3023,25 +3023,25 @@ watch(colorSlices, () => {
       <!-- 裁剪工具 (图纸生成模式) -->
       <div v-else-if="mode === 'crop' && !ocrEnabled" class="flex-1 px-3 py-3 space-y-2 overflow-y-auto flex flex-col">
         <p class="text-[10px] text-black/40 uppercase tracking-wider mb-3">变换</p>
-        <button @click="handleRotate" class="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-black/60 hover:text-black hover:bg-black/[0.04] transition-colors">
+        <button @click="handleRotate" class="tool-btn">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
           </svg>
           <span class="text-xs">旋转</span>
         </button>
-        <button @click="handleFlipHorizontal" class="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-black/60 hover:text-black hover:bg-black/[0.04] transition-colors">
+        <button @click="handleFlipHorizontal" class="tool-btn">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
           </svg>
           <span class="text-xs">水平翻转</span>
         </button>
-        <button @click="handleFlipVertical" class="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-black/60 hover:text-black hover:bg-black/[0.04] transition-colors">
+        <button @click="handleFlipVertical" class="tool-btn">
           <svg class="w-4 h-4 rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
           </svg>
           <span class="text-xs">垂直翻转</span>
         </button>
-        <button @click="handleReset" class="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-black/60 hover:text-black hover:bg-black/[0.04] transition-colors">
+        <button @click="handleReset" class="tool-btn">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m0 0a8.001 8.001 0 0115.356 2M4.582 9H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
           </svg>
@@ -3052,7 +3052,7 @@ watch(colorSlices, () => {
         <div class="mt-auto pt-3 border-t border-black/10">
           <button
             @click="handleConfirm()"
-            class="w-full h-9 rounded-lg bg-black text-white hover:bg-black/80 text-xs font-medium transition-colors"
+            class="btn btn-primary w-full h-9 rounded-lg"
           >
             确认
           </button>
@@ -3120,7 +3120,7 @@ watch(colorSlices, () => {
         <div class="mt-auto pt-3 border-t border-black/10">
           <button
             @click="handleGridConfirm()"
-            class="w-full h-9 rounded-lg bg-black text-white hover:bg-black/80 text-xs font-medium transition-colors"
+            class="btn btn-primary w-full h-9 rounded-lg"
           >
             确认
           </button>
@@ -3251,7 +3251,7 @@ watch(colorSlices, () => {
             <button
               @click="handleZoomOut"
               :disabled="canvasScale <= 0.1"
-              class="w-7 h-7 rounded-md bg-black/[0.04] text-black/60 hover:bg-black/[0.08] flex items-center justify-center text-sm font-bold disabled:opacity-30 transition-colors"
+              class="icon-btn w-7 h-7 rounded-md disabled:opacity-30"
             >
               −
             </button>
@@ -3259,14 +3259,14 @@ watch(colorSlices, () => {
             <button
               @click="handleZoomIn"
               :disabled="canvasScale >= 10"
-              class="w-7 h-7 rounded-md bg-black/[0.04] text-black/60 hover:bg-black/[0.08] flex items-center justify-center text-sm font-bold disabled:opacity-30 transition-colors"
+              class="icon-btn w-7 h-7 rounded-md disabled:opacity-30"
             >
               +
             </button>
             <div class="w-px h-4 bg-black/10 mx-0.5"></div>
             <button
               @click="handleResetView"
-              class="w-7 h-7 rounded-md bg-black/[0.04] text-black/60 hover:bg-black/[0.08] flex items-center justify-center transition-colors"
+              class="icon-btn w-7 h-7 rounded-md"
               title="重置视图"
             >
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -3287,7 +3287,7 @@ watch(colorSlices, () => {
             </div>
             <button
               @click="addLegendEntry"
-              class="w-6 h-6 rounded-md bg-black/[0.04] hover:bg-black/[0.08] flex items-center justify-center text-black/60 hover:text-black transition-colors"
+              class="icon-btn w-6 h-6 rounded-md"
               title="新增颜色"
             >
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

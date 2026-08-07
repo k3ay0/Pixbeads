@@ -30,6 +30,24 @@ export default {
           500: '#3b82f6',
         },
       },
+      // 圆角梯级: 对齐首页设计语言 (24px 卡片 / 40px 胶囊按钮 / 48px 大容器)
+      borderRadius: {
+        card: '24px',
+        pill: '40px',
+        container: '48px',
+      },
+      // 阴影梯级: 3D 按压 (press) 与悬浮/面板 (lift/panel)
+      boxShadow: {
+        press: '0 4px 0 rgba(0, 0, 0, 0.25)',
+        'press-lg': '0 8px 0 rgba(0, 0, 0, 0.2)',
+        'press-sm': '0 2px 0 rgba(0, 0, 0, 0.25)',
+        lift: '0 20px 40px -12px rgba(0, 0, 0, 0.15)',
+        panel: '0 25px 50px -12px rgba(0, 0, 0, 0.12)',
+      },
+      // 动效曲线: 首页同款回弹曲线
+      transitionTimingFunction: {
+        spring: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
+      },
     },
   },
   plugins: [],

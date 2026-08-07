@@ -141,10 +141,10 @@ function handleColorSystemChange(system: string) {
 <template>
   <Teleport to="body">
     <div
-      class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      class="modal-overlay backdrop-blur-sm"
       @click.self="handleClose"
     >
-      <div class="relative bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+      <div class="modal max-w-4xl">
         <div class="flex-1 overflow-y-auto">
           <div class="p-4 sm:p-6">
             <div class="flex flex-col h-full max-h-[calc(90vh-40px)]">

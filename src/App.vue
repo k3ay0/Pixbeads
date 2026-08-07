@@ -727,10 +727,10 @@ function handleBgUpdate(bg: any) {
   <Teleport to="body">
     <div
       v-if="showImportConfirm"
-      class="fixed inset-0 bg-black/5 flex items-center justify-center z-[80] p-4"
+      class="modal-overlay bg-black/5"
       @click.self="handleImportCancel"
     >
-      <div class="bg-white rounded-xl shadow-lg border border-black/10 p-6 max-w-sm w-full">
+      <div class="modal max-w-sm p-6">
         <h3 class="text-base font-semibold text-black mb-2">确认导入</h3>
         <p class="text-sm text-black/60 mb-6">
           当前画布中有未保存的内容，导入新文件后将无法恢复。是否继续？
@@ -738,13 +738,13 @@ function handleBgUpdate(bg: any) {
         <div class="flex justify-end gap-3">
           <button
             @click="handleImportCancel"
-            class="h-9 px-4 text-sm rounded-lg border border-black/10 text-black/60 hover:bg-black/[0.04] transition-colors"
+            class="btn btn-secondary h-9 rounded-lg px-4"
           >
             取消
           </button>
           <button
             @click="handleImportConfirm"
-            class="h-9 px-4 text-sm rounded-lg bg-black text-white hover:bg-black/80 transition-colors font-medium"
+            class="btn btn-primary h-9 rounded-lg px-4"
           >
             继续导入
           </button>
@@ -770,7 +770,7 @@ function handleBgUpdate(bg: any) {
   <!-- OCR Loading 遮罩 -->
   <Teleport to="body">
     <div v-if="ocrProgress" class="fixed inset-0 flex items-center justify-center z-[70]">
-      <div class="bg-white rounded-xl shadow-lg border border-black/10 p-6 flex flex-col items-center gap-3 min-w-[240px]">
+      <div class="modal min-w-[240px] p-6">
         <div class="w-8 h-8 border-2 border-black border-t-transparent rounded-full animate-spin"></div>
         <p class="text-black text-sm font-medium">
           {{ ocrProgress.phaseLabel }}

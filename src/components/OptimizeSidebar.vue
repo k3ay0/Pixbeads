@@ -303,7 +303,7 @@ function handleDrop(e: DragEvent) {
 <template>
   <div class="flex-1 overflow-y-auto scrollbar-hide px-3 py-3 flex flex-col gap-3">
     <!-- Parameter controls card -->
-    <div class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 shadow-sm overflow-visible">
+    <div class="panel overflow-visible">
       <div class="divide-y divide-gray-200/60 dark:divide-gray-800/40">
         <!-- 颜色合并程度（仅非格子导入时显示） -->
         <div v-if="!isGridImport" class="relative flex items-center justify-between px-3 h-11">
@@ -423,7 +423,7 @@ function handleDrop(e: DragEvent) {
     </div>
 
     <!-- 色号系统 -->
-    <div class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 p-3 shadow-sm">
+    <div class="panel p-3">
       <div class="text-xs font-semibold text-gray-800 dark:text-gray-200 mb-2">色号系统</div>
       <div class="flex flex-wrap gap-1.5">
         <button
@@ -443,7 +443,7 @@ function handleDrop(e: DragEvent) {
     <!-- 色彩优化面板 -->
     <div
       v-if="colorCounts && currentGridColors.length > 0"
-      class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 shadow-sm shadow-gray-200/50 color-stats-panel flex flex-col"
+      class="panel color-stats-panel flex flex-col"
     >
       <!-- 头部 (固定) -->
       <div class="relative flex items-center justify-between px-3 pt-2.5 pb-2 flex-shrink-0">
@@ -650,7 +650,7 @@ function handleDrop(e: DragEvent) {
     </Teleport>
 
     <!-- Display settings card -->
-    <div class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 p-4 shadow-sm shadow-gray-200/50 space-y-3">
+    <div class="panel p-4 space-y-3">
       <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">显示设置</h3>
 
       <!-- Coordinates toggle -->

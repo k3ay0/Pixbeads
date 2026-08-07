@@ -162,11 +162,11 @@ function handleBackdropClick(e: MouseEvent) {
   <Teleport to="body">
     <div
       v-if="isOpen"
-      class="backdrop fixed inset-0 flex items-center justify-center z-50 p-4"
+      class="modal-overlay backdrop"
       @click="handleBackdropClick"
     >
       <div
-        class="bg-white rounded-xl shadow-lg overflow-hidden w-full max-w-4xl h-[80vh] flex flex-col border border-black/10"
+        class="modal max-w-4xl h-[80vh]"
         @click.stop
       >
         <!-- 步骤1：选择导入方式 -->

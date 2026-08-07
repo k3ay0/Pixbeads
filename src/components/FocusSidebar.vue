@@ -89,7 +89,7 @@ function handleCompleteColor() {
       />
 
       <!-- Guidance strategy -->
-      <div class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 p-4 shadow-sm shadow-gray-200/50">
+      <div class="panel p-4">
         <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">引导策略</h3>
         <div class="flex gap-1 p-1 bg-gray-100 dark:bg-gray-800 rounded-xl">
           <button
@@ -107,7 +107,7 @@ function handleCompleteColor() {
       </div>
 
       <!-- Grid section lines -->
-      <div class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 p-4 shadow-sm shadow-gray-200/50 space-y-3">
+      <div class="panel p-4 space-y-3">
         <div class="flex items-center justify-between">
           <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">网格分割线</h3>
           <button
@@ -153,7 +153,7 @@ function handleCompleteColor() {
       </div>
 
       <!-- Confetti toggle -->
-      <div class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 p-4 shadow-sm shadow-gray-200/50">
+      <div class="panel p-4">
         <div class="flex items-center justify-between">
           <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">完成撒花</h3>
           <button
@@ -171,7 +171,7 @@ function handleCompleteColor() {
 
       <!-- Coordinates toggle -->
       <div
-        class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 p-4 shadow-sm shadow-gray-200/50 space-y-3">
+        class="panel p-4 space-y-3">
         <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">显示设置</h3>
         <div class="flex items-center justify-between">
           <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">显示坐标</h3>
@@ -200,7 +200,7 @@ function handleCompleteColor() {
       </div>
 
       <!-- Overall progress -->
-      <div class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 p-4 shadow-sm shadow-gray-200/50">
+      <div class="panel p-4">
         <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">总体进度</h3>
         <div class="space-y-2">
           <div

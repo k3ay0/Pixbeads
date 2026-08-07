@@ -358,7 +358,7 @@ const toolNameMap: Record<string, string> = {
     </div>
 
     <!-- Tool settings panel -->
-    <div class="bg-white rounded-xl border border-black/10 shadow-sm px-4 py-3 space-y-3">
+    <div class="panel px-4 py-3 space-y-3">
       <div class="text-sm font-bold text-gray-700">
         {{ toolNameMap[manualPasteActive ? 'paste' : manualTool] || manualTool }}
       </div>
@@ -521,7 +521,7 @@ const toolNameMap: Record<string, string> = {
     </div>
 
     <!-- Global operations -->
-    <div class="bg-white rounded-xl border border-black/10 shadow-sm px-4 py-3 space-y-2">
+    <div class="panel px-4 py-3 space-y-2">
       <div class="text-sm font-bold text-gray-700">全局操作</div>
       <button
         @click="emit('mirror-horizontal')"
@@ -531,7 +531,7 @@ const toolNameMap: Record<string, string> = {
     </div>
 
     <!-- Color palette card -->
-    <div class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 shadow-sm overflow-hidden flex-shrink-0">
+    <div class="panel overflow-hidden flex-shrink-0">
       <button
         class="w-full flex items-center justify-between px-4 py-3 active:bg-gray-100 dark:active:bg-gray-800 transition-colors"
         @click="colorPanelCollapsed = !colorPanelCollapsed"
@@ -721,7 +721,7 @@ const toolNameMap: Record<string, string> = {
     </div>
 
     <!-- Color stats card -->
-    <div v-if="mappedPixelData" class="bg-white rounded-xl border border-black/10 p-4">
+    <div v-if="mappedPixelData" class="panel p-4">
       <h3 class="text-sm font-medium text-black mb-2">
         颜色统计
         <span class="text-xs text-black/35 font-normal ml-1">{{ currentGridColors.length }} 种 / {{ currentGridColors.reduce((sum, c) => sum + c.count, 0) }} 粒</span>
@@ -740,7 +740,7 @@ const toolNameMap: Record<string, string> = {
     </div>
 
     <!-- Display settings card -->
-    <div class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 p-4 shadow-sm shadow-gray-200/50 space-y-3">
+    <div class="panel p-4 space-y-3">
       <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">显示设置</h3>
 
       <!-- Coordinates toggle -->

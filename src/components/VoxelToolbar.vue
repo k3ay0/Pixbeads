@@ -952,7 +952,7 @@ onMounted(() => {
 <template>
   <div class="flex-1 overflow-y-auto scrollbar-hide px-3 py-3 flex flex-col gap-3">
     <!-- Canvas Size -->
-    <div class="bg-white rounded-xl border border-black/10 shadow-sm px-4 py-3 space-y-2">
+    <div class="panel px-4 py-3 space-y-2">
       <h3 class="text-sm font-bold text-gray-700">画布尺寸</h3>
       <div class="text-[10px] text-gray-400 font-mono tabular-nums">
         {{ voxelStore.dimW }}&times;{{ voxelStore.dimH }}&times;{{ voxelStore.dimD }}
@@ -961,7 +961,7 @@ onMounted(() => {
     </div>
 
     <!-- HSV Color Picker -->
-    <div class="bg-white rounded-xl border border-black/10 shadow-sm px-4 py-3 space-y-2">
+    <div class="panel px-4 py-3 space-y-2">
       <h3 class="text-sm font-bold text-gray-700">颜色选择器</h3>
 
       <div class="flex gap-1.5 mb-3">
@@ -1147,7 +1147,7 @@ onMounted(() => {
     </div>
 
     <!-- 图层管理 -->
-    <div class="bg-white rounded-xl border border-black/10 shadow-sm px-4 py-3 space-y-2">
+    <div class="panel px-4 py-3 space-y-2">
       <div class="flex items-center justify-between mb-2">
         <h3 class="text-sm font-bold text-gray-700">图层</h3>
         <div class="flex gap-1">
@@ -1223,7 +1223,7 @@ onMounted(() => {
     </div>
 
     <!-- Copy / Paste -->
-    <div class="bg-white rounded-xl border border-black/10 shadow-sm px-4 py-3 space-y-2">
+    <div class="panel px-4 py-3 space-y-2">
       <h3 class="text-sm font-bold text-gray-700">复制 / 粘贴</h3>
 
       <!-- Select Range -->
@@ -1285,7 +1285,7 @@ onMounted(() => {
     </div>
 
     <!-- Actions Grid (2 columns) -->
-    <div class="bg-white rounded-xl border border-black/10 shadow-sm px-4 py-3 space-y-2">
+    <div class="panel px-4 py-3 space-y-2">
       <h3 class="text-sm font-bold text-gray-700">操作</h3>
       <div class="grid grid-cols-2 gap-1">
         <button v-for="btn in actionButtons" :key="btn.id" @click="doAction(btn.id)" :title="btn.label"
@@ -1296,7 +1296,7 @@ onMounted(() => {
     </div>
 
     <!-- Project Save / Load -->
-    <div class="bg-white rounded-xl border border-black/10 shadow-sm px-4 py-3 space-y-2">
+    <div class="panel px-4 py-3 space-y-2">
       <h3 class="text-sm font-bold text-gray-700">项目</h3>
       <button @click="saveProject"
         class="w-full text-xs py-1.5 rounded bg-green-500 text-white hover:bg-green-600 font-medium">

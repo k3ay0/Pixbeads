@@ -13,10 +13,10 @@ export const gridLineColorOptions = [
  <Teleport to="body">
  <div
  v-if="isOpen"
- class="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+ class="modal-overlay backdrop-blur-sm"
  @click.self="$emit('close')"
  >
- <div class="bg-white rounded-xl shadow-lg overflow-hidden w-full max-w-md">
+ <div class="modal max-w-md">
  <div class="p-5">
  <div class="flex justify-between items-center border-b pb-3 mb-4">
  <h3 class="text-lg font-semibold text-black ">下载图纸设置</h3>
@@ -169,13 +169,13 @@ export const gridLineColorOptions = [
  <div class="flex justify-end mt-6 space-x-3">
  <button
  @click="$emit('close')"
- class="px-4 py-2 bg-black/10 hover:bg-black/10 text-black rounded-lg transition-colors"
+ class="btn btn-secondary px-4 py-2 rounded-lg"
  >
  取消
  </button>
  <button
  @click="handleSave"
- class="px-4 py-2 bg-[#007be5] hover:bg-blue-600 text-white rounded-lg transition-colors"
+ class="btn px-4 py-2 bg-[#007be5] hover:bg-blue-600 text-white rounded-lg"
  >
  下载图纸
  </button>
