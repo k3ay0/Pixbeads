@@ -7,6 +7,10 @@ export const useUiStore = defineStore('ui', () => {
   // ========== 模式 ==========
   const activeMode = ref<AppMode>('optimize')
 
+  // ========== 画布工作区 ==========
+  // none: 尚未导入/新建任何画布；2d: 已有 2D 画布；3d: 已新建 3D 画布
+  const workspace = ref<'none' | '2d' | '3d'>('none')
+
   // ========== 菜单状态 ==========
   const showImportMenu = ref(false)
   const showExportMenu = ref(false)
@@ -44,6 +48,10 @@ export const useUiStore = defineStore('ui', () => {
     activeMode.value = mode
   }
 
+  function setWorkspace(w: 'none' | '2d' | '3d') {
+    workspace.value = w
+  }
+
   function showToast(msg: string, duration: number = 2000) {
     toastMessage.value = msg
     if (toastTimeout) {
@@ -76,6 +84,7 @@ export const useUiStore = defineStore('ui', () => {
   return {
     // State
     activeMode,
+    workspace,
     showImportMenu,
     showExportMenu,
     showDownloadModal,
@@ -85,6 +94,7 @@ export const useUiStore = defineStore('ui', () => {
     downloadOptions,
     // Actions
     switchMode,
+    setWorkspace,
     showToast,
     toggleImportMenu,
     toggleExportMenu,

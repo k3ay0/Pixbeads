@@ -43,6 +43,8 @@ import ImportConvertDialog from './components/ImportConvertDialog.vue'
 import ImportFlowDialog from './components/ImportFlowDialog.vue'
 import InstallPWA from './components/InstallPWA.vue'
 import AppHeader from './components/AppHeader.vue'
+import NewCanvasModal from './components/NewCanvasModal.vue'
+import type { NewCanvasPayload } from './components/NewCanvasModal.vue'
 import CanvasArea from './components/CanvasArea.vue'
 import OptimizeSidebar from './components/OptimizeSidebar.vue'
 import EditSidebar from './components/EditSidebar.vue'
@@ -144,6 +146,7 @@ const previewOverlayCanvas = ref<HTMLCanvasElement | null>(null)
 const showImportFlow = ref(false)
 const showImportConfirm = ref(false)
 const showEditHistory = ref(false)
+const showNewCanvasModal = ref(false)
 
 // 色板保存二次确认：待替换颜色预览
 const paletteReplacePreview = ref<{
@@ -304,6 +307,7 @@ function handleCropConfirmFromFlow(canvas: HTMLCanvasElement) {
   isGridImport.value = false
   fileIO.handleCropConfirm(canvas)
   processImage()
+  uiStore.setWorkspace('2d')
 }
 
 async function handleGridConfirmFromFlow(data: { canvas: HTMLCanvasElement, cols: number, rows: number, pixelColors: string[][]; ocrEnabled: boolean }) {
@@ -337,7 +341,7 @@ async function handlePbdsDropFromFlow(file: File) {
   if (result) { pendingPbdsData.value = result; uiStore.showImportDialog = true }
 }
 
-function handleImportConfirmFromDialog(data: any) { fileIO.handleImportConfirm(data); pendingPbdsData.value = null }
+function handleImportConfirmFromDialog(data: any) { fileIO.handleImportConfirm(data); pendingPbdsData.value = null; uiStore.setWorkspace('2d') }
 function handlePbdsImportCancel() { uiStore.showImportDialog = false; pendingPbdsData.value = null }
 async function handleGridConfirm(data: { canvas: HTMLCanvasElement, cols: number, rows: number, pixelColors: string[][]; ocrEnabled: boolean }) {
   // 设置裁剪后的画布
@@ -398,6 +402,7 @@ async function handleGridConfirm(data: { canvas: HTMLCanvasElement, cols: number
   // 清除编辑历史并保存快照
   editorStore.clearHistory()
   editorStore.saveSnapshot(mappedPixelData)
+  uiStore.setWorkspace('2d')
 }
 function handleGlobalClick(e: MouseEvent) { if (!(e.target as HTMLElement).closest('.relative')) uiStore.closeAllMenus() }
 function handlePaletteEditorSave(s: Record<string, boolean>) {
@@ -622,20 +627,39 @@ function handleDownloadGridWithOptions(o: any) { uiStore.updateDownloadOptions(o
 function handleMagnifierSelection(a: any) { editorStore.magnifierSelectionArea = a }
 function handleMagnifierPixelEdit(d: any) { pixelEditing.handleMagnifierPixelEdit(d) }
 
-function handleNew2DCanvas() {
+function handleNewCanvasConfirm(payload: NewCanvasPayload) {
+  showNewCanvasModal.value = false
+  if (payload.type === '2d') {
+    handleNew2DCanvas(payload.width, payload.height)
+  } else {
+    handleNew3DCanvas(payload.width, payload.height, payload.depth)
+  }
+}
+
+function handleNew2DCanvas(width: number, height: number) {
   if (beadStore.mappedPixelData && Object.keys(beadStore.colorCounts || {}).length > 0) {
     if (!confirm('当前 2D 画布数据将被清空，是否继续？')) return
   }
   beadStore.reset()
   editorStore.clearHistory()
+  // 创建空白画布：全部为透明格子
+  const grid: MappedPixel[][] = Array.from({ length: height }, () =>
+    Array.from({ length: width }, () => ({ ...transparentColorData }))
+  )
+  beadStore.setPixelData(grid, { N: width, M: height })
+  beadStore.updateColorStats({ colorCounts: {}, totalCount: 0 })
+  editorStore.saveSnapshot(grid)
+  uiStore.setWorkspace('2d')
   uiStore.switchMode('optimize')
 }
 
-function handleNew3DCanvas() {
+function handleNew3DCanvas(width: number, height: number, depth: number) {
   if (voxelStore.voxelCount > 0) {
     if (!confirm('当前 3D 画布数据将被清空，是否继续？')) return
   }
   voxelStore.resetAll()
+  voxelStore.setDimensions(width, height, depth)
+  uiStore.setWorkspace('3d')
   uiStore.switchMode('voxel')
 }
 
@@ -676,6 +700,7 @@ function handleOpenExportModal() {
 
 function handleSliceExported() {
   showSliceGridModal.value = false
+  uiStore.setWorkspace('2d')
   switchMode('optimize')
 }
 
@@ -700,8 +725,8 @@ function handleBgUpdate(bg: any) {
     <!-- Header -->
     <AppHeader @switch-mode="switchMode" @trigger-file-input="triggerFileInput" @trigger-pbds-input="triggerPbdsInput"
       @open-palette-editor="showPaletteEditor = true" @export-pbds="handleExportPbds"
-      @download-image="handleDownloadImage" @download-stats="handleDownloadStats" @new-2d-canvas="handleNew2DCanvas"
-      @new-3d-canvas="handleNew3DCanvas" />
+      @download-image="handleDownloadImage" @download-stats="handleDownloadStats"
+      @open-new-canvas="showNewCanvasModal = true" />
 
     <input ref="fileInput" type="file" accept="image/*" class="hidden" @change="handleFileChange" />
     <input ref="pbdsFileInput" type="file" accept=".pbds" class="hidden" @change="handlePbdsFileChange" />
@@ -808,6 +833,10 @@ function handleBgUpdate(bg: any) {
   <ImportFlowDialog :is-open="showImportFlow" :pending-file="pendingImportFile" @close="handleCloseImportFlow"
     @crop-confirm="handleCropConfirmFromFlow" @grid-confirm="handleGridConfirmFromFlow"
     @pbds-drop="handlePbdsDropFromFlow" @pending-file-consumed="pendingImportFile = null" />
+
+  <!-- New canvas dialog -->
+  <NewCanvasModal :is-open="showNewCanvasModal" @close="showNewCanvasModal = false"
+    @confirm="handleNewCanvasConfirm" />
 
   <!-- Import confirm dialog -->
   <Teleport to="body">

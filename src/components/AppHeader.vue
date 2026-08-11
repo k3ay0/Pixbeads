@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useBeadStore } from '../stores/beadStore'
 import { usePaletteStore } from '../stores/paletteStore'
@@ -16,11 +15,8 @@ const emit = defineEmits<{
   (e: 'export-pbds'): void
   (e: 'download-image'): void
   (e: 'download-stats'): void
-  (e: 'new-2d-canvas'): void
-  (e: 'new-3d-canvas'): void
+  (e: 'open-new-canvas'): void
 }>()
-
-const showNewMenu = ref(false)
 
 const beadStore = useBeadStore()
 const paletteStore = usePaletteStore()
@@ -28,13 +24,24 @@ const uiStore = useUiStore()
 
 const { mappedPixelData } = storeToRefs(beadStore)
 const { selectedColorSystem, customPaletteSelections } = storeToRefs(paletteStore)
-const { activeMode, showImportMenu, showExportMenu } = storeToRefs(uiStore)
+const { activeMode, workspace, showExportMenu } = storeToRefs(uiStore)
 
 const modes = MODES
 
-function toggleImportMenu() {
-  uiStore.closeAllMenus()
-  showImportMenu.value = !showImportMenu.value
+// 模式按钮是否可用：
+// - none：初始状态，等待导入图纸或新建 2D 画布，全部禁用
+// - 2d：只开放 优化/编辑/预览/专心，3D 编辑禁用
+// - 3d：只开放 3D 编辑，其它禁用
+function isModeEnabled(modeKey: AppMode): boolean {
+  if (workspace.value === 'none') return false
+  if (workspace.value === '3d') return modeKey === 'voxel'
+  return modeKey !== 'voxel'
+}
+
+function modeDisabledHint(modeKey: AppMode): string {
+  if (workspace.value === 'none') return '请先导入图纸或新建画布'
+  if (workspace.value === '3d') return '新建 3D 画布后仅开放 3D 编辑'
+  return ''
 }
 
 function toggleExportMenu() {
@@ -57,11 +64,6 @@ function handleDownloadStats() {
   uiStore.closeAllMenus()
   emit('switch-mode', activeMode.value)
 }
-
-function toggleNewMenu() {
-  uiStore.closeAllMenus()
-  showNewMenu.value = !showNewMenu.value
-}
 </script>
 
 <template>
@@ -80,12 +82,12 @@ function toggleNewMenu() {
             v-for="mode in modes"
             :key="mode.key"
             @click="emit('switch-mode', mode.key)"
-            :disabled="mode.key !== 'optimize' && mode.key !== 'voxel' && !mappedPixelData"
-            :title="mode.key !== 'optimize' && mode.key !== 'voxel' && !mappedPixelData ? '请先导入文件' : ''"
+            :disabled="!isModeEnabled(mode.key)"
+            :title="isModeEnabled(mode.key) ? '' : modeDisabledHint(mode.key)"
             :class="[
               'tab',
               activeMode === mode.key ? 'tab-active' : '',
-              mode.key !== 'optimize' && mode.key !== 'voxel' && !mappedPixelData && 'opacity-40 cursor-not-allowed'
+              !isModeEnabled(mode.key) && 'opacity-40 cursor-not-allowed'
             ]"
           >{{ mode.label }}</button>
         </div>
@@ -116,22 +118,9 @@ function toggleNewMenu() {
         <!-- New button -->
         <div class="relative">
           <button
-            @click="toggleNewMenu"
+            @click="emit('open-new-canvas')"
             class="btn btn-secondary min-h-[44px]"
           >新建</button>
-          <div
-            v-if="showNewMenu"
-            class="menu w-36"
-          >
-            <button
-              @click="emit('new-2d-canvas'); uiStore.closeAllMenus()"
-              class="menu-item"
-            >新建 2D 画布</button>
-            <button
-              @click="emit('new-3d-canvas'); uiStore.closeAllMenus()"
-              class="menu-item"
-            >新建 3D 画布</button>
-          </div>
         </div>
 
         <!-- Export dropdown -->
