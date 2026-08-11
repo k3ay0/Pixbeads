@@ -149,7 +149,7 @@ function handleCancel() {
               <button
                 v-if="importData.sourceColorSystem !== currentColorSystem"
                 @click="handleConvert"
-                class="w-full py-2.5 px-4 text-sm font-medium rounded-lg border border-black/10 bg-black text-white hover:bg-black/80 transition-colors"
+                class="btn btn-primary w-full py-2.5 rounded-lg"
               >
                 转换为当前色系 ({{ currentColorSystem }})
               </button>
@@ -157,7 +157,7 @@ function handleCancel() {
               <!-- 直接使用原始数据 -->
               <button
                 @click="handleUseOriginal"
-                class="w-full py-2.5 px-4 text-sm font-medium rounded-lg border border-black/10 bg-black/[0.04] text-black hover:bg-black/[0.08] transition-colors"
+                class="btn btn-secondary w-full py-2.5 rounded-lg"
               >
                 <template v-if="importData.sourceColorSystem !== currentColorSystem">
                   保持原色 ({{ importData.sourceColorSystem }})
@@ -170,7 +170,7 @@ function handleCancel() {
               <!-- 取消 -->
               <button
                 @click="handleCancel"
-                class="w-full py-2.5 px-4 text-sm font-medium rounded-lg border border-black/10 bg-transparent text-black/60 hover:bg-black/[0.04] transition-colors"
+                class="btn btn-ghost w-full py-2.5 px-4"
               >
                 取消
               </button>

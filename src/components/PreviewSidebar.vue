@@ -122,7 +122,7 @@ const handleDownload = () => {
 
       <!-- 材质选择 -->
       <div
-        class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 p-4 shadow-sm"
+        class="panel p-4"
       >
         <div class="text-xs font-medium text-gray-600 dark:text-gray-300 mb-3">材质</div>
         <div class="grid grid-cols-4 gap-1.5">
@@ -144,7 +144,7 @@ const handleDownload = () => {
 
       <!-- 边缘效果 -->
       <div
-        class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 p-4 shadow-sm"
+        class="panel p-4"
       >
         <div class="text-xs font-medium text-gray-600 dark:text-gray-300 mb-3">边缘效果</div>
         <div class="space-y-3">
@@ -177,7 +177,7 @@ const handleDownload = () => {
 
       <!-- 阴影 -->
       <div
-        class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 p-4 shadow-sm"
+        class="panel p-4"
       >
         <div class="text-xs font-medium text-gray-600 dark:text-gray-300 mb-3">阴影</div>
         <div class="space-y-3">
@@ -226,7 +226,7 @@ const handleDownload = () => {
 
       <!-- 背景 -->
       <div
-        class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 p-4 shadow-sm"
+        class="panel p-4"
       >
         <div class="text-xs font-medium text-gray-600 dark:text-gray-300 mb-3">背景</div>
         <div class="flex flex-wrap gap-2">
@@ -267,13 +267,13 @@ const handleDownload = () => {
 
       <!-- 显示文字 -->
       <div
-        class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 p-4 shadow-sm"
+        class="panel p-4"
       >
         <div class="text-xs font-medium text-gray-600 dark:text-gray-300 mb-3">显示文字</div>
         <input
           v-model="displayText"
           placeholder="如：@你的店铺名"
-          class="w-full text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-gray-700 dark:text-gray-200 placeholder:text-gray-400 outline-none focus:border-brand-500 transition-colors"
+          class="input"
           type="text"
         />
         <div class="flex items-center gap-2 mt-2.5">

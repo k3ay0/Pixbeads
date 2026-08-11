@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useBeadStore } from '../stores/beadStore'
 import { usePaletteStore } from '../stores/paletteStore'
@@ -16,6 +15,7 @@ const emit = defineEmits<{
   (e: 'export-pbds'): void
   (e: 'download-image'): void
   (e: 'download-stats'): void
+  (e: 'open-new-canvas'): void
 }>()
 
 const beadStore = useBeadStore()
@@ -24,13 +24,24 @@ const uiStore = useUiStore()
 
 const { mappedPixelData } = storeToRefs(beadStore)
 const { selectedColorSystem, customPaletteSelections } = storeToRefs(paletteStore)
-const { activeMode, showImportMenu, showExportMenu } = storeToRefs(uiStore)
+const { activeMode, workspace, showExportMenu } = storeToRefs(uiStore)
 
 const modes = MODES
 
-function toggleImportMenu() {
-  uiStore.closeAllMenus()
-  showImportMenu.value = !showImportMenu.value
+// 模式按钮是否可用：
+// - none：初始状态，等待导入图纸或新建 2D 画布，全部禁用
+// - 2d：只开放 优化/编辑/预览/专心，3D 编辑禁用
+// - 3d：只开放 3D 编辑，其它禁用
+function isModeEnabled(modeKey: AppMode): boolean {
+  if (workspace.value === 'none') return false
+  if (workspace.value === '3d') return modeKey === 'voxel'
+  return modeKey !== 'voxel'
+}
+
+function modeDisabledHint(modeKey: AppMode): string {
+  if (workspace.value === 'none') return '请先导入图纸或新建画布'
+  if (workspace.value === '3d') return '新建 3D 画布后仅开放 3D 编辑'
+  return ''
 }
 
 function toggleExportMenu() {
@@ -59,10 +70,10 @@ function handleDownloadStats() {
   <header class="h-12 bg-white border-b border-black/10 sticky top-0 z-40">
     <div class="mx-auto w-full h-full px-2 sm:px-4 flex items-center gap-2 sm:gap-3">
       <!-- Logo -->
-      <div class="flex items-center gap-2 flex-shrink-0">
+      <router-link to="/" class="flex items-center gap-2 flex-shrink-0" title="返回首页">
         <img src="/logos/favicon.ico" alt="Pixbeads" class="w-7 h-7 rounded-md" />
         <span class="hidden md:inline text-sm font-semibold text-black">PIXBEADS</span>
-      </div>
+      </router-link>
 
       <!-- Mode tabs -->
       <div class="flex-1 min-w-0 flex justify-center">
@@ -71,12 +82,12 @@ function handleDownloadStats() {
             v-for="mode in modes"
             :key="mode.key"
             @click="emit('switch-mode', mode.key)"
-            :disabled="mode.key !== 'optimize' && !mappedPixelData"
-            :title="mode.key !== 'optimize' && !mappedPixelData ? '请先导入文件' : ''"
+            :disabled="!isModeEnabled(mode.key)"
+            :title="isModeEnabled(mode.key) ? '' : modeDisabledHint(mode.key)"
             :class="[
-              'px-2 sm:px-3 h-8 text-[11px] sm:text-xs rounded-md font-medium transition-colors min-w-[44px] flex items-center justify-center',
-              activeMode === mode.key ? 'bg-black text-white shadow-sm' : 'text-black/45 hover:text-black',
-              mode.key !== 'optimize' && !mappedPixelData && 'opacity-40 cursor-not-allowed'
+              'tab',
+              activeMode === mode.key ? 'tab-active' : '',
+              !isModeEnabled(mode.key) && 'opacity-40 cursor-not-allowed'
             ]"
           >{{ mode.label }}</button>
         </div>
@@ -100,8 +111,16 @@ function handleDownloadStats() {
         <div class="relative">
           <button
             @click="emit('open-import-flow')"
-            class="min-h-[44px] px-3 text-xs rounded-full border border-black/10 bg-black/[0.04] text-black/60 hover:bg-black/10 transition-colors"
+            class="btn btn-secondary min-h-[44px]"
           >导入</button>
+        </div>
+
+        <!-- New button -->
+        <div class="relative">
+          <button
+            @click="emit('open-new-canvas')"
+            class="btn btn-secondary min-h-[44px]"
+          >新建</button>
         </div>
 
         <!-- Export dropdown -->
@@ -109,23 +128,23 @@ function handleDownloadStats() {
           <button
             v-if="mappedPixelData"
             @click="toggleExportMenu"
-            class="min-h-[44px] px-3 text-xs rounded-full border border-black/10 bg-black/[0.04] text-black/60 hover:bg-black/10 transition-colors"
+            class="btn btn-secondary min-h-[44px]"
           >导出</button>
           <div
             v-if="showExportMenu"
-            class="absolute right-0 mt-1 w-44 bg-white rounded-lg shadow-lg border border-black/10 py-1 z-50"
+            class="menu w-44"
           >
             <button
               @click="$emit('export-pbds'); uiStore.closeAllMenus()"
-              class="w-full px-3 py-2 text-left text-xs text-black/80 hover:bg-black/[0.04] transition-colors"
+              class="menu-item"
             >导出图纸文件 (.pbds)</button>
             <button
               @click="$emit('download-image'); uiStore.closeAllMenus()"
-              class="w-full px-3 py-2 text-left text-xs text-black/80 hover:bg-black/[0.04] transition-colors"
+              class="menu-item"
             >下载图纸图片 (.png)</button>
             <button
               @click="$emit('download-stats'); uiStore.closeAllMenus()"
-              class="w-full px-3 py-2 text-left text-xs text-black/80 hover:bg-black/[0.04] transition-colors"
+              class="menu-item"
             >下载颜色统计 (.png)</button>
           </div>
         </div>

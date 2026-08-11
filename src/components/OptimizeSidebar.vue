@@ -86,10 +86,6 @@ const excludedColorsList = computed(() => {
   return list
 })
 
-// 颜色选择器状态
-const showColorPicker = ref(false)
-const colorPickerTarget = ref<string | null>(null) // 正在编辑的原始颜色
-
 /**
  * 点击颜色 → 排除该颜色并自动替换为最接近的其他颜色
  */
@@ -138,7 +134,7 @@ function performColorReplace(sourceHex: string, targetHex: string, targetKey: st
   const { result, count } = replaceAllColor(mappedPixelData.value, sourceHex, targetKey, targetHex)
 
   if (count > 0) {
-    editorStore.saveSnapshot(mappedPixelData.value)
+    editorStore.saveSnapshot(mappedPixelData.value, '颜色替换')
     beadStore.setPixelData(result)
     const stats = recalculateColorStats(result)
     beadStore.updateColorStats(stats)
@@ -157,50 +153,6 @@ function performColorReplace(sourceHex: string, targetHex: string, targetKey: st
 }
 
 /**
- * 点击替换颜色 → 打开颜色选择器
- */
-function handleChangeReplacement(originalHex: string) {
-  colorPickerTarget.value = originalHex
-  showColorPicker.value = true
-}
-
-/**
- * 从色板中选择新的替换颜色
- */
-function selectReplacementColor(newTargetHex: string) {
-  if (!colorPickerTarget.value || !mappedPixelData.value) return
-
-  const originalHex = colorPickerTarget.value
-  const currentReplacement = colorReplacementMap.value.get(originalHex)
-
-  // 先恢复原始颜色（撤销上次替换）
-  if (currentReplacement) {
-    // 保存恢复前的快照
-    editorStore.saveSnapshot(mappedPixelData.value)
-
-    // 精准恢复被替换的像素
-    const replacedCells = replacedCellsMap.value.get(originalHex)
-    if (replacedCells && replacedCells.length > 0) {
-      const originalKey = originalHex
-      const restored = mappedPixelData.value.map(row => row.map(cell => ({ ...cell })))
-      for (const { row, col } of replacedCells) {
-        if (restored[row]?.[col]) {
-          restored[row][col] = { key: originalKey, color: originalHex, isExternal: false }
-        }
-      }
-      beadStore.setPixelData(restored)
-    }
-  }
-
-  // 再用新颜色替换
-  performColorReplace(originalHex, newTargetHex, newTargetHex)
-
-  // 关闭选择器
-  showColorPicker.value = false
-  colorPickerTarget.value = null
-}
-
-/**
  * 恢复单个颜色
  */
 function handleRestoreColor(hex: string) {
@@ -216,7 +168,7 @@ function handleRestoreColor(hex: string) {
       }
     }
 
-    editorStore.saveSnapshot(mappedPixelData.value)
+    editorStore.saveSnapshot(mappedPixelData.value, '恢复颜色')
     beadStore.setPixelData(restored)
     const stats = recalculateColorStats(restored)
     beadStore.updateColorStats(stats)
@@ -251,7 +203,7 @@ function handleRestoreAll() {
   }
 
   if (hasChanges) {
-    editorStore.saveSnapshot(mappedPixelData.value)
+    editorStore.saveSnapshot(mappedPixelData.value, '恢复颜色')
     beadStore.setPixelData(restored)
     const stats = recalculateColorStats(restored)
     beadStore.updateColorStats(stats)
@@ -260,33 +212,6 @@ function handleRestoreAll() {
   // 清空状态（restoreAllExcluded 会同时清除 colorReplacementMap 和 replacedCellsMap）
   paletteStore.restoreAllExcluded()
 }
-
-// 可选色板：完整色板 + 当前图片中的颜色排在最前
-const availableColorsForPicker = computed(() => {
-  if (!colorPickerTarget.value) return []
-  const targetHex = colorPickerTarget.value.toUpperCase()
-  
-  // 当前图片中已有的颜色（排除目标颜色）
-  const gridColorSet = new Set(currentGridColors.value.map(c => c.color.toUpperCase()))
-  const gridColors = currentGridColors.value
-    .filter(c => c.color.toUpperCase() !== targetHex)
-    .map(c => ({ key: c.key, color: c.color, inGrid: true }))
-  
-  // 完整色板中不在当前图片中的颜色（排除目标颜色和已排除颜色）
-  const otherColors = fullBeadPalette.value
-    .filter(c => {
-      const hex = c.hex.toUpperCase()
-      return hex !== targetHex && !gridColorSet.has(hex) && !excludedColorKeys.value.has(hex)
-    })
-    .map(c => ({
-      key: getColorKeyByHex(c.hex, selectedColorSystem.value),
-      color: c.hex,
-      inGrid: false,
-    }))
-  
-  // 合并：当前图片颜色在前，完整色板颜色在后
-  return [...gridColors, ...otherColors]
-})
 
 // ========== 拖拽上传 ==========
 
@@ -303,28 +228,24 @@ function handleDrop(e: DragEvent) {
 <template>
   <div class="flex-1 overflow-y-auto scrollbar-hide px-3 py-3 flex flex-col gap-3">
     <!-- Parameter controls card -->
-    <div class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 shadow-sm overflow-visible">
+    <div class="panel overflow-visible">
       <div class="divide-y divide-gray-200/60 dark:divide-gray-800/40">
         <!-- 颜色合并程度（仅非格子导入时显示） -->
         <div v-if="!isGridImport" class="relative flex items-center justify-between px-3 h-11">
           <div class="flex items-center gap-0.5">
             <span class="text-xs text-gray-500 dark:text-gray-400">颜色合并程度</span>
-            <button
-              type="button"
+            <button type="button"
               class="w-5 h-5 rounded-full flex items-center justify-center text-gray-400 dark:text-gray-500 active:text-brand-500 active:bg-brand-500/10 transition-colors flex-shrink-0"
-              @mouseenter="showTooltip('merge', $event)"
-              @mouseleave="hideTooltip"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"></path></svg>
+              @mouseenter="showTooltip('merge', $event)" @mouseleave="hideTooltip">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd"
+                  d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z"
+                  clip-rule="evenodd"></path>
+              </svg>
             </button>
           </div>
-          <input
-            v-model.number="similarityThreshold"
-            min="0"
-            max="100"
-            type="number"
-            class="w-20 h-7 px-2 text-right text-xs font-medium text-gray-900 dark:text-gray-100 bg-gray-100 dark:bg-gray-800 border-none rounded-md focus:ring-1 focus:ring-brand-500 focus:outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
-          />
+          <input v-model.number="similarityThreshold" min="0" max="100" type="number"
+            class="w-20 h-7 px-2 text-right text-xs font-medium text-gray-900 dark:text-gray-100 bg-gray-100 dark:bg-gray-800 border-none rounded-md focus:ring-1 focus:ring-brand-500 focus:outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none" />
         </div>
 
         <!-- 宽度 -->
@@ -332,130 +253,100 @@ function handleDrop(e: DragEvent) {
           <div class="flex items-center gap-0.5">
             <span class="text-xs text-gray-500 dark:text-gray-400">宽度</span>
           </div>
-          <input
-            v-model="granularityInput"
+          <input v-model="granularityInput"
             @blur="granularity = Math.max(10, Math.min(300, parseInt(granularityInput) || 50))"
             @keyup.enter="granularity = Math.max(10, Math.min(300, parseInt(granularityInput) || 50))"
-            :disabled="isGridImport"
-            min="10"
-            max="300"
-            type="number"
-            :class="[
+            :disabled="isGridImport" min="10" max="300" type="number" :class="[
               'w-20 h-7 px-2 text-right text-xs font-medium text-gray-900 dark:text-gray-100 bg-gray-100 dark:bg-gray-800 border-none rounded-md focus:ring-1 focus:ring-brand-500 focus:outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none',
               isGridImport && 'opacity-50 cursor-not-allowed'
-            ]"
-          />
+            ]" />
         </div>
 
         <!-- 锁定比例 + 高度 -->
         <div class="relative flex items-center justify-between px-3 h-11">
           <div class="flex items-center gap-1.5">
             <span class="text-xs text-gray-500 dark:text-gray-400">高度</span>
-            <button
-              v-if="!isGridImport"
-              @click="lockAspectRatio = !lockAspectRatio"
-              :class="[
-                'px-1.5 py-0.5 text-[10px] rounded transition-colors',
-                lockAspectRatio
-                  ? 'bg-brand-500/10 text-brand-500'
-                  : 'text-gray-400 dark:text-gray-500 active:text-brand-500'
-              ]"
-            >{{ lockAspectRatio ? '已锁' : '锁比' }}</button>
+            <button v-if="!isGridImport" @click="lockAspectRatio = !lockAspectRatio" :class="[
+              'px-1.5 py-0.5 text-[10px] rounded transition-colors',
+              lockAspectRatio
+                ? 'bg-brand-500/10 text-brand-500'
+                : 'text-gray-400 dark:text-gray-500 active:text-brand-500'
+            ]">{{ lockAspectRatio ? '已锁' : '锁比' }}</button>
           </div>
-          <input
-            v-model="granularityYInput"
+          <input v-model="granularityYInput"
             :disabled="isGridImport || (!croppedImageCanvas && !mappedPixelData) || lockAspectRatio"
             @blur="granularityY = Math.max(10, Math.min(300, parseInt(granularityYInput) || 0))"
-            @keyup.enter="granularityY = Math.max(10, Math.min(300, parseInt(granularityYInput) || 0))"
-            min="10"
-            max="300"
-            type="number"
-            :placeholder="granularityY > 0 ? granularityY.toString() : '自动'"
-            :class="[
+            @keyup.enter="granularityY = Math.max(10, Math.min(300, parseInt(granularityYInput) || 0))" min="10"
+            max="300" type="number" :placeholder="granularityY > 0 ? granularityY.toString() : '自动'" :class="[
               'w-20 h-7 px-2 text-right text-xs font-medium text-gray-900 dark:text-gray-100 bg-gray-100 dark:bg-gray-800 border-none rounded-md focus:ring-1 focus:ring-brand-500 focus:outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none',
               isGridImport && 'opacity-50 cursor-not-allowed'
-            ]"
-          />
+            ]" />
         </div>
 
         <!-- 处理模式（仅非格子导入时显示） -->
         <div v-if="!isGridImport" class="relative flex items-center justify-between px-3 h-11">
           <div class="flex items-center gap-0.5">
             <span class="text-xs text-gray-500 dark:text-gray-400">处理模式</span>
-            <button
-              type="button"
+            <button type="button"
               class="w-5 h-5 rounded-full flex items-center justify-center text-gray-400 dark:text-gray-500 active:text-brand-500 active:bg-brand-500/10 transition-colors flex-shrink-0"
-              @mouseenter="showTooltip('mode', $event)"
-              @mouseleave="hideTooltip"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"></path></svg>
+              @mouseenter="showTooltip('mode', $event)" @mouseleave="hideTooltip">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd"
+                  d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z"
+                  clip-rule="evenodd"></path>
+              </svg>
             </button>
           </div>
           <div class="flex h-7 rounded-md bg-gray-100 dark:bg-gray-800 overflow-hidden">
-            <button
-              @click="pixelationMode = PixelationMode.Dominant"
-              :class="[
-                'px-3 text-[11px] font-medium transition-colors',
-                pixelationMode === PixelationMode.Dominant
-                  ? 'bg-gray-900 text-gray-50 dark:bg-gray-200 dark:text-gray-900'
-                  : 'text-gray-500 dark:text-gray-400 active:bg-gray-200 dark:active:bg-gray-700'
-              ]"
-            >卡通</button>
-            <button
-              @click="pixelationMode = PixelationMode.Average"
-              :class="[
-                'px-3 text-[11px] font-medium transition-colors',
-                pixelationMode === PixelationMode.Average
-                  ? 'bg-gray-900 text-gray-50 dark:bg-gray-200 dark:text-gray-900'
-                  : 'text-gray-500 dark:text-gray-400 active:bg-gray-200 dark:active:bg-gray-700'
-              ]"
-            >真实</button>
+            <button @click="pixelationMode = PixelationMode.Dominant" :class="[
+              'px-3 text-[11px] font-medium transition-colors',
+              pixelationMode === PixelationMode.Dominant
+                ? 'bg-gray-900 text-gray-50 dark:bg-gray-200 dark:text-gray-900'
+                : 'text-gray-500 dark:text-gray-400 active:bg-gray-200 dark:active:bg-gray-700'
+            ]">卡通</button>
+            <button @click="pixelationMode = PixelationMode.Average" :class="[
+              'px-3 text-[11px] font-medium transition-colors',
+              pixelationMode === PixelationMode.Average
+                ? 'bg-gray-900 text-gray-50 dark:bg-gray-200 dark:text-gray-900'
+                : 'text-gray-500 dark:text-gray-400 active:bg-gray-200 dark:active:bg-gray-700'
+            ]">真实</button>
           </div>
         </div>
       </div>
 
       <!-- 一键去除背景 -->
-      <button
-        @click="emit('auto-remove-background')"
-        :disabled="!mappedPixelData"
-        class="w-full h-10 text-xs font-medium text-gray-500 dark:text-gray-400 border-t border-gray-200/60 dark:border-gray-800/40 active:bg-gray-100 dark:active:bg-gray-800 transition-colors disabled:opacity-30"
-      >一键去除背景</button>
+      <button @click="emit('auto-remove-background')" :disabled="!mappedPixelData"
+        class="w-full h-10 text-xs font-medium text-gray-500 dark:text-gray-400 border-t border-gray-200/60 dark:border-gray-800/40 active:bg-gray-100 dark:active:bg-gray-800 transition-colors disabled:opacity-30">一键去除背景</button>
     </div>
 
     <!-- 色号系统 -->
-    <div class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 p-3 shadow-sm">
+    <div class="panel p-3">
       <div class="text-xs font-semibold text-gray-800 dark:text-gray-200 mb-2">色号系统</div>
       <div class="flex flex-wrap gap-1.5">
-        <button
-          v-for="sys in colorSystemOptions"
-          :key="sys.key"
-          @click="selectedColorSystem = sys.key as ColorSystem"
+        <button v-for="sys in colorSystemOptions" :key="sys.key" @click="selectedColorSystem = sys.key as ColorSystem"
           :class="[
             'px-2.5 py-1 text-[11px] font-medium rounded-md transition-colors',
             selectedColorSystem === sys.key
               ? 'bg-gray-900 text-gray-50 dark:bg-gray-200 dark:text-gray-900'
               : 'text-gray-500 dark:text-gray-400 active:bg-gray-200 dark:active:bg-gray-700'
-          ]"
-        >{{ sys.name }}</button>
+          ]">{{ sys.name }}</button>
       </div>
     </div>
 
     <!-- 色彩优化面板 -->
-    <div
-      v-if="colorCounts && currentGridColors.length > 0"
-      class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 shadow-sm shadow-gray-200/50 color-stats-panel flex flex-col"
-    >
+    <div v-if="colorCounts && currentGridColors.length > 0" class="panel color-stats-panel flex flex-col">
       <!-- 头部 (固定) -->
       <div class="relative flex items-center justify-between px-3 pt-2.5 pb-2 flex-shrink-0">
         <div class="flex items-center gap-0.5">
           <span class="text-sm font-semibold text-gray-800 dark:text-gray-200">色彩优化</span>
-          <button
-            type="button"
+          <button type="button"
             class="w-5 h-5 rounded-full flex items-center justify-center text-gray-400 dark:text-gray-500 active:text-brand-500 active:bg-brand-500/10 transition-colors flex-shrink-0"
-            @mouseenter="showTooltip('optimize', $event)"
-            @mouseleave="hideTooltip"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"></path></svg>
+            @mouseenter="showTooltip('optimize', $event)" @mouseleave="hideTooltip">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd"
+                d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z"
+                clip-rule="evenodd"></path>
+            </svg>
           </button>
         </div>
         <span class="text-xs text-gray-400 dark:text-gray-500 tabular-nums">{{ totalBeadCount }} 颗</span>
@@ -465,24 +356,21 @@ function handleDrop(e: DragEvent) {
       <div class="overflow-y-auto overscroll-contain scrollbar-hide px-3 pb-2.5" style="max-height: 400px;">
         <!-- 颜色列表 -->
         <ul class="text-sm">
-          <li
-            v-for="item in currentGridColors"
-            :key="item.color"
+          <li v-for="item in currentGridColors" :key="item.color"
             class="group flex items-center justify-between px-2 py-2 rounded-lg cursor-pointer transition-all duration-150 active:scale-[0.98] active:bg-gray-200/70 dark:active:bg-gray-700/70 hover:bg-gray-100/80 dark:hover:bg-gray-800/60"
-            @click="handleExcludeColor(item.color)"
-          >
+            @click="handleExcludeColor(item.color)">
             <div class="flex items-center gap-2.5">
-              <button
-                class="w-5 h-5 rounded-md border border-gray-300/80 dark:border-gray-600/80 flex-shrink-0 shadow-sm hover:scale-110 transition-transform"
-                :style="{ backgroundColor: item.color }"
-                @click.stop="handleChangeReplacement(item.color)"
-                title="点击更换颜色"
-              ></button>
-              <span class="font-mono text-xs font-medium text-gray-700 dark:text-gray-300 tracking-wide">{{ item.key }}</span>
+              <span class="w-5 h-5 rounded-md border border-gray-300/80 dark:border-gray-600/80 flex-shrink-0 shadow-sm"
+                :style="{ backgroundColor: item.color }"></span>
+              <span class="font-mono text-xs font-medium text-gray-700 dark:text-gray-300 tracking-wide">{{ item.key
+                }}</span>
             </div>
             <div class="flex items-center gap-2">
-              <span class="text-[11px] tabular-nums text-gray-400 dark:text-gray-500 font-medium">{{ item.count }}</span>
-              <svg class="w-3 h-3 text-gray-300 dark:text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <span class="text-[11px] tabular-nums text-gray-400 dark:text-gray-500 font-medium">{{ item.count
+                }}</span>
+              <svg
+                class="w-3 h-3 text-gray-300 dark:text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
               </svg>
             </div>
@@ -491,78 +379,59 @@ function handleDrop(e: DragEvent) {
 
         <!-- 已排除的颜色 -->
         <div v-if="excludedColorKeys.size > 0" class="mt-3 pt-3 border-t border-gray-200/50 dark:border-gray-700/40">
-          <button
-            @click="showExcludedColors = !showExcludedColors"
-            class="w-full text-xs py-2 px-2.5 rounded-lg transition-colors flex items-center justify-between group/toggle hover:bg-gray-100 dark:hover:bg-gray-800/50"
-          >
+          <button @click="showExcludedColors = !showExcludedColors"
+            class="w-full text-xs py-2 px-2.5 rounded-lg transition-colors flex items-center justify-between group/toggle hover:bg-gray-100 dark:hover:bg-gray-800/50">
             <div class="flex items-center gap-1.5">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
+              <svg xmlns="http://www.w3.org/2000/svg"
                 class="h-3.5 w-3.5 text-gray-400 dark:text-gray-500 transition-transform duration-200"
-                :class="{ 'rotate-90': showExcludedColors }"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                stroke-width="2"
-              ><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path></svg>
+                :class="{ 'rotate-90': showExcludedColors }" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path>
+              </svg>
               <span class="font-medium text-gray-600 dark:text-gray-400">已排除颜色</span>
-              <span class="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-semibold rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400">{{ excludedColorKeys.size }}</span>
+              <span
+                class="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-semibold rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400">{{
+                excludedColorKeys.size }}</span>
             </div>
-            <svg class="w-3 h-3 text-gray-400 dark:text-gray-500 opacity-0 group-hover/toggle:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+            <svg
+              class="w-3 h-3 text-gray-400 dark:text-gray-500 opacity-0 group-hover/toggle:opacity-100 transition-opacity"
+              fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
             </svg>
           </button>
 
           <Transition name="expand">
-            <div v-if="showExcludedColors" class="mt-1.5 rounded-lg border border-gray-200/60 dark:border-gray-800/50 bg-gray-100/60 dark:bg-gray-900/60 overflow-hidden">
+            <div v-if="showExcludedColors"
+              class="mt-1.5 rounded-lg border border-gray-200/60 dark:border-gray-800/50 bg-gray-100/60 dark:bg-gray-900/60 overflow-hidden">
               <ul class="divide-y divide-gray-200/40 dark:divide-gray-800/30">
-                <li
-                  v-for="item in excludedColorsList"
-                  :key="item.color"
-                  class="flex items-center justify-between px-2.5 py-2 hover:bg-gray-200/50 dark:hover:bg-gray-700/50 transition-colors"
-                >
+                <li v-for="item in excludedColorsList" :key="item.color"
+                  class="flex items-center justify-between px-2.5 py-2 hover:bg-gray-200/50 dark:hover:bg-gray-700/50 transition-colors">
                   <!-- 原始颜色 -->
                   <div class="flex items-center gap-2 min-w-0">
+                    <span class="w-4 h-4 rounded border border-gray-300 dark:border-gray-600 flex-shrink-0 opacity-50"
+                      :style="{ backgroundColor: item.color }"></span>
                     <span
-                      class="w-4 h-4 rounded border border-gray-300 dark:border-gray-600 flex-shrink-0 opacity-50"
-                      :style="{ backgroundColor: item.color }"
-                    ></span>
-                    <span class="font-mono text-[11px] text-gray-500 dark:text-gray-400 line-through decoration-gray-400/50 dark:decoration-gray-500/50">{{ item.key }}</span>
+                      class="font-mono text-[11px] text-gray-500 dark:text-gray-400 line-through decoration-gray-400/50 dark:decoration-gray-500/50">{{
+                      item.key }}</span>
                   </div>
 
-                  <!-- 箭头 + 替换颜色 + 恢复按钮 -->
+                  <!-- 恢复按钮 -->
                   <div class="flex items-center gap-1.5 flex-shrink-0">
-                    <svg class="w-3 h-3 text-gray-300 dark:text-gray-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                    </svg>
-                    <button
-                      @click.stop="handleChangeReplacement(item.color)"
-                      class="flex items-center gap-1.5 pl-1.5 pr-2 py-1 rounded-md bg-white dark:bg-gray-800 border border-gray-200/80 dark:border-gray-700/80 hover:border-gray-300 dark:hover:border-gray-600 shadow-xs transition-colors"
-                      title="点击更换替换颜色"
-                    >
-                      <span
-                        class="w-3.5 h-3.5 rounded-sm border border-gray-300 dark:border-gray-600 flex-shrink-0"
-                        :style="{ backgroundColor: item.replacedBy || '#ccc' }"
-                      ></span>
-                      <span class="font-mono text-[10px] font-medium text-gray-700 dark:text-gray-300">{{ item.replacedByKey || '?' }}</span>
-                    </button>
-                    <button
-                      @click.stop="handleRestoreColor(item.color)"
+                    <button @click.stop="handleRestoreColor(item.color)"
                       class="p-1 rounded-md text-gray-400 dark:text-gray-500 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors flex-shrink-0"
-                      title="恢复此颜色"
-                    >
+                      title="恢复此颜色">
                       <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M6 18L18 6M6 6l12 12" />
                       </svg>
                     </button>
                   </div>
                 </li>
               </ul>
               <div class="px-2.5 py-2 border-t border-gray-200/40 dark:border-gray-800/30">
-                <button
-                  @click="handleRestoreAll"
-                  class="w-full text-[11px] font-medium py-1.5 px-3 rounded-md border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 active:bg-gray-100 dark:active:bg-gray-700 transition-colors"
-                >一键恢复所有颜色</button>
+                <button @click="handleRestoreAll"
+                  class="w-full text-[11px] font-medium py-1.5 px-3 rounded-md border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 active:bg-gray-100 dark:active:bg-gray-700 transition-colors">一键恢复所有颜色</button>
               </div>
             </div>
           </Transition>
@@ -573,125 +442,51 @@ function handleDrop(e: DragEvent) {
     <!-- Tooltip (Teleport to body to avoid clipping) -->
     <Teleport to="body">
       <Transition name="tooltip-fade">
-        <div
-          v-if="activeTooltip"
-          ref="tooltipRef"
+        <div v-if="activeTooltip" ref="tooltipRef"
           class="fixed z-[9999] px-2.5 py-2 text-[11px] leading-relaxed text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg pointer-events-none whitespace-normal max-w-[200px]"
           :style="{
             left: tooltipPosition.x + 'px',
             top: tooltipPosition.y + 'px',
             transform: 'translate(-50%, -100%)',
-          }"
-        >
+          }">
           {{ tooltipContent[activeTooltip] }}
-          <div class="absolute left-1/2 -translate-x-1/2 top-full w-2 h-2 bg-white dark:bg-gray-800 border-b border-r border-gray-200 dark:border-gray-700 rotate-45 -mt-1"></div>
-        </div>
-      </Transition>
-    </Teleport>
-
-    <!-- 颜色选择器弹窗 -->
-    <Teleport to="body">
-      <Transition name="modal-fade">
-        <div
-          v-if="showColorPicker"
-          class="fixed inset-0 z-[9998] flex items-center justify-center bg-black/30"
-          @click.self="showColorPicker = false"
-        >
-          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 w-80 max-h-96 flex flex-col overflow-hidden">
-            <div class="px-3 py-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-              <span class="text-xs font-medium text-gray-700 dark:text-gray-200">选择替换颜色</span>
-              <button @click="showColorPicker = false" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <div class="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-1">
-              <!-- 当前图片中的颜色 -->
-              <div v-if="availableColorsForPicker.some(c => c.inGrid)" class="mb-1">
-                <div class="px-2 py-1 text-[10px] text-gray-400 dark:text-gray-500 font-medium">当前图片</div>
-                <div class="flex flex-wrap gap-1 content-start">
-                  <button
-                    v-for="color in availableColorsForPicker.filter(c => c.inGrid)"
-                    :key="color.color"
-                    @click="selectReplacementColor(color.color)"
-                    class="relative w-11 h-11 rounded-lg transition-all duration-100 flex items-center justify-center flex-shrink-0 border-2 border-transparent hover:border-gray-300 dark:hover:border-gray-600"
-                    :style="{ backgroundColor: color.color }"
-                  >
-                    <span
-                      class="text-[9px] font-bold leading-none select-none"
-                      :style="{ color: isLightColor(color.color) ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.7)' }"
-                    >{{ color.key }}</span>
-                  </button>
-                </div>
-              </div>
-              <!-- 完整色板中的其他颜色 -->
-              <div v-if="availableColorsForPicker.some(c => !c.inGrid)">
-                <div class="px-2 py-1 text-[10px] text-gray-400 dark:text-gray-500 font-medium">完整色板</div>
-                <div class="flex flex-wrap gap-1 content-start">
-                  <button
-                    v-for="color in availableColorsForPicker.filter(c => !c.inGrid)"
-                    :key="color.color"
-                    @click="selectReplacementColor(color.color)"
-                    class="relative w-11 h-11 rounded-lg transition-all duration-100 flex items-center justify-center flex-shrink-0 border-2 border-transparent hover:border-gray-300 dark:hover:border-gray-600"
-                    :style="{ backgroundColor: color.color }"
-                  >
-                    <span
-                      class="text-[9px] font-bold leading-none select-none"
-                      :style="{ color: isLightColor(color.color) ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.7)' }"
-                    >{{ color.key }}</span>
-                  </button>
-                </div>
-              </div>
-            </div>
+          <div
+            class="absolute left-1/2 -translate-x-1/2 top-full w-2 h-2 bg-white dark:bg-gray-800 border-b border-r border-gray-200 dark:border-gray-700 rotate-45 -mt-1">
           </div>
         </div>
       </Transition>
     </Teleport>
 
     <!-- Display settings card -->
-    <div class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 p-4 shadow-sm shadow-gray-200/50 space-y-3">
+    <div class="panel p-4 space-y-3">
       <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">显示设置</h3>
 
       <!-- Coordinates toggle -->
       <div class="flex items-center justify-between">
         <span class="text-xs text-gray-500 dark:text-gray-400">显示坐标</span>
-        <button
-          @click="showCoordinates = !showCoordinates"
+        <button @click="showCoordinates = !showCoordinates"
           class="relative w-11 h-[26px] rounded-full transition-colors"
-          :class="showCoordinates ? 'bg-green-500' : 'bg-gray-200 dark:bg-gray-700'"
-        >
-          <div
-            class="absolute top-[3px] w-5 h-5 rounded-full bg-white shadow-sm transition-transform"
-            :class="showCoordinates ? 'translate-x-[22px]' : 'translate-x-[3px]'"
-          />
+          :class="showCoordinates ? 'bg-green-500' : 'bg-gray-200 dark:bg-gray-700'">
+          <div class="absolute top-[3px] w-5 h-5 rounded-full bg-white shadow-sm transition-transform"
+            :class="showCoordinates ? 'translate-x-[22px]' : 'translate-x-[3px]'" />
         </button>
       </div>
 
       <div v-if="showCoordinates" class="flex items-center gap-3">
         <span class="text-xs text-gray-500 dark:text-gray-400 w-8">间隔</span>
-        <input
-          v-model.number="coordinateInterval"
-          min="1"
-          max="10"
-          class="flex-1 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none accent-green-500"
-          type="range"
-        />
-        <span class="text-xs text-gray-500 dark:text-gray-400 tabular-nums w-7 text-right">{{ coordinateInterval === 1 ? '连续' : coordinateInterval }}</span>
+        <input v-model.number="coordinateInterval" min="1" max="10"
+          class="flex-1 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none accent-green-500" type="range" />
+        <span class="text-xs text-gray-500 dark:text-gray-400 tabular-nums w-7 text-right">{{ coordinateInterval === 1 ?
+          '连续' : coordinateInterval }}</span>
       </div>
 
       <!-- Color codes toggle -->
       <div class="flex items-center justify-between">
         <span class="text-xs text-gray-500 dark:text-gray-400">显示色号</span>
-        <button
-          @click="showColorCodes = !showColorCodes"
-          class="relative w-11 h-[26px] rounded-full transition-colors"
-          :class="showColorCodes ? 'bg-green-500' : 'bg-gray-200 dark:bg-gray-700'"
-        >
-          <div
-            class="absolute top-[3px] w-5 h-5 rounded-full bg-white shadow-sm transition-transform"
-            :class="showColorCodes ? 'translate-x-[22px]' : 'translate-x-[3px]'"
-          />
+        <button @click="showColorCodes = !showColorCodes" class="relative w-11 h-[26px] rounded-full transition-colors"
+          :class="showColorCodes ? 'bg-green-500' : 'bg-gray-200 dark:bg-gray-700'">
+          <div class="absolute top-[3px] w-5 h-5 rounded-full bg-white shadow-sm transition-transform"
+            :class="showColorCodes ? 'translate-x-[22px]' : 'translate-x-[3px]'" />
         </button>
       </div>
     </div>

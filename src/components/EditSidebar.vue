@@ -6,7 +6,7 @@ import { usePaletteStore } from '../stores/paletteStore'
 import { useEditorStore } from '../stores/editorStore'
 import { useFocusStore } from '../stores/focusStore'
 import { getColorKeyByHex, sortColorsByHue } from '../utils/colorSystemUtils'
-import { hexToRgb } from '../utils/pixelation'
+import { hexToRgb, replaceAllColor, recalculateColorStats } from '../utils/pixelation'
 import { findClosestPaletteColor, isLightColor } from '../utils/colorUtils'
 import { TRANSPARENT_KEY } from '../types'
 
@@ -14,6 +14,7 @@ const emit = defineEmits<{
   (e: 'color-select', color: any): void
   (e: 'color-replace', source: any, target: any): void
   (e: 'mirror-horizontal'): void
+  (e: 'toggle-edit-history'): void
 }>()
 
 const beadStore = useBeadStore()
@@ -26,8 +27,9 @@ const { selectedColorSystem, activeBeadPalette } = storeToRefs(paletteStore)
 const {
   selectedEditColor, isEraseMode, colorReplaceState,
   manualTool, manualBrushSize, manualMirrorX, manualMirrorY, manualShapeFill,
-  selectionInfo, manualPasteActive, showFullPalette, 
-  selectionDragging, isCopyingSelection, moveToolMode, isFloodFillEraseMode
+  selectionInfo, manualPasteActive, showFullPalette,
+  selectionDragging, isCopyingSelection, moveToolMode, isFloodFillEraseMode,
+  selectMode, selectedCells
 } = storeToRefs(editorStore)
 const { showCoordinates, coordinateInterval, showColorCodes } = storeToRefs(focusStore)
 
@@ -40,11 +42,17 @@ function cancelPaste() { editorStore.cancelPaste() }
 
 function handleCopy() {
   const info = selectionInfo.value
-  if (!info || !mappedPixelData.value) return
+  if (!info || !mappedPixelData.value || selectedCells.value.size === 0) return
+  // 以选区边界左上角为原点，将选中的格子映射到 cells 二维数组
   const cells: any[][] = []
   for (let r = info.startRow; r <= info.endRow; r++) {
     const row: any[] = []
     for (let c = info.startCol; c <= info.endCol; c++) {
+      const key = `${r},${c}`
+      if (!selectedCells.value.has(key)) {
+        row.push(null)
+        continue
+      }
       const cell = mappedPixelData.value[r]?.[c]
       row.push(cell ? { ...cell } : null)
     }
@@ -58,6 +66,7 @@ function handleCopy() {
 const colorPanelCollapsed = ref(false)
 const hueSortEnabled = ref(false)
 const showAllColors = ref(false) // false=当前图中色, true=全部色块
+const selectedCategory = ref('all') // 分类筛选，'all'=全部
 
 // ========== HSV 颜色选择器 ==========
 const pickerHue = ref(0)        // 0-360
@@ -291,14 +300,12 @@ onBeforeUnmount(() => {
 })
 
 function handleDeleteSelection() {
-  const info = selectionInfo.value
-  if (!info || !mappedPixelData.value) return
-  editorStore.saveSnapshot(mappedPixelData.value)
-  for (let r = info.startRow; r <= info.endRow; r++) {
-    for (let c = info.startCol; c <= info.endCol; c++) {
-      if (mappedPixelData.value[r]?.[c] && !mappedPixelData.value[r][c].isExternal) {
-        mappedPixelData.value[r][c] = { key: TRANSPARENT_KEY, color: '#FFFFFF', isExternal: true }
-      }
+  if (!mappedPixelData.value || selectedCells.value.size === 0) return
+  editorStore.saveSnapshot(mappedPixelData.value, '删除选区')
+  for (const key of selectedCells.value) {
+    const [r, c] = key.split(',').map(Number)
+    if (mappedPixelData.value[r]?.[c] && !mappedPixelData.value[r][c].isExternal) {
+      mappedPixelData.value[r][c] = { key: TRANSPARENT_KEY, color: '#FFFFFF', isExternal: true }
     }
   }
   clearSelection()
@@ -328,13 +335,128 @@ const currentGridColors = computed(() => {
   return sortColorsByHue(Array.from(colorMap.values()))
 })
 
-// 展示用颜色列表（支持色相排序）
-const displayColors = computed(() => {
+// ========== 颜色统计色块替换选择器 ==========
+const showColorPicker = ref(false)
+const colorPickerTarget = ref<string | null>(null) // 正在编辑的原始颜色
+const pickerCategory = ref('all') // 替换弹窗的色系筛选，'all'=全部
+
+// 可选色板：当前图片中的颜色排在最前 + 完整色板中的其他颜色
+const availableColorsForPicker = computed(() => {
+  if (!colorPickerTarget.value) return []
+  const targetHex = colorPickerTarget.value.toUpperCase()
+
+  // 当前图片中已有的颜色（排除目标颜色）
+  const gridColorSet = new Set(currentGridColors.value.map(c => c.color.toUpperCase()))
+  const gridColors = currentGridColors.value
+    .filter(c => c.color.toUpperCase() !== targetHex)
+    .map(c => ({ key: c.key, color: c.color, inGrid: true }))
+
+  // 完整色板中不在当前图片中的颜色（排除目标颜色）
+  const otherColors = activeBeadPalette.value
+    .filter(c => {
+      const hex = c.hex.toUpperCase()
+      return hex !== targetHex && !gridColorSet.has(hex)
+    })
+    .map(c => ({
+      key: getColorKeyByHex(c.hex, selectedColorSystem.value),
+      color: c.hex,
+      inGrid: false,
+    }))
+
+  // 合并：当前图片颜色在前，完整色板颜色在后
+  return [...gridColors, ...otherColors]
+})
+
+// 替换弹窗的色系分类列表
+const pickerColorCategories = computed(() => {
+  const categories = new Set<string>()
+  for (const c of availableColorsForPicker.value) {
+    categories.add(getCategoryFromKey(c.key))
+  }
+  return ['all', ...Array.from(categories).sort()]
+})
+
+// 按色系分类过滤后的可选颜色
+const filteredPickerColors = computed(() => {
+  const colors = availableColorsForPicker.value
+  if (pickerCategory.value === 'all') return colors
+  return colors.filter(c => getCategoryFromKey(c.key) === pickerCategory.value)
+})
+
+/** 点击颜色统计中的色块 → 打开替换选择器 */
+function handleChangeColorReplacement(originalHex: string) {
+  colorPickerTarget.value = originalHex
+  pickerCategory.value = 'all'
+  showColorPicker.value = true
+}
+
+/** 关闭替换选择器 */
+function closeColorPicker() {
+  showColorPicker.value = false
+  colorPickerTarget.value = null
+}
+
+/** 选择替换颜色 → 执行颜色替换 */
+function selectReplacementColor(newTargetHex: string) {
+  if (!colorPickerTarget.value || !mappedPixelData.value) return
+  const sourceHex = colorPickerTarget.value.toUpperCase()
+  const targetHex = newTargetHex.toUpperCase()
+  if (sourceHex === targetHex) {
+    closeColorPicker()
+    return
+  }
+  const targetKey = getColorKeyByHex(targetHex, selectedColorSystem.value)
+  const { result, count } = replaceAllColor(mappedPixelData.value, sourceHex, targetKey, targetHex)
+  if (count > 0) {
+    editorStore.saveSnapshot(mappedPixelData.value, '颜色替换')
+    beadStore.setPixelData(result)
+    const stats = recalculateColorStats(result)
+    beadStore.updateColorStats(stats)
+  }
+  closeColorPicker()
+}
+
+// 从颜色标签中提取分类字母（如 A01 -> A, B02 -> B）
+function getCategoryFromKey(key: string): string {
+  const match = key.match(/^([A-Za-z]+)/)
+  return match ? match[1].toUpperCase() : '#'
+}
+
+// 获取所有颜色分类
+const colorCategories = computed(() => {
+  const categories = new Set<string>()
+  if (showAllColors.value) {
+    for (const c of activeBeadPalette.value) {
+      const key = getColorKeyByHex(c.hex, selectedColorSystem.value)
+      categories.add(getCategoryFromKey(key))
+    }
+  } else {
+    for (const c of currentGridColors.value) {
+      categories.add(getCategoryFromKey(c.key))
+    }
+  }
+  return ['all', ...Array.from(categories).sort()]
+})
+
+// 按分类过滤后的颜色
+const filteredColors = computed(() => {
   const colors = showAllColors.value
     ? activeBeadPalette.value.map((c: any) => ({ key: getColorKeyByHex(c.hex, selectedColorSystem.value), color: c.hex }))
     : currentGridColors.value
+  if (selectedCategory.value === 'all') return colors
+  return colors.filter(c => getCategoryFromKey(c.key) === selectedCategory.value)
+})
+
+// 展示用颜色列表（支持分类筛选与色相排序）
+const displayColors = computed(() => {
+  const colors = filteredColors.value
   if (hueSortEnabled.value) return sortColorsByHue(colors)
   return colors
+})
+
+// 切换显示模式时重置分类选择
+watch(showAllColors, () => {
+  selectedCategory.value = 'all'
 })
 
 const toolNameMap: Record<string, string> = {
@@ -346,11 +468,8 @@ const toolNameMap: Record<string, string> = {
 <template>
   <div class="flex-1 overflow-y-auto scrollbar-hide px-3 py-3 flex flex-col gap-3">
     <!-- Status indicator (color replace / erase mode) -->
-    <div
-      v-if="colorReplaceState.isActive || isEraseMode"
-      class="rounded-xl border px-3 py-2 text-xs"
-      :class="colorReplaceState.isActive ? 'border-blue-500/30 bg-blue-500/5 text-blue-600' : 'border-red-300/50 bg-red-50/50 text-red-600'"
-    >
+    <div v-if="colorReplaceState.isActive || isEraseMode" class="rounded-xl border px-3 py-2 text-xs"
+      :class="colorReplaceState.isActive ? 'border-blue-500/30 bg-blue-500/5 text-blue-600' : 'border-red-300/50 bg-red-50/50 text-red-600'">
       <template v-if="colorReplaceState.isActive">
         {{ colorReplaceState.step === 'select-source' ? '第一步，在画布上点击选择源颜色' : '第二步，在色板中选择目标颜色' }}
       </template>
@@ -358,7 +477,7 @@ const toolNameMap: Record<string, string> = {
     </div>
 
     <!-- Tool settings panel -->
-    <div class="bg-white rounded-xl border border-black/10 shadow-sm px-4 py-3 space-y-3">
+    <div class="panel px-4 py-3 space-y-3">
       <div class="text-sm font-bold text-gray-700">
         {{ toolNameMap[manualPasteActive ? 'paste' : manualTool] || manualTool }}
       </div>
@@ -370,40 +489,24 @@ const toolNameMap: Record<string, string> = {
             <span class="font-medium">笔刷大小</span>
             <span class="tabular-nums">{{ manualBrushSize }}</span>
           </div>
-          <input
-            v-model.number="manualBrushSize"
-            type="range"
-            :min="1"
-            :max="7"
-            :step="1"
-            class="w-full accent-blue-500"
-          />
+          <input v-model.number="manualBrushSize" type="range" :min="1" :max="7" :step="1"
+            class="w-full accent-blue-500" />
           <div class="flex flex-wrap gap-1.5">
-            <button
-              @click="manualMirrorX = !manualMirrorX"
-              :class="[
-                'px-2.5 py-1.5 text-xs rounded-lg border transition-colors',
-                manualMirrorX ? 'bg-gray-900 text-gray-50 border-gray-900' : 'bg-gray-50 text-gray-600 border-gray-200 active:bg-gray-200'
-              ]"
-            >↔ 镜像</button>
-            <button
-              @click="manualMirrorY = !manualMirrorY"
-              :class="[
-                'px-2.5 py-1.5 text-xs rounded-lg border transition-colors',
-                manualMirrorY ? 'bg-gray-900 text-gray-50 border-gray-900' : 'bg-gray-50 text-gray-600 border-gray-200 active:bg-gray-200'
-              ]"
-            >↕ 镜像</button>
+            <button @click="manualMirrorX = !manualMirrorX" :class="[
+              'px-2.5 py-1.5 text-xs rounded-lg border transition-colors',
+              manualMirrorX ? 'bg-gray-900 text-gray-50 border-gray-900' : 'bg-gray-50 text-gray-600 border-gray-200 active:bg-gray-200'
+            ]">↔ 镜像</button>
+            <button @click="manualMirrorY = !manualMirrorY" :class="[
+              'px-2.5 py-1.5 text-xs rounded-lg border transition-colors',
+              manualMirrorY ? 'bg-gray-900 text-gray-50 border-gray-900' : 'bg-gray-50 text-gray-600 border-gray-200 active:bg-gray-200'
+            ]">↕ 镜像</button>
           </div>
         </div>
         <!-- Rect fill toggle -->
-        <button
-          v-if="manualTool === 'rect'"
-          @click="manualShapeFill = !manualShapeFill"
-          :class="[
-            'px-2.5 py-1.5 text-xs rounded-lg border transition-colors w-full',
-            manualShapeFill ? 'bg-gray-900 text-gray-50 border-gray-900' : 'bg-gray-50 text-gray-600 border-gray-200 active:bg-gray-200'
-          ]"
-        >{{ manualShapeFill ? '实心填充' : '仅描边' }}</button>
+        <button v-if="manualTool === 'rect'" @click="manualShapeFill = !manualShapeFill" :class="[
+          'px-2.5 py-1.5 text-xs rounded-lg border transition-colors w-full',
+          manualShapeFill ? 'bg-gray-900 text-gray-50 border-gray-900' : 'bg-gray-50 text-gray-600 border-gray-200 active:bg-gray-200'
+        ]">{{ manualShapeFill ? '实心填充' : '仅描边' }}</button>
       </template>
 
       <!-- Eraser settings -->
@@ -413,22 +516,13 @@ const toolNameMap: Record<string, string> = {
             <span class="font-medium">笔刷大小</span>
             <span class="tabular-nums">{{ manualBrushSize }}</span>
           </div>
-          <input
-            v-model.number="manualBrushSize"
-            type="range"
-            :min="1"
-            :max="7"
-            :step="1"
-            class="w-full accent-blue-500"
-          />
+          <input v-model.number="manualBrushSize" type="range" :min="1" :max="7" :step="1"
+            class="w-full accent-blue-500" />
         </div>
-        <button
-          @click="isFloodFillEraseMode ? exitFloodFillEraseMode() : enterFloodFillEraseMode()"
-          :class="[
-            'px-2.5 py-1.5 text-xs rounded-lg border transition-colors w-full',
-            isFloodFillEraseMode ? 'bg-gray-900 text-gray-50 border-gray-900' : 'bg-gray-50 text-gray-600 border-gray-200 active:bg-gray-200'
-          ]"
-        >{{ isFloodFillEraseMode ? '退出区域擦除模式' : '区域擦除（同色连通）' }}</button>
+        <button @click="isFloodFillEraseMode ? exitFloodFillEraseMode() : enterFloodFillEraseMode()" :class="[
+          'px-2.5 py-1.5 text-xs rounded-lg border transition-colors w-full',
+          isFloodFillEraseMode ? 'bg-gray-900 text-gray-50 border-gray-900' : 'bg-gray-50 text-gray-600 border-gray-200 active:bg-gray-200'
+        ]">{{ isFloodFillEraseMode ? '退出区域擦除模式' : '区域擦除（同色连通）' }}</button>
       </template>
 
       <!-- Picker hint -->
@@ -438,32 +532,36 @@ const toolNameMap: Record<string, string> = {
 
       <!-- Fill settings -->
       <template v-if="manualTool === 'fill'">
-        <button
-          @click="toggleColorReplaceMode()"
-          :class="[
-            'px-2.5 py-1.5 text-xs rounded-lg border transition-colors w-full',
-            colorReplaceState.isActive ? 'bg-gray-900 text-gray-50 border-gray-900' : 'bg-gray-50 text-gray-600 border-gray-200 active:bg-gray-200'
-          ]"
-        >{{ colorReplaceState.isActive ? '退出批量替换模式' : '批量替换颜色' }}</button>
+        <button @click="toggleColorReplaceMode()" :class="[
+          'px-2.5 py-1.5 text-xs rounded-lg border transition-colors w-full',
+          colorReplaceState.isActive ? 'bg-gray-900 text-gray-50 border-gray-900' : 'bg-gray-50 text-gray-600 border-gray-200 active:bg-gray-200'
+        ]">{{ colorReplaceState.isActive ? '退出批量替换模式' : '批量替换颜色' }}</button>
       </template>
 
       <!-- Select tool: 仅选区操作 -->
       <template v-if="manualTool === 'select'">
         <div class="space-y-2">
-          <p class="text-xs text-gray-400">点击拖拽创建选区，松开后选区确定</p>
+          <!-- 选区模式切换：矩形选区 / 单格选区 -->
+          <div class="flex bg-gray-100 dark:bg-gray-700 rounded-lg p-0.5">
+            <button class="flex-1 text-xs py-1 px-2.5 rounded-md transition-colors"
+              :class="selectMode === 'rect' ? 'bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100 shadow-sm' : 'text-gray-500 dark:text-gray-400 active:text-gray-700'"
+              @click="editorStore.setSelectMode('rect')">矩形选区</button>
+            <button class="flex-1 text-xs py-1 px-2.5 rounded-md transition-colors"
+              :class="selectMode === 'single' ? 'bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100 shadow-sm' : 'text-gray-500 dark:text-gray-400 active:text-gray-700'"
+              @click="editorStore.setSelectMode('single')">单格选区</button>
+          </div>
+          <p class="text-xs text-gray-400" v-if="selectMode === 'rect'">拖拽框选矩形选区，松开并入现有选区；按住 Ctrl 拖拽可减除选区</p>
+          <p class="text-xs text-gray-400" v-else>点击格子并入选区，按住 Ctrl 点击可减除选区</p>
           <div v-if="selectionInfo" class="flex items-center justify-between text-xs text-gray-600">
             <span class="font-medium">选区尺寸</span>
-            <span class="tabular-nums">{{ selectionInfo.width }}×{{ selectionInfo.height }}</span>
+            <span class="tabular-nums">{{ selectionInfo.width }}×{{ selectionInfo.height }} ({{ selectedCells.size }}
+              格)</span>
           </div>
           <div v-if="selectionInfo" class="flex flex-wrap gap-1.5">
-            <button
-              @click="editorStore.setManualTool('move')"
-              class="px-2.5 py-1.5 text-xs rounded-lg border bg-gray-900 text-gray-50 border-gray-900 transition-colors"
-            >移动选区</button>
-            <button
-              @click="clearSelection()"
-              class="px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 active:bg-gray-200 transition-colors"
-            >取消选区</button>
+            <button @click="editorStore.setManualTool('move')"
+              class="px-2.5 py-1.5 text-xs rounded-lg border bg-gray-900 text-gray-50 border-gray-900 transition-colors">移动选区</button>
+            <button @click="clearSelection()"
+              class="px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 active:bg-gray-200 transition-colors">取消选区</button>
           </div>
         </div>
       </template>
@@ -481,25 +579,21 @@ const toolNameMap: Record<string, string> = {
           </template>
           <!-- 模式切换 -->
           <div class="flex items-center gap-1.5">
-            <button
-              @click="editorStore.toggleMoveToolMode()"
-              :class="[
-                'flex-1 px-2.5 py-1.5 text-xs rounded-lg border transition-colors',
-                moveToolMode === 'copy' ? 'bg-green-500 text-white border-green-500' : 'bg-orange-500 text-white border-orange-500'
-              ]"
-            >{{ moveToolMode === 'copy' ? '📋 复制模式' : '✂️ 剪贴模式' }}</button>
+            <button @click="editorStore.toggleMoveToolMode()" :class="[
+              'flex-1 px-2.5 py-1.5 text-xs rounded-lg border transition-colors',
+              moveToolMode === 'copy' ? 'bg-green-500 text-white border-green-500' : 'bg-orange-500 text-white border-orange-500'
+            ]">{{ moveToolMode === 'copy' ? '📋 复制模式' : '✂️ 剪贴模式' }}</button>
           </div>
           <div class="flex items-center justify-between text-xs text-gray-600">
             <span class="font-medium">选区尺寸</span>
-            <span class="tabular-nums">{{ selectionInfo ? `${selectionInfo.width}×${selectionInfo.height}` : '无' }}</span>
+            <span class="tabular-nums">{{ selectionInfo ? `${selectionInfo.width}×${selectionInfo.height}` : '无'
+              }}</span>
           </div>
           <div class="flex flex-wrap gap-1.5">
             <button @click="handleDeleteSelection" :disabled="!selectionInfo"
-              class="px-2 py-1 text-xs rounded-lg border border-gray-200 text-gray-600 active:bg-gray-200 transition-colors disabled:opacity-30"
-            >清空选区</button>
+              class="px-2 py-1 text-xs rounded-lg border border-gray-200 text-gray-600 active:bg-gray-200 transition-colors disabled:opacity-30">清空选区</button>
             <button @click="clearSelection()"
-              class="px-2 py-1 text-xs rounded-lg border border-gray-200 text-gray-600 active:bg-gray-200 transition-colors"
-            >取消选区</button>
+              class="px-2 py-1 text-xs rounded-lg border border-gray-200 text-gray-600 active:bg-gray-200 transition-colors">取消选区</button>
           </div>
         </div>
       </template>
@@ -509,8 +603,7 @@ const toolNameMap: Record<string, string> = {
         <div class="space-y-2">
           <p class="text-xs text-gray-400">在画布上点击放置粘贴内容</p>
           <button @click="cancelPaste"
-            class="px-2 py-1 text-xs rounded-lg border border-gray-200 text-gray-600 active:bg-gray-200 transition-colors w-full"
-          >取消粘贴</button>
+            class="px-2 py-1 text-xs rounded-lg border border-gray-200 text-gray-600 active:bg-gray-200 transition-colors w-full">取消粘贴</button>
         </div>
       </template>
 
@@ -521,32 +614,31 @@ const toolNameMap: Record<string, string> = {
     </div>
 
     <!-- Global operations -->
-    <div class="bg-white rounded-xl border border-black/10 shadow-sm px-4 py-3 space-y-2">
+    <div class="panel px-4 py-3 space-y-2">
       <div class="text-sm font-bold text-gray-700">全局操作</div>
-      <button
-        @click="emit('mirror-horizontal')"
+      <button @click="emit('toggle-edit-history')"
         class="px-2.5 py-1.5 text-xs rounded-lg border transition-colors bg-gray-50 text-gray-600 border-gray-200 active:bg-gray-200 hover:bg-gray-100 w-full"
-        title="水平翻转整个图纸"
-      >↔ 水平镜像</button>
+        title="查看修改历史">🕘 修改历史</button>
+      <button @click="emit('mirror-horizontal')"
+        class="px-2.5 py-1.5 text-xs rounded-lg border transition-colors bg-gray-50 text-gray-600 border-gray-200 active:bg-gray-200 hover:bg-gray-100 w-full"
+        title="水平翻转整个图纸">↔ 水平镜像</button>
     </div>
 
     <!-- Color palette card -->
-    <div class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 shadow-sm overflow-hidden flex-shrink-0">
+    <div class="panel overflow-hidden flex-shrink-0">
       <button
         class="w-full flex items-center justify-between px-4 py-3 active:bg-gray-100 dark:active:bg-gray-800 transition-colors"
-        @click="colorPanelCollapsed = !colorPanelCollapsed"
-      >
+        @click="colorPanelCollapsed = !colorPanelCollapsed">
         <span class="text-xs font-semibold text-gray-500 dark:text-gray-400">色板</span>
         <div class="flex items-center gap-2">
           <div v-if="selectedEditColor" class="flex items-center gap-1.5">
-            <span class="w-4 h-4 rounded border border-gray-300 dark:border-gray-500" :style="{ backgroundColor: selectedEditColor.color }"></span>
+            <span class="w-4 h-4 rounded border border-gray-300 dark:border-gray-500"
+              :style="{ backgroundColor: selectedEditColor.color }"></span>
             <span class="text-[10px] text-gray-500 dark:text-gray-400">{{ selectedEditColor.key }}</span>
           </div>
-          <svg
-            class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400 transition-transform"
-            :class="{ 'rotate-180': !colorPanelCollapsed }"
-            fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"
-          >
+          <svg class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400 transition-transform"
+            :class="{ 'rotate-180': !colorPanelCollapsed }" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+            stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path>
           </svg>
         </div>
@@ -555,52 +647,54 @@ const toolNameMap: Record<string, string> = {
         <div class="p-3">
           <div class="flex gap-1.5 mb-3">
             <div class="flex bg-gray-100 dark:bg-gray-700 rounded-lg p-0.5">
-              <button
-                class="text-xs py-1 px-2.5 rounded-md transition-colors"
+              <button class="text-xs py-1 px-2.5 rounded-md transition-colors"
                 :class="!showFullPalette ? 'bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100 shadow-sm' : 'text-gray-500 dark:text-gray-400 active:text-gray-700'"
-                @click="showFullPalette = false"
-              >色块</button>
-              <button
-                class="text-xs py-1 px-2.5 rounded-md transition-colors"
+                @click="showFullPalette = false">色块</button>
+              <button class="text-xs py-1 px-2.5 rounded-md transition-colors"
                 :class="showFullPalette ? 'bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100 shadow-sm' : 'text-gray-500 dark:text-gray-400 active:text-gray-700'"
-                @click="showFullPalette = true"
-              >色盘</button>
+                @click="showFullPalette = true">色盘</button>
             </div>
             <template v-if="!showFullPalette">
               <button
                 class="flex-1 text-xs py-1.5 px-2 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-lg active:bg-gray-200 dark:active:bg-gray-600 transition-colors"
-                @click="showAllColors = !showAllColors"
-              >{{ showAllColors ? '全部' : '当前' }} ({{ displayColors.length }})</button>
+                @click="showAllColors = !showAllColors">{{ showAllColors ? '全部' : '当前' }} ({{ displayColors.length
+                }})</button>
               <button
                 class="text-xs py-1.5 px-2.5 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-lg active:bg-gray-200 dark:active:bg-gray-600 transition-colors whitespace-nowrap"
                 :class="hueSortEnabled ? 'ring-1 ring-gray-400 dark:ring-gray-500' : ''"
-                @click="hueSortEnabled = !hueSortEnabled"
-              >色相排序</button>
+                @click="hueSortEnabled = !hueSortEnabled">色相排序</button>
             </template>
           </div>
 
           <!-- 色块模式：颜色网格 -->
           <template v-if="!showFullPalette">
-            <div v-if="displayColors.length === 0" class="text-xs text-gray-400 dark:text-gray-500 text-center py-2">暂无颜色</div>
-            <div v-else class="grid grid-cols-6 gap-1.5">
-              <button
-                v-for="color in displayColors"
-                :key="color.color"
-                @click="selectEditColor(color)"
-                class="relative rounded-lg border-2 transition-all duration-150 active:scale-95 flex items-center justify-center"
-                :style="{ backgroundColor: color.color, aspectRatio: '1 / 1' }"
-                :title="`${color.key} (${color.color})`"
-                :class="[
-                  selectedEditColor?.color === color.color
-                    ? 'border-gray-900 dark:border-gray-100 ring-2 ring-gray-900/20 dark:ring-gray-100/20'
-                    : 'border-gray-200 dark:border-gray-600 active:border-gray-400 dark:active:border-gray-400'
-                ]"
-              >
-                <span
-                  class="text-[9px] font-bold leading-none select-none"
-                  :class="isLightColor(color.color) ? 'text-gray-900/70' : 'text-white/80'"
-                >{{ color.key }}</span>
-              </button>
+            <div v-if="displayColors.length === 0" class="text-xs text-gray-400 dark:text-gray-500 text-center py-2">
+              暂无颜色</div>
+            <div v-else class="flex gap-2" style="height: 240px;">
+              <!-- 左侧分类标签 -->
+              <div class="flex flex-col gap-0.5 overflow-y-auto scrollbar-hide w-10 flex-shrink-0">
+                <button v-for="cat in colorCategories" :key="cat" @click="selectedCategory = cat"
+                  class="text-[10px] py-1 px-1 rounded transition-colors whitespace-nowrap"
+                  :class="selectedCategory === cat
+                    ? 'bg-gray-900 text-white font-medium dark:bg-gray-100 dark:text-gray-900'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'">{{ cat === 'all' ? '全部' : cat }}</button>
+              </div>
+              <!-- 右侧颜色网格 -->
+              <div class="flex-1 overflow-y-auto scrollbar-hide">
+                <div class="grid grid-cols-5 gap-1.5">
+                  <button v-for="color in displayColors" :key="color.color" @click="selectEditColor(color)"
+                    class="relative rounded-lg border-2 transition-all duration-150 active:scale-95 flex items-center justify-center"
+                    :style="{ backgroundColor: color.color, aspectRatio: '1 / 1' }"
+                    :title="`${color.key} (${color.color})`" :class="[
+                      selectedEditColor?.color === color.color
+                        ? 'border-gray-900 dark:border-gray-100 ring-2 ring-gray-900/20 dark:ring-gray-100/20'
+                        : 'border-gray-200 dark:border-gray-600 active:border-gray-400 dark:active:border-gray-400'
+                    ]">
+                    <span class="text-[9px] font-bold leading-none select-none"
+                      :class="isLightColor(color.color) ? 'text-gray-900/70' : 'text-white/80'">{{ color.key }}</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </template>
 
@@ -608,111 +702,84 @@ const toolNameMap: Record<string, string> = {
           <template v-else>
             <div class="space-y-3">
               <!-- 饱和度/明度面板 -->
-              <div
-                ref="satPanelRef"
-                class="relative rounded-lg cursor-crosshair touch-none select-none overflow-hidden"
-                style="aspect-ratio: 224 / 144;"
-                @mousedown="startSatDrag"
-                @touchstart.prevent="startSatDrag"
-              >
+              <div ref="satPanelRef" class="relative rounded-lg cursor-crosshair touch-none select-none overflow-hidden"
+                style="aspect-ratio: 224 / 144;" @mousedown="startSatDrag" @touchstart.prevent="startSatDrag">
                 <div class="absolute inset-0" :style="{ backgroundColor: `hsl(${pickerHue}, 100%, 50%)` }"></div>
-                <div class="absolute inset-0" style="background: linear-gradient(to right, rgb(255, 255, 255), transparent);"></div>
+                <div class="absolute inset-0"
+                  style="background: linear-gradient(to right, rgb(255, 255, 255), transparent);"></div>
                 <div class="absolute inset-0" style="background: linear-gradient(transparent, rgb(0, 0, 0));"></div>
-                <div
-                  class="absolute w-3.5 h-3.5 rounded-full border-2 border-white shadow-md pointer-events-none"
+                <div class="absolute w-3.5 h-3.5 rounded-full border-2 border-white shadow-md pointer-events-none"
                   :style="{
                     left: pickerSat + '%',
                     top: (100 - pickerVal) + '%',
                     transform: 'translate(-50%, -50%)',
                     backgroundColor: pickerHex
-                  }"
-                ></div>
+                  }"></div>
               </div>
 
               <!-- 色相滑块 -->
-              <div
-                ref="hueBarRef"
-                class="relative rounded-full cursor-crosshair touch-none select-none"
+              <div ref="hueBarRef" class="relative rounded-full cursor-crosshair touch-none select-none"
                 style="height: 14px; background: linear-gradient(to right, rgb(255, 0, 0) 0%, rgb(255, 255, 0) 17%, rgb(0, 255, 0) 33%, rgb(0, 255, 255) 50%, rgb(0, 0, 255) 67%, rgb(255, 0, 255) 83%, rgb(255, 0, 0) 100%);"
-                @mousedown="startHueDrag"
-                @touchstart.prevent="startHueDrag"
-              >
-                <div
-                  class="absolute top-1/2 w-3 h-3 rounded-full border-2 border-white shadow pointer-events-none"
+                @mousedown="startHueDrag" @touchstart.prevent="startHueDrag">
+                <div class="absolute top-1/2 w-3 h-3 rounded-full border-2 border-white shadow pointer-events-none"
                   :style="{
                     left: (pickerHue / 360 * 100) + '%',
                     transform: 'translate(-50%, -50%)',
                     backgroundColor: `hsl(${pickerHue}, 100%, 50%)`
-                  }"
-                ></div>
+                  }"></div>
               </div>
 
               <!-- 输入框 -->
               <div class="space-y-1.5">
                 <div class="flex items-center gap-2">
                   <span class="text-[11px] text-gray-500 dark:text-gray-400 w-7 flex-shrink-0">HEX</span>
-                  <input
-                    v-model="pickerHexInput"
-                    @change="updateFromHex"
-                    @blur="updateFromHex"
-                    class="w-full px-1 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 text-center outline-none focus:border-brand-500 text-[11px] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none flex-1"
-                  />
+                  <input v-model="pickerHexInput" @change="updateFromHex" @blur="updateFromHex"
+                    class="w-full px-1 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 text-center outline-none focus:border-brand-500 text-[11px] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none flex-1" />
                 </div>
                 <div class="flex items-center gap-1.5">
                   <span class="text-[11px] text-gray-500 dark:text-gray-400 w-7 flex-shrink-0">RGB</span>
-                  <input
-                    v-model.number="pickerR" type="number" min="0" max="255" placeholder="R"
+                  <input v-model.number="pickerR" type="number" min="0" max="255" placeholder="R"
                     @change="updateFromRgb" @blur="updateFromRgb"
-                    class="w-full px-1 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 text-center outline-none focus:border-brand-500 text-[11px] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none flex-1"
-                  />
-                  <input
-                    v-model.number="pickerG" type="number" min="0" max="255" placeholder="G"
+                    class="w-full px-1 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 text-center outline-none focus:border-brand-500 text-[11px] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none flex-1" />
+                  <input v-model.number="pickerG" type="number" min="0" max="255" placeholder="G"
                     @change="updateFromRgb" @blur="updateFromRgb"
-                    class="w-full px-1 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 text-center outline-none focus:border-brand-500 text-[11px] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none flex-1"
-                  />
-                  <input
-                    v-model.number="pickerB" type="number" min="0" max="255" placeholder="B"
+                    class="w-full px-1 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 text-center outline-none focus:border-brand-500 text-[11px] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none flex-1" />
+                  <input v-model.number="pickerB" type="number" min="0" max="255" placeholder="B"
                     @change="updateFromRgb" @blur="updateFromRgb"
-                    class="w-full px-1 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 text-center outline-none focus:border-brand-500 text-[11px] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none flex-1"
-                  />
+                    class="w-full px-1 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 text-center outline-none focus:border-brand-500 text-[11px] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none flex-1" />
                 </div>
                 <div class="flex items-center gap-1.5">
                   <span class="text-[11px] text-gray-500 dark:text-gray-400 w-7 flex-shrink-0">HSL</span>
-                  <input
-                    v-model.number="pickerH" type="number" min="0" max="360" placeholder="H"
+                  <input v-model.number="pickerH" type="number" min="0" max="360" placeholder="H"
                     @change="updateFromHsl" @blur="updateFromHsl"
-                    class="w-full px-1 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 text-center outline-none focus:border-brand-500 text-[11px] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none flex-1"
-                  />
-                  <input
-                    v-model.number="pickerS" type="number" min="0" max="100" placeholder="S"
+                    class="w-full px-1 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 text-center outline-none focus:border-brand-500 text-[11px] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none flex-1" />
+                  <input v-model.number="pickerS" type="number" min="0" max="100" placeholder="S"
                     @change="updateFromHsl" @blur="updateFromHsl"
-                    class="w-full px-1 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 text-center outline-none focus:border-brand-500 text-[11px] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none flex-1"
-                  />
-                  <input
-                    v-model.number="pickerL" type="number" min="0" max="100" placeholder="L"
+                    class="w-full px-1 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 text-center outline-none focus:border-brand-500 text-[11px] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none flex-1" />
+                  <input v-model.number="pickerL" type="number" min="0" max="100" placeholder="L"
                     @change="updateFromHsl" @blur="updateFromHsl"
-                    class="w-full px-1 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 text-center outline-none focus:border-brand-500 text-[11px] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none flex-1"
-                  />
+                    class="w-full px-1 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 text-center outline-none focus:border-brand-500 text-[11px] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none flex-1" />
                 </div>
               </div>
 
               <!-- 最近拼豆色匹配 -->
               <div v-if="closestBeadColor" class="p-2.5 bg-gray-100 dark:bg-gray-700 rounded-lg space-y-2">
                 <div class="flex items-center gap-2">
-                  <div class="w-6 h-6 rounded border border-gray-300 dark:border-gray-500 flex-shrink-0" :style="{ backgroundColor: pickerHex }"></div>
-                  <svg class="w-3 h-3 text-gray-500 dark:text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <div class="w-6 h-6 rounded border border-gray-300 dark:border-gray-500 flex-shrink-0"
+                    :style="{ backgroundColor: pickerHex }"></div>
+                  <svg class="w-3 h-3 text-gray-500 dark:text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24"
+                    stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path>
                   </svg>
-                  <div class="w-6 h-6 rounded border border-gray-300 dark:border-gray-500 flex-shrink-0" :style="{ backgroundColor: closestBeadColor.hex }"></div>
+                  <div class="w-6 h-6 rounded border border-gray-300 dark:border-gray-500 flex-shrink-0"
+                    :style="{ backgroundColor: closestBeadColor.hex }"></div>
                   <div class="text-xs text-gray-600 dark:text-gray-300 min-w-0">
                     <span class="font-semibold">{{ closestBeadColor.displayKey }}</span>
                     <span class="text-gray-500 dark:text-gray-400 ml-1">{{ closestBeadColor.hex }}</span>
                   </div>
                 </div>
-                <button
-                  @click="usePickerColor"
-                  class="w-full text-xs py-1.5 rounded-lg bg-blue-500 text-white font-medium active:bg-blue-600 transition-colors"
-                >使用此颜色</button>
+                <button @click="usePickerColor"
+                  class="w-full text-xs py-1.5 rounded-lg bg-blue-500 text-white font-medium active:bg-blue-600 transition-colors">使用此颜色</button>
               </div>
             </div>
           </template>
@@ -721,67 +788,112 @@ const toolNameMap: Record<string, string> = {
     </div>
 
     <!-- Color stats card -->
-    <div v-if="mappedPixelData" class="bg-white rounded-xl border border-black/10 p-4">
+    <div v-if="mappedPixelData" class="panel p-4">
       <h3 class="text-sm font-medium text-black mb-2">
         颜色统计
-        <span class="text-xs text-black/35 font-normal ml-1">{{ currentGridColors.length }} 种 / {{ currentGridColors.reduce((sum, c) => sum + c.count, 0) }} 粒</span>
+        <span class="text-xs text-black/35 font-normal ml-1">{{ currentGridColors.length }} 种 / {{
+          currentGridColors.reduce((sum, c) => sum + c.count, 0) }} 粒</span>
       </h3>
       <div class="max-h-60 overflow-y-auto scrollbar-hide space-y-1">
-        <div
-          v-for="item in currentGridColors"
-          :key="item.color"
-          class="flex items-center gap-2 py-1 px-2 rounded"
-        >
-          <div class="w-5 h-5 rounded-md border border-black/10 flex-shrink-0" :style="{ backgroundColor: item.color }"></div>
-          <span class="text-xs font-mono flex-1 text-black">{{ item.key }}</span>
-          <span class="text-xs text-black/35">{{ item.count }}</span>
-        </div>
+        <button v-for="item in currentGridColors" :key="item.color" @click="handleChangeColorReplacement(item.color)"
+          class="w-full flex items-center gap-2 py-1 px-2 rounded hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors text-left"
+          title="点击替换该颜色">
+          <div class="w-5 h-5 rounded-md border border-black/10 flex-shrink-0" :style="{ backgroundColor: item.color }">
+          </div>
+          <span class="text-xs font-mono flex-1 text-black dark:text-gray-200">{{ item.key }}</span>
+          <span class="text-xs text-black/35 dark:text-gray-400">{{ item.count }}</span>
+        </button>
       </div>
     </div>
 
+    <!-- 颜色替换选择器弹窗 -->
+    <Teleport to="body">
+      <Transition name="modal-fade">
+        <div v-if="showColorPicker" class="fixed inset-0 z-[9998] flex items-center justify-center bg-black/30"
+          @click.self="closeColorPicker">
+          <div
+            class="bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 w-80 max-h-96 flex flex-col overflow-hidden">
+            <div class="px-3 py-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+              <span class="text-xs font-medium text-gray-700 dark:text-gray-200">选择替换颜色</span>
+              <button @click="closeColorPicker" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <!-- 色系筛选标签 -->
+            <div class="px-2 py-1.5 border-b border-gray-200 dark:border-gray-700 flex flex-wrap gap-1">
+              <button v-for="cat in pickerColorCategories" :key="cat" @click="pickerCategory = cat"
+                class="text-[10px] py-1 px-2 rounded transition-colors whitespace-nowrap"
+                :class="pickerCategory === cat
+                  ? 'bg-gray-900 text-white font-medium dark:bg-gray-100 dark:text-gray-900'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'">{{ cat === 'all' ? '全部' : cat }}</button>
+            </div>
+            <div class="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-1">
+              <!-- 当前图片中的颜色 -->
+              <div v-if="filteredPickerColors.some(c => c.inGrid)" class="mb-1">
+                <div class="px-2 py-1 text-[10px] text-gray-400 dark:text-gray-500 font-medium">当前图片</div>
+                <div class="flex flex-wrap gap-1 content-start">
+                  <button v-for="color in filteredPickerColors.filter(c => c.inGrid)" :key="color.color"
+                    @click="selectReplacementColor(color.color)"
+                    class="relative w-11 h-11 rounded-lg transition-all duration-100 flex items-center justify-center flex-shrink-0 border-2 border-transparent hover:border-gray-300 dark:hover:border-gray-600"
+                    :style="{ backgroundColor: color.color }">
+                    <span class="text-[9px] font-bold leading-none select-none"
+                      :style="{ color: isLightColor(color.color) ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.7)' }">{{
+                      color.key }}</span>
+                  </button>
+                </div>
+              </div>
+              <!-- 完整色板中的其他颜色 -->
+              <div v-if="filteredPickerColors.some(c => !c.inGrid)">
+                <div class="px-2 py-1 text-[10px] text-gray-400 dark:text-gray-500 font-medium">完整色板</div>
+                <div class="flex flex-wrap gap-1 content-start">
+                  <button v-for="color in filteredPickerColors.filter(c => !c.inGrid)" :key="color.color"
+                    @click="selectReplacementColor(color.color)"
+                    class="relative w-11 h-11 rounded-lg transition-all duration-100 flex items-center justify-center flex-shrink-0 border-2 border-transparent hover:border-gray-300 dark:hover:border-gray-600"
+                    :style="{ backgroundColor: color.color }">
+                    <span class="text-[9px] font-bold leading-none select-none"
+                      :style="{ color: isLightColor(color.color) ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.7)' }">{{
+                      color.key }}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
     <!-- Display settings card -->
-    <div class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 p-4 shadow-sm shadow-gray-200/50 space-y-3">
+    <div class="panel p-4 space-y-3">
       <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">显示设置</h3>
 
       <!-- Coordinates toggle -->
       <div class="flex items-center justify-between">
         <span class="text-xs text-gray-500 dark:text-gray-400">显示坐标</span>
-        <button
-          @click="showCoordinates = !showCoordinates"
+        <button @click="showCoordinates = !showCoordinates"
           class="relative w-11 h-[26px] rounded-full transition-colors"
-          :class="showCoordinates ? 'bg-green-500' : 'bg-gray-200 dark:bg-gray-700'"
-        >
-          <div
-            class="absolute top-[3px] w-5 h-5 rounded-full bg-white shadow-sm transition-transform"
-            :class="showCoordinates ? 'translate-x-[22px]' : 'translate-x-[3px]'"
-          />
+          :class="showCoordinates ? 'bg-green-500' : 'bg-gray-200 dark:bg-gray-700'">
+          <div class="absolute top-[3px] w-5 h-5 rounded-full bg-white shadow-sm transition-transform"
+            :class="showCoordinates ? 'translate-x-[22px]' : 'translate-x-[3px]'" />
         </button>
       </div>
 
       <div v-if="showCoordinates" class="flex items-center gap-3">
         <span class="text-xs text-gray-500 dark:text-gray-400 w-8">间隔</span>
-        <input
-          v-model.number="coordinateInterval"
-          min="1"
-          max="10"
-          class="flex-1 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none accent-green-500"
-          type="range"
-        />
-        <span class="text-xs text-gray-500 dark:text-gray-400 tabular-nums w-7 text-right">{{ coordinateInterval === 1 ? '连续' : coordinateInterval }}</span>
+        <input v-model.number="coordinateInterval" min="1" max="10"
+          class="flex-1 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none accent-green-500" type="range" />
+        <span class="text-xs text-gray-500 dark:text-gray-400 tabular-nums w-7 text-right">{{ coordinateInterval === 1 ?
+          '连续' : coordinateInterval }}</span>
       </div>
 
       <!-- Color codes toggle -->
       <div class="flex items-center justify-between">
         <span class="text-xs text-gray-500 dark:text-gray-400">显示色号</span>
-        <button
-          @click="showColorCodes = !showColorCodes"
-          class="relative w-11 h-[26px] rounded-full transition-colors"
-          :class="showColorCodes ? 'bg-green-500' : 'bg-gray-200 dark:bg-gray-700'"
-        >
-          <div
-            class="absolute top-[3px] w-5 h-5 rounded-full bg-white shadow-sm transition-transform"
-            :class="showColorCodes ? 'translate-x-[22px]' : 'translate-x-[3px]'"
-          />
+        <button @click="showColorCodes = !showColorCodes" class="relative w-11 h-[26px] rounded-full transition-colors"
+          :class="showColorCodes ? 'bg-green-500' : 'bg-gray-200 dark:bg-gray-700'">
+          <div class="absolute top-[3px] w-5 h-5 rounded-full bg-white shadow-sm transition-transform"
+            :class="showColorCodes ? 'translate-x-[22px]' : 'translate-x-[3px]'" />
         </button>
       </div>
     </div>

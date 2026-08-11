@@ -215,6 +215,8 @@ export function useStatePersistence(): {
     // 恢复像素数据
     if (state.mappedPixelData && state.gridDimensions) {
       beadStore.setPixelData(state.mappedPixelData, state.gridDimensions)
+      // 恢复 2D 画布后开放 2D 工作区
+      uiStore.setWorkspace('2d')
     }
 
     // 恢复颜色统计
@@ -250,9 +252,11 @@ export function useStatePersistence(): {
       paletteStore.excludedColorKeys = new Set(state.excludedColorKeys)
     }
 
-    // 恢复模式（但不恢复focus模式，因为需要重新初始化）
+    // 恢复模式（但不恢复focus模式，因为需要重新初始化；
+    // voxel 数据不持久化，恢复到 voxel 没有意义，回退到优化）
     if (state.activeMode && state.activeMode !== 'focus') {
-      uiStore.switchMode(state.activeMode as any)
+      const restored = state.activeMode === 'voxel' ? 'optimize' : state.activeMode
+      uiStore.switchMode(restored as any)
     }
 
     // 恢复画布视图

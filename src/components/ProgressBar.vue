@@ -38,7 +38,7 @@ const isColorCompleted = computed(() => {
 </script>
 
 <template>
-  <div class="rounded-xl border border-gray-200/60 dark:border-gray-800/50 bg-gray-50/95 dark:bg-gray-900/80 px-4 py-3 shadow-sm shadow-gray-200/50">
+  <div class="panel px-4 py-3">
     <!-- 当前颜色信息 -->
     <div v-if="colorInfo" class="flex items-center justify-between mb-2">
       <div class="flex items-center gap-2">

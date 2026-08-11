@@ -34,10 +34,11 @@ export function useCanvasRenderer(
   const {
     isEraseMode, manualTool, manualBrushSize,
     manualMirrorX, manualMirrorY, highlightColorKey,
-    lineDrawing, rectDrawing, 
+    lineDrawing, rectDrawing,
     selectionBoxDragging, selectionBoxDragOffset,
     selectionDragging, selectionDragOffset, isCopyingSelection,
-    lineStart, selectionStart, currentDrawEnd,
+    lineStart, selectionStart, selectionEnd, currentDrawEnd,
+    selectedCells, selectDrawing,
   } = storeToRefs(editorStore)
   const { activeMode } = storeToRefs(uiStore)
   const { showCoordinates, coordinateInterval, showColorCodes } = storeToRefs(focusStore)
@@ -130,9 +131,14 @@ export function useCanvasRenderer(
 
     // 绘制坐标标签（四周显示）
     if (showCoordinates.value) {
-      const fontSize = Math.max(6, Math.min(9, Math.floor(CELL_SIZE * 0.6)))
       const maxNum = Math.max(N, M)
       const digits = maxNum.toString().length
+      // 字号自适应：受格子宽度（列号）与边框宽度（行号）约束，超边框时自动缩小
+      const colStep = coordinateInterval.value <= 1 ? CELL_SIZE : CELL_SIZE * coordinateInterval.value
+      const maxFontByCol = Math.floor(colStep / (digits * 0.6))
+      let fontSize = Math.max(6, Math.min(9, Math.floor(CELL_SIZE * 0.6)))
+      if (maxFontByCol > 0) fontSize = Math.min(fontSize, maxFontByCol)
+      fontSize = Math.max(4, fontSize) // 保底可读性
       const al = Math.max(fontSize + 3, Math.floor(digits * fontSize * 0.6 + 3))
       ctx.fillStyle = '#F5F5F5'
       // 上方列号背景
@@ -177,27 +183,6 @@ export function useCanvasRenderer(
         if (cell && !cell.isExternal && cell.color.toUpperCase() === highlightColorKey.value.toUpperCase())
           ctx!.fillRect(i * CELL_SIZE, j * CELL_SIZE, CELL_SIZE, CELL_SIZE)
       }
-    }
-    // 选区高亮
-    const selInfo = editorStore.selectionInfo
-    if (selInfo) {
-      ctx!.strokeStyle = 'rgba(59, 130, 246, 0.8)'
-      ctx!.lineWidth = 2
-      ctx!.setLineDash([4, 4])
-      ctx!.strokeRect(
-        selInfo.startCol * CELL_SIZE,
-        selInfo.startRow * CELL_SIZE,
-        selInfo.width * CELL_SIZE,
-        selInfo.height * CELL_SIZE
-      )
-      ctx!.setLineDash([])
-      ctx!.fillStyle = 'rgba(59, 130, 246, 0.1)'
-      ctx!.fillRect(
-        selInfo.startCol * CELL_SIZE,
-        selInfo.startRow * CELL_SIZE,
-        selInfo.width * CELL_SIZE,
-        selInfo.height * CELL_SIZE
-      )
     }
   }
 
@@ -270,9 +255,15 @@ export function useCanvasRenderer(
       for (const p of points) drawCell(p.row, p.col, 'rgba(59,130,246,0.3)', 'rgba(59,130,246,0.6)')
     }
 
-    // 选区高亮（marching ants 效果）
+    // 选区拖拽预览（select 工具绘制中：从起点到当前终点的矩形）
+    if (manualTool.value === 'select' && selectDrawing.value && selectionStart.value && selectionEnd.value) {
+      const points = getRectPoints(selectionStart.value.row, selectionStart.value.col, selectionEnd.value.row, selectionEnd.value.col)
+      for (const p of points) drawCell(p.row, p.col, 'rgba(59,130,246,0.3)', 'rgba(59,130,246,0.6)')
+    }
+
+    // 选区高亮（逐格渲染，支持多区域/非矩形选区）
     const selInfo = editorStore.selectionInfo
-    if (selInfo && (manualTool.value === 'select' || manualTool.value === 'move')) {
+    if ((manualTool.value === 'select' || manualTool.value === 'move')) {
       // 根据拖拽类型选择偏移
       let offsetR = 0, offsetC = 0
       if (selectionBoxDragging.value) {
@@ -282,34 +273,94 @@ export function useCanvasRenderer(
         offsetR = selectionDragOffset.value.dr
         offsetC = selectionDragOffset.value.dc
       }
-      const x1 = (selInfo.startCol + offsetC) * CELL_SIZE
-      const y1 = (selInfo.startRow + offsetR) * CELL_SIZE
-      const w = selInfo.width * CELL_SIZE
-      const h = selInfo.height * CELL_SIZE
 
-      // 拖拽时显示半透明覆盖
-      if (selectionDragging.value) {
-        ctx.fillStyle = 'rgba(59, 130, 246, 0.15)'
-        ctx.fillRect(x1, y1, w, h)
+      // 拖拽移动时：原位置静止覆盖（仅逐格覆盖真正选中的格子，不随偏移移动）
+      if (selectionDragging.value && selectedCells.value.size > 0) {
+        // 复制模式 = 蓝色，剪贴模式 = 红色
+        const isCopy = isCopyingSelection.value
+        const originFill = isCopy ? 'rgba(59, 130, 246, 0.15)' : 'rgba(239, 68, 68, 0.15)'
+        const originStroke = isCopy ? 'rgba(59, 130, 246, 0.8)' : 'rgba(239, 68, 68, 0.8)'
+        ctx.fillStyle = originFill
+        for (const key of selectedCells.value) {
+          const [r, c] = key.split(',').map(Number)
+          if (r < 0 || r >= M || c < 0 || c >= N) continue
+          ctx.fillRect(c * CELL_SIZE, r * CELL_SIZE, CELL_SIZE, CELL_SIZE)
+        }
+        // 原位置外轮廓边框（仅绘制连通区域外轮廓边缘）
+        ctx.strokeStyle = originStroke
+        ctx.lineWidth = 1.5
+        ctx.setLineDash([4, 3])
+        ctx.lineDashOffset = marchingAntsOffset.value
+        ctx.beginPath()
+        for (const key of selectedCells.value) {
+          const [r, c] = key.split(',').map(Number)
+          const x = c * CELL_SIZE, y = r * CELL_SIZE
+          // 边方向与专心模式一致（逆时针路径 + 正值偏移 = 视觉顺时针流动）
+          if (!selectedCells.value.has(`${r - 1},${c}`)) {
+            ctx.moveTo(x + CELL_SIZE + 0.5, y + 0.5)
+            ctx.lineTo(x + 0.5, y + 0.5)
+          }
+          if (!selectedCells.value.has(`${r + 1},${c}`)) {
+            ctx.moveTo(x + 0.5, y + CELL_SIZE + 0.5)
+            ctx.lineTo(x + CELL_SIZE + 0.5, y + CELL_SIZE + 0.5)
+          }
+          if (!selectedCells.value.has(`${r},${c - 1}`)) {
+            ctx.moveTo(x + 0.5, y + 0.5)
+            ctx.lineTo(x + 0.5, y + CELL_SIZE + 0.5)
+          }
+          if (!selectedCells.value.has(`${r},${c + 1}`)) {
+            ctx.moveTo(x + CELL_SIZE + 0.5, y + CELL_SIZE + 0.5)
+            ctx.lineTo(x + CELL_SIZE + 0.5, y + 0.5)
+          }
+        }
+        ctx.stroke()
+        ctx.setLineDash([])
       }
 
-      // Marching ants 边框
-      ctx.strokeStyle = 'rgba(59, 130, 246, 0.8)'
-      ctx.lineWidth = 2
-      ctx.setLineDash([6, 4])
-      ctx.lineDashOffset = -marchingAntsOffset.value
-      ctx.strokeRect(x1, y1, w, h)
-      // 反色内边框（增强可见性）
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)'
-      ctx.lineDashOffset = -(marchingAntsOffset.value + 5)
-      ctx.strokeRect(x1, y1, w, h)
-      ctx.setLineDash([])
+      if (selectedCells.value.size > 0) {
+        // 逐格填充
+        ctx.fillStyle = 'rgba(59, 130, 246, 0.25)'
+        for (const key of selectedCells.value) {
+          const [r, c] = key.split(',').map(Number)
+          const rr = r + offsetR, cc = c + offsetC
+          if (rr < 0 || rr >= M || cc < 0 || cc >= N) continue
+          ctx.fillRect(cc * CELL_SIZE, rr * CELL_SIZE, CELL_SIZE, CELL_SIZE)
+        }
 
-      // 复制模式标识
-      if (isCopyingSelection.value && selectionDragging.value) {
-        ctx.fillStyle = 'rgba(34, 197, 94, 0.6)'
-        ctx.font = 'bold 12px sans-serif'
-        ctx.fillText('复制', x1 + 4, y1 + 14)
+        // Marching ants 边框：仅绘制连通区域外轮廓边缘（与未选中格子相邻的边）
+        ctx.strokeStyle = 'rgba(59, 130, 246, 0.8)'
+        ctx.lineWidth = 1.5
+        ctx.setLineDash([4, 3])
+        ctx.lineDashOffset = marchingAntsOffset.value
+        ctx.beginPath()
+        for (const key of selectedCells.value) {
+          const [r, c] = key.split(',').map(Number)
+          const rr = r + offsetR, cc = c + offsetC
+          if (rr < 0 || rr >= M || cc < 0 || cc >= N) continue
+          const x = cc * CELL_SIZE, y = rr * CELL_SIZE
+          // 上边：上方格子未选中时暴露（方向与专心模式一致，逆时针路径 + 正值偏移 = 视觉顺时针流动）
+          if (!selectedCells.value.has(`${r - 1},${c}`)) {
+            ctx.moveTo(x + CELL_SIZE + 0.5, y + 0.5)
+            ctx.lineTo(x + 0.5, y + 0.5)
+          }
+          // 下边
+          if (!selectedCells.value.has(`${r + 1},${c}`)) {
+            ctx.moveTo(x + 0.5, y + CELL_SIZE + 0.5)
+            ctx.lineTo(x + CELL_SIZE + 0.5, y + CELL_SIZE + 0.5)
+          }
+          // 左边
+          if (!selectedCells.value.has(`${r},${c - 1}`)) {
+            ctx.moveTo(x + 0.5, y + 0.5)
+            ctx.lineTo(x + 0.5, y + CELL_SIZE + 0.5)
+          }
+          // 右边
+          if (!selectedCells.value.has(`${r},${c + 1}`)) {
+            ctx.moveTo(x + CELL_SIZE + 0.5, y + CELL_SIZE + 0.5)
+            ctx.lineTo(x + CELL_SIZE + 0.5, y + 0.5)
+          }
+        }
+        ctx.stroke()
+        ctx.setLineDash([])
       }
     }
 
