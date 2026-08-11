@@ -51,12 +51,15 @@ export const useEditorStore = defineStore('editor', () => {
 
   // ========== 工具系统 ==========
   const manualTool = ref<ManualTool>('drag')
+  const lastDrawTool = ref<ManualTool>('brush') // 进入橡皮擦前使用的工具，选色时恢复
   const manualBrushSize = ref(1)
   const manualMirrorX = ref(false)
   const manualMirrorY = ref(false)
   const manualShapeFill = ref(false)
   const selectionStart = ref<GridPoint | null>(null)
   const selectionEnd = ref<GridPoint | null>(null)
+  const selectMode = ref<'rect' | 'single'>('rect') // 选区模式：矩形选区 / 单格选区
+  const selectedCells = ref<Set<string>>(new Set()) // 选中的格子集合，key 为 "row,col"
   const clipboard = ref<ClipboardData | null>(null)
   const manualPasteActive = ref(false)
   const lineStart = ref<GridPoint | null>(null)
@@ -79,11 +82,16 @@ export const useEditorStore = defineStore('editor', () => {
   const moveToolMode = ref<'copy' | 'cut'>('copy')  // 移动工具模式：默认复制，可切换剪贴
 
   const selectionInfo = computed<SelectionInfo | null>(() => {
-    if (!selectionStart.value || !selectionEnd.value) return null
-    const sr = Math.min(selectionStart.value.row, selectionEnd.value.row)
-    const er = Math.max(selectionStart.value.row, selectionEnd.value.row)
-    const sc = Math.min(selectionStart.value.col, selectionEnd.value.col)
-    const ec = Math.max(selectionStart.value.col, selectionEnd.value.col)
+    // 基于选中格子集合计算选区边界（支持多区域/非矩形选区）
+    if (selectedCells.value.size === 0) return null
+    let sr = Infinity, er = -Infinity, sc = Infinity, ec = -Infinity
+    for (const key of selectedCells.value) {
+      const [r, c] = key.split(',').map(Number)
+      if (r < sr) sr = r
+      if (r > er) er = r
+      if (c < sc) sc = c
+      if (c > ec) ec = c
+    }
     return { startRow: sr, startCol: sc, endRow: er, endCol: ec, width: ec - sc + 1, height: er - sr + 1 }
   })
 
@@ -92,6 +100,7 @@ export const useEditorStore = defineStore('editor', () => {
 
   // ========== 撤销/重做 ==========
   const editHistory = ref<MappedPixel[][][]>([])
+  const editHistoryTools = ref<string[]>([]) // 每条历史快照对应的操作工具名
   const editHistoryIndex = ref(-1)
 
   // ========== 一键去背景 ==========
@@ -140,10 +149,14 @@ export const useEditorStore = defineStore('editor', () => {
   }
 
   function setManualTool(tool: ManualTool) {
+    if (tool === 'eraser' && manualTool.value !== 'eraser') {
+      // 记住进入橡皮擦前的绘制工具，选色时自动恢复
+      lastDrawTool.value = manualTool.value
+    }
     manualTool.value = tool
     if (tool !== 'eraser') { isEraseMode.value = false; isFloodFillEraseMode.value = false }
     if (tool !== 'fill') { resetColorReplaceState(); highlightColorKey.value = null }
-    if (tool !== 'select' && tool !== 'move') { selectionStart.value = null; selectionEnd.value = null }
+    if (tool !== 'select' && tool !== 'move') { selectionStart.value = null; selectionEnd.value = null; selectedCells.value.clear() }
     manualPasteActive.value = false
     lineStart.value = null
     lineDrawing.value = false
@@ -178,8 +191,13 @@ export const useEditorStore = defineStore('editor', () => {
       resetColorReplaceState()
       highlightColorKey.value = null
     }
-    if (isEraseMode.value) {
+    if (isEraseMode.value || manualTool.value === 'eraser') {
       isEraseMode.value = false
+      isFloodFillEraseMode.value = false
+      if (manualTool.value === 'eraser') {
+        // 橡皮擦下点击色号 → 自动恢复到上一个绘制工具
+        setManualTool(lastDrawTool.value)
+      }
     }
     selectedEditColor.value = color
   }
@@ -212,16 +230,32 @@ export const useEditorStore = defineStore('editor', () => {
   }
 
   // 撤销/重做
-  function saveSnapshot(data: MappedPixel[][]) {
+  function saveSnapshot(data: MappedPixel[][], tool?: string) {
     if (editHistoryIndex.value < editHistory.value.length - 1) {
       editHistory.value = editHistory.value.slice(0, editHistoryIndex.value + 1)
+      editHistoryTools.value = editHistoryTools.value.slice(0, editHistoryIndex.value + 1)
     }
     const snapshot = data.map(r => r.map(c => ({ ...c })))
     editHistory.value.push(snapshot)
+    // 未指定工具名时根据当前工具推断
+    editHistoryTools.value.push(tool || inferToolName())
     if (editHistory.value.length > MAX_HISTORY) {
       editHistory.value.shift()
+      editHistoryTools.value.shift()
     }
     editHistoryIndex.value = editHistory.value.length - 1
+  }
+
+  // 根据当前工具状态推断历史记录的工具名
+  function inferToolName(): string {
+    if (isFloodFillEraseMode.value) return '区域擦除'
+    if (isEraseMode.value || manualTool.value === 'eraser') return '橡皮擦'
+    if (colorReplaceState.value.isActive) return '颜色替换'
+    const toolNames: Record<string, string> = {
+      drag: '拖拽', brush: '画笔', eraser: '橡皮擦', picker: '取色',
+      fill: '填充', line: '直线', rect: '矩形', select: '选区', move: '移动',
+    }
+    return toolNames[manualTool.value] || '编辑'
   }
 
   function undo(): MappedPixel[][] | null {
@@ -238,8 +272,21 @@ export const useEditorStore = defineStore('editor', () => {
     return snapshot.map(r => r.map(c => ({ ...c })))
   }
 
+  const canUndo = computed(() => editHistoryIndex.value >= 0)
+  const canRedo = computed(() => editHistoryIndex.value < editHistory.value.length - 1)
+
+  // 跳转到历史中的任意位置（index 为快照索引）
+  function jumpToHistory(index: number): MappedPixel[][] | null {
+    if (index < 0 || index >= editHistory.value.length) return null
+    if (index === editHistoryIndex.value) return null
+    editHistoryIndex.value = index
+    const snapshot = editHistory.value[index]
+    return snapshot.map(r => r.map(c => ({ ...c })))
+  }
+
   function clearHistory() {
     editHistory.value = []
+    editHistoryTools.value = []
     editHistoryIndex.value = -1
   }
 
@@ -254,6 +301,9 @@ export const useEditorStore = defineStore('editor', () => {
 
   // 洪水填充擦除
   function enterFloodFillEraseMode() {
+    if (manualTool.value !== 'eraser') {
+      lastDrawTool.value = manualTool.value
+    }
     manualTool.value = 'eraser'
     isFloodFillEraseMode.value = true
     isEraseMode.value = false
@@ -297,6 +347,37 @@ export const useEditorStore = defineStore('editor', () => {
   function clearSelection() {
     selectionStart.value = null
     selectionEnd.value = null
+    selectedCells.value.clear()
+  }
+
+  // 设置选区模式：'rect' 矩形选区 / 'single' 单格选区
+  function setSelectMode(mode: 'rect' | 'single') {
+    selectMode.value = mode
+  }
+
+  // 判断某格是否在选区内
+  function isCellSelected(row: number, col: number): boolean {
+    return selectedCells.value.has(`${row},${col}`)
+  }
+
+  // 矩形选区提交：将矩形区域并入（subtract=false）或移出（subtract=true）选区
+  function commitSelectionRect(sr: number, sc: number, er: number, ec: number, subtract: boolean) {
+    const r0 = Math.min(sr, er), r1 = Math.max(sr, er)
+    const c0 = Math.min(sc, ec), c1 = Math.max(sc, ec)
+    for (let r = r0; r <= r1; r++) {
+      for (let c = c0; c <= c1; c++) {
+        const key = `${r},${c}`
+        if (subtract) selectedCells.value.delete(key)
+        else selectedCells.value.add(key)
+      }
+    }
+  }
+
+  // 单格选区：点击并入（subtract=false）或移出（subtract=true）该格
+  function toggleCellSelection(row: number, col: number, subtract: boolean) {
+    const key = `${row},${col}`
+    if (subtract) selectedCells.value.delete(key)
+    else selectedCells.value.add(key)
   }
 
   function setClipboard(data: ClipboardData) {
@@ -369,9 +450,8 @@ export const useEditorStore = defineStore('editor', () => {
     if (selectionStart.value && selectionEnd.value) {
       const { dr, dc } = selectionBoxDragOffset.value
       if (dr !== 0 || dc !== 0) {
-        // 应用偏移到选区位置
-        selectionStart.value = { row: selectionStart.value.row + dr, col: selectionStart.value.col + dc }
-        selectionEnd.value = { row: selectionEnd.value.row + dr, col: selectionEnd.value.col + dc }
+        // 平移整个选区集合（含 selectionStart/End 预览点）
+        translateSelection(dr, dc)
       }
     }
     selectionBoxDragging.value = false
@@ -395,6 +475,19 @@ export const useEditorStore = defineStore('editor', () => {
     selectionDragOffset.value = { dr, dc }
   }
 
+  // 平移整个选区格子集合（移动选区/选区框后更新选中位置）
+  function translateSelection(dr: number, dc: number) {
+    if (dr === 0 && dc === 0) return
+    const newSet = new Set<string>()
+    for (const key of selectedCells.value) {
+      const [r, c] = key.split(',').map(Number)
+      newSet.add(`${r + dr},${c + dc}`)
+    }
+    selectedCells.value = newSet
+    if (selectionStart.value) selectionStart.value = { row: selectionStart.value.row + dr, col: selectionStart.value.col + dc }
+    if (selectionEnd.value) selectionEnd.value = { row: selectionEnd.value.row + dr, col: selectionEnd.value.col + dc }
+  }
+
   function endSelectionDrag() {
     selectionDragging.value = false
     selectionDragStart.value = null
@@ -412,6 +505,7 @@ export const useEditorStore = defineStore('editor', () => {
     showFullPalette,
     isFloodFillEraseMode,
     editHistory,
+    editHistoryTools,
     editHistoryIndex,
     bgRemovalSnapshot,
     isMagnifierActive,
@@ -426,6 +520,8 @@ export const useEditorStore = defineStore('editor', () => {
     selectionStart,
     selectionEnd,
     selectionInfo,
+    selectMode,
+    selectedCells,
     clipboard,
     manualPasteActive,
     lineStart,
@@ -451,6 +547,9 @@ export const useEditorStore = defineStore('editor', () => {
     saveSnapshot,
     undo,
     redo,
+    canUndo,
+    canRedo,
+    jumpToHistory,
     clearHistory,
     setBgRemovalSnapshot,
     clearBgRemovalSnapshot,
@@ -461,6 +560,10 @@ export const useEditorStore = defineStore('editor', () => {
     setSelectionStart,
     setSelectionEnd,
     clearSelection,
+    setSelectMode,
+    isCellSelected,
+    commitSelectionRect,
+    toggleCellSelection,
     setClipboard,
     clearClipboard,
     startPaste,
@@ -477,6 +580,7 @@ export const useEditorStore = defineStore('editor', () => {
     endSelectionBoxDrag,
     startSelectionDrag,
     updateSelectionDragOffset,
+    translateSelection,
     endSelectionDrag,
     toggleMoveToolMode,
     resetColorReplaceState,

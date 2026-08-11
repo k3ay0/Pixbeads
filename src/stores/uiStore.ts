@@ -29,6 +29,13 @@ export const useUiStore = defineStore('ui', () => {
     gridLineColor: '#555555',
     includeStats: true,
     exportPbds: false,
+    showWatermark: false,
+    watermarkTextEnabled: true,
+    watermarkText: 'PIXBEADS',
+    watermarkDensity: 10,
+    showBackgroundImage: false,
+    backgroundImage: null,
+    backgroundOpacity: 0.5,
   })
 
   // ========== Actions ==========

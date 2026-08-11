@@ -85,6 +85,13 @@ export interface GridDownloadOptions {
   gridLineColor: string
   includeStats: boolean
   exportPbds: boolean
+  showWatermark: boolean
+  watermarkTextEnabled: boolean
+  watermarkText: string
+  watermarkDensity: number
+  showBackgroundImage: boolean
+  backgroundImage: string | null
+  backgroundOpacity: number
 }
 
 // ========== 像素编辑相关 ==========

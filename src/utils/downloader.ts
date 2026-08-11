@@ -50,6 +50,13 @@ export function downloadGridImage({
     showCellNumbers = true,
     gridLineColor = '#555555',
     includeStats = true,
+    showWatermark = false,
+    watermarkTextEnabled = true,
+    watermarkText = '',
+    watermarkDensity = 10,
+    showBackgroundImage = false,
+    backgroundImage = null,
+    backgroundOpacity = 0.5,
   } = options
 
   const cellSize = 60
@@ -74,25 +81,58 @@ export function downloadGridImage({
   canvas.height = downloadHeight
   const ctx = canvas.getContext('2d')!
 
+  // 品牌色块宽度（标题栏区域共用）
+  const brandWidth = 64
+
   ctx.imageSmoothingEnabled = false
   ctx.fillStyle = '#FFFFFF'
   ctx.fillRect(0, 0, downloadWidth, downloadHeight)
 
-  // 标题栏
-  ctx.fillStyle = '#0F172A'
-  ctx.fillRect(0, 0, downloadWidth, 80)
+  // 背景图片（用户上传的水印图，铺满整张图纸作为背景）
+  const bgImg = showWatermark && showBackgroundImage && backgroundImage ? new Image() : null
+  if (bgImg) bgImg.src = backgroundImage!
 
-  // 品牌色块
-  const brandWidth = 64
-  const gradient = ctx.createLinearGradient(0, 0, brandWidth, 80)
-  gradient.addColorStop(0, '#3B82F6')
-  gradient.addColorStop(1, '#60A5FA')
-  ctx.fillStyle = gradient
-  ctx.fillRect(0, 0, brandWidth, 80)
+  // 绘制背景层：先铺用户背景图，再绘制标题栏
+  function drawBackground() {
+    if (bgImg && bgImg.complete && bgImg.naturalWidth > 0) {
+      ctx.save()
+      ctx.globalAlpha = backgroundOpacity
+      ctx.imageSmoothingEnabled = true
+      const scale = Math.max(downloadWidth / bgImg.naturalWidth, downloadHeight / bgImg.naturalHeight)
+      const w = bgImg.naturalWidth * scale
+      const h = bgImg.naturalHeight * scale
+      ctx.drawImage(bgImg, (downloadWidth - w) / 2, (downloadHeight - h) / 2, w, h)
+      ctx.restore()
+    }
 
-  // Logo: 加载 favicon 图标
-  const logoImg = new Image()
-  logoImg.src = '/logos/android-chrome-512x512.png'
+    // 标题栏
+    ctx.fillStyle = '#0F172A'
+    ctx.fillRect(0, 0, downloadWidth, 80)
+
+    // 品牌色块
+    const gradient = ctx.createLinearGradient(0, 0, brandWidth, 80)
+    gradient.addColorStop(0, '#3B82F6')
+    gradient.addColorStop(1, '#60A5FA')
+    ctx.fillStyle = gradient
+    ctx.fillRect(0, 0, brandWidth, 80)
+
+    // Logo: 加载 favicon 图标
+    const logoImg = new Image()
+    logoImg.src = '/logos/android-chrome-512x512.png'
+    logoImg.onload = () => {
+      ctx.drawImage(logoImg, 12, 16, 40, 40)
+      drawRest()
+    }
+    logoImg.onerror = () => {
+      // 图标加载失败时使用备用文字
+      ctx.fillStyle = '#FFFFFF'
+      ctx.font = '700 24px system-ui, sans-serif'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText('P', brandWidth / 2, 40)
+      drawRest()
+    }
+  }
 
   function drawRest() {
     if (!mappedPixelData) return
@@ -247,6 +287,29 @@ export function downloadGridImage({
       })
     }
 
+    // 文字水印（半透明、对角线平铺）
+    if (showWatermark && watermarkTextEnabled && watermarkText.trim()) {
+      ctx.save()
+      ctx.globalAlpha = 0.12
+      ctx.fillStyle = '#334155'
+      ctx.font = '600 28px system-ui, sans-serif'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.translate(downloadWidth / 2, downloadHeight / 2)
+      ctx.rotate(-Math.PI / 4)
+      const diagonal = Math.sqrt(downloadWidth ** 2 + downloadHeight ** 2)
+      // 水印密度：值越大文字越密（间距越小），0% 最疏、100% 最密
+      const densityRatio = (100 - watermarkDensity) / 100
+      const spacingX = 120 + densityRatio * 360
+      const spacingY = 65 + densityRatio * 195
+      for (let dx = -diagonal; dx < diagonal; dx += spacingX) {
+        for (let dy = -diagonal; dy < diagonal; dy += spacingY) {
+          ctx.fillText(watermarkText, dx, dy)
+        }
+      }
+      ctx.restore()
+    }
+
     // 底部标识
     ctx.fillStyle = '#9CA3AF'
     ctx.font = '10px sans-serif'
@@ -258,18 +321,11 @@ export function downloadGridImage({
     triggerImageDownload(canvas, `pixbeads-pattern-${N}x${M}.png`)
   }
 
-  logoImg.onload = () => {
-    ctx.drawImage(logoImg, 12, 16, 40, 40)
-    drawRest()
-  }
-  logoImg.onerror = () => {
-    // 图标加载失败时使用备用文字
-    ctx.fillStyle = '#FFFFFF'
-    ctx.font = '700 24px system-ui, sans-serif'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillText('P', brandWidth / 2, 40)
-    drawRest()
+  if (bgImg) {
+    bgImg.onload = () => drawBackground()
+    bgImg.onerror = () => drawBackground()
+  } else {
+    drawBackground()
   }
 }
 

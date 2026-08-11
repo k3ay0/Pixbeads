@@ -24,10 +24,10 @@ import { useCanvasRenderer } from './composables/useCanvasRenderer'
 import { useCanvasInteraction } from './composables/useCanvasInteraction'
 import { useStatePersistence } from './composables/useStatePersistence'
 import { useOcrRecognition } from './composables/useOcrRecognition'
-  
+
 // Utils
 import { getColorKeyByHex, sortColorsByHue } from './utils/colorSystemUtils'
-import { recalculateColorStats, hexToRgb } from './utils/pixelation'
+import { recalculateColorStats, hexToRgb, replaceAllColor } from './utils/pixelation'
 import { findClosestPaletteColor } from './utils/colorUtils'
 import { MODES } from './constants/modeConstants'
 import type { AppMode } from './constants/modeConstants'
@@ -47,6 +47,7 @@ import CanvasArea from './components/CanvasArea.vue'
 import OptimizeSidebar from './components/OptimizeSidebar.vue'
 import EditSidebar from './components/EditSidebar.vue'
 import EditToolbar from './components/EditToolbar.vue'
+import EditHistoryPanel from './components/EditHistoryPanel.vue'
 import PreviewSidebar from './components/PreviewSidebar.vue'
 import IroningPreview from './components/IroningPreview.vue'
 import FocusSidebar from './components/FocusSidebar.vue'
@@ -95,14 +96,14 @@ const ocrRecognition = useOcrRecognition()
 // ========== 从 Store 映射状态 ==========
 const {
   originalImageSrc, mappedPixelData, gridDimensions,
-  colorCounts, granularity, 
+  colorCounts, granularity,
   granularityY, lockAspectRatio,
   similarityThreshold, pixelationMode,
   isProcessing, croppedImageCanvas,
 } = storeToRefs(beadStore)
 
 const {
-  selectedColorSystem, customPaletteSelections, 
+  selectedColorSystem, customPaletteSelections,
   pixelationPalette, fullBeadPalette,
 } = storeToRefs(paletteStore)
 
@@ -113,9 +114,9 @@ const {
   highlightColorKey,
   isMagnifierActive,
   manualTool
-  
-  
-  
+
+
+
   ,
 } = storeToRefs(editorStore)
 
@@ -142,6 +143,13 @@ const hoverCell = ref<{ row: number; col: number } | null>(null)
 const previewOverlayCanvas = ref<HTMLCanvasElement | null>(null)
 const showImportFlow = ref(false)
 const showImportConfirm = ref(false)
+const showEditHistory = ref(false)
+
+// 色板保存二次确认：待替换颜色预览
+const paletteReplacePreview = ref<{
+  selections: Record<string, boolean>
+  changes: Array<{ sourceHex: string; sourceKey: string; count: number; targetHex: string; targetKey: string }>
+} | null>(null)
 const isGridImport = ref(false)
 const pendingImportFile = ref<File | null>(null)
 
@@ -392,10 +400,87 @@ async function handleGridConfirm(data: { canvas: HTMLCanvasElement, cols: number
   editorStore.saveSnapshot(mappedPixelData)
 }
 function handleGlobalClick(e: MouseEvent) { if (!(e.target as HTMLElement).closest('.relative')) uiStore.closeAllMenus() }
-function handlePaletteEditorSave(s: Record<string, boolean>) { paletteStore.updateSelections(s); uiStore.showPaletteEditor = false }
+function handlePaletteEditorSave(s: Record<string, boolean>) {
+  // 计算现有图纸中不在新色板里的颜色，找最近色替代
+  const changes = computePaletteReplacementChanges(s)
+  if (changes.length === 0) {
+    // 无需替换，直接保存并关闭
+    paletteStore.updateSelections(s)
+    uiStore.showPaletteEditor = false
+    return
+  }
+  // 有需要替换的颜色，保留编辑器并弹出二次确认框
+  paletteReplacePreview.value = { selections: s, changes }
+}
+
+// 计算图纸中不在新色板里的颜色及其最近色替代
+function computePaletteReplacementChanges(s: Record<string, boolean>) {
+  if (!mappedPixelData.value) return []
+  const newPalette = paletteStore.fullBeadPalette.filter(c => s[c.hex.toUpperCase()])
+  if (newPalette.length === 0) return []
+  const newHexSet = new Set(newPalette.map(c => c.hex.toUpperCase()))
+
+  // 统计图纸中每种不在新色板里的颜色出现次数
+  const countMap = new Map<string, number>()
+  for (const row of mappedPixelData.value) {
+    for (const cell of row) {
+      if (!cell || cell.isExternal) continue
+      const hex = cell.color.toUpperCase()
+      if (!newHexSet.has(hex)) {
+        countMap.set(hex, (countMap.get(hex) || 0) + 1)
+      }
+    }
+  }
+
+  const changes: { sourceHex: string; sourceKey: string; count: number; targetHex: string; targetKey: string }[] = []
+  for (const [sourceHex, count] of countMap) {
+    const rgb = hexToRgb(sourceHex)
+    if (!rgb) continue
+    const closest = findClosestPaletteColor(rgb, newPalette)
+    const targetHex = closest.hex.toUpperCase()
+    const sourceKey = getColorKeyByHex(sourceHex, selectedColorSystem.value)
+    changes.push({
+      sourceHex,
+      sourceKey: sourceKey !== '?' ? sourceKey : sourceHex,
+      count,
+      targetHex,
+      targetKey: getColorKeyByHex(targetHex, selectedColorSystem.value),
+    })
+  }
+  return changes.sort((a, b) => b.count - a.count)
+}
+
+// 确认替换：应用色板选择 + 对现有图纸执行最近色替换
+function handlePaletteReplaceConfirm() {
+  const preview = paletteReplacePreview.value
+  if (!preview) return
+  paletteReplacePreview.value = null
+  paletteStore.updateSelections(preview.selections)
+
+  if (beadStore.mappedPixelData && preview.changes.length > 0) {
+    editorStore.saveSnapshot(beadStore.mappedPixelData, '颜色替换')
+    let result = beadStore.mappedPixelData
+    let replacedCount = 0
+    for (const c of preview.changes) {
+      const { result: r, count } = replaceAllColor(result, c.sourceHex, c.targetKey, c.targetHex)
+      result = r
+      replacedCount += count
+    }
+    beadStore.setPixelData(result)
+    const stats = recalculateColorStats(result)
+    beadStore.updateColorStats(stats)
+  }
+  uiStore.showPaletteEditor = false
+  uiStore.showToast(`已替换 ${preview.changes.length} 种颜色`)
+}
+
+// 取消替换：不应用选择，编辑器保持打开
+function handlePaletteReplaceCancel() {
+  paletteReplacePreview.value = null
+}
 function handlePaletteEditorClose() { uiStore.showPaletteEditor = false }
 function handlePaletteColorSelect(c: any) { pixelEditing.selectEditColor(c) }
-function handlePaletteColorReplace(s: any, t: any) { editorStore.saveSnapshot(beadStore.mappedPixelData || []); pixelEditing.performColorReplace(s, t); editorStore.resetColorReplaceState() }
+function handlePaletteColorReplace(s: any, t: any) { editorStore.saveSnapshot(beadStore.mappedPixelData || [], '颜色替换'); pixelEditing.performColorReplace(s, t); editorStore.resetColorReplaceState() }
 function handleMirrorHorizontal() { pixelEditing.performMirrorHorizontal() }
 function handleExportPbds() { fileIO.handleExportPbds() }
 function handleDownloadImage() { fileIO.handleDownloadImage() }
@@ -450,11 +535,11 @@ watch(activeMode, (newMode, oldMode) => {
 watch(granularity, v => { beadStore.granularityInput = v.toString(); if (lockAspectRatio.value) { const src = croppedImageCanvas.value || beadStore.originalImage; if (src) { const r = ('height' in src ? src.height : (src as HTMLCanvasElement).height) / ('width' in src ? src.width : (src as HTMLCanvasElement).width); beadStore.updateGranularityY(Math.max(1, Math.round(v * r))) } } })
 watch(granularityY, v => { beadStore.granularityYInput = v.toString() })
 watch(similarityThreshold, v => { beadStore.similarityThresholdInput = v.toString() })
-watch([granularity, granularityY, similarityThreshold, pixelationMode, pixelationPalette], () => { editorStore.clearBgRemovalSnapshot(); if (beadStore.originalImage || croppedImageCanvas.value) processImage() })
+watch([granularity, granularityY, similarityThreshold, pixelationMode], () => { editorStore.clearBgRemovalSnapshot(); if (beadStore.originalImage || croppedImageCanvas.value) processImage() })
 // 切换色号系统时，更新像素数据中的色号，不重新处理图像
 watch(selectedColorSystem, (newSystem) => {
   if (!mappedPixelData.value || !colorCounts.value) return
-  
+
   const fullPalette = paletteStore.fullBeadPalette
   const result = mappedPixelData.value.map(row => row.map(cell => {
     if (!cell || cell.isExternal) return cell
@@ -468,7 +553,7 @@ watch(selectedColorSystem, (newSystem) => {
     const closest = findClosestPaletteColor(rgb, fullPalette)
     return { key: closest.key, color: closest.hex, isExternal: false }
   }))
-  
+
   beadStore.setPixelData(result)
   const stats = recalculateColorStats(result)
   beadStore.updateColorStats(stats)
@@ -495,12 +580,12 @@ watch(manualTool, (tool) => {
 // Lifecycle
 function handleVoxelKeydown(e: KeyboardEvent) {
   if (activeMode.value !== 'voxel') return
-  
+
   if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); voxelUndo(); return }
   if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); voxelRedo(); return }
   if (e.key === 'Escape') { e.preventDefault(); voxelEditorRef.value?.cancelAnchor?.(); clearGhost(); return }
   if (e.ctrlKey || e.metaKey) return
-  
+
   const toolMap: Record<string, VoxelTool> = { b: 'pen', l: 'line', r: 'rect', c: 'circle', q: 'ellipse', g: 'fill', f: 'fillSlice', i: 'eyedropper' }
   if (toolMap[e.key]) { e.preventDefault(); voxelStore.currentTool = toolMap[e.key]; return }
   if (e.key === 'e') { e.preventDefault(); voxelStore.editMode = voxelStore.editMode === 'draw' ? 'del' : 'draw'; return }
@@ -615,8 +700,8 @@ function handleBgUpdate(bg: any) {
     <!-- Header -->
     <AppHeader @switch-mode="switchMode" @trigger-file-input="triggerFileInput" @trigger-pbds-input="triggerPbdsInput"
       @open-palette-editor="showPaletteEditor = true" @export-pbds="handleExportPbds"
-      @download-image="handleDownloadImage" @download-stats="handleDownloadStats"
-      @new-2d-canvas="handleNew2DCanvas" @new-3d-canvas="handleNew3DCanvas" />
+      @download-image="handleDownloadImage" @download-stats="handleDownloadStats" @new-2d-canvas="handleNew2DCanvas"
+      @new-3d-canvas="handleNew3DCanvas" />
 
     <input ref="fileInput" type="file" accept="image/*" class="hidden" @change="handleFileChange" />
     <input ref="pbdsFileInput" type="file" accept=".pbds" class="hidden" @change="handlePbdsFileChange" />
@@ -636,14 +721,20 @@ function handleBgUpdate(bg: any) {
         <!-- Edit toolbar (floating on canvas left) -->
         <EditToolbar v-if="activeMode === 'edit' && mappedPixelData" @toggle-palette="showPaletteEditor = true" />
 
+        <!-- Edit history floating panel (top-right of canvas) -->
+        <EditHistoryPanel v-if="activeMode === 'edit' && mappedPixelData && showEditHistory"
+          @close="showEditHistory = false" />
+
         <!-- Right sidebar -->
         <div v-if="mappedPixelData"
           class="absolute top-0 bottom-0 right-0 z-30 flex flex-col bg-white border-l border-black/10"
           style="width: 320px;">
-          <OptimizeSidebar v-if="activeMode === 'optimize'" :is-grid-import="isGridImport" @trigger-file-input="triggerFileInput"
-            @auto-remove-background="handleAutoRemoveBackground" @undo-bg-removal="handleUndoBgRemoval" />
+          <OptimizeSidebar v-if="activeMode === 'optimize'" :is-grid-import="isGridImport"
+            @trigger-file-input="triggerFileInput" @auto-remove-background="handleAutoRemoveBackground"
+            @undo-bg-removal="handleUndoBgRemoval" />
           <EditSidebar v-if="activeMode === 'edit'" @color-select="handlePaletteColorSelect"
-            @color-replace="handlePaletteColorReplace" @mirror-horizontal="handleMirrorHorizontal" />
+            @color-replace="handlePaletteColorReplace" @mirror-horizontal="handleMirrorHorizontal"
+            @toggle-edit-history="showEditHistory = !showEditHistory" />
           <PreviewSidebar v-if="activeMode === 'preview'" :config="ironingConfig"
             @download-preview="handleDownloadPreview" @update:config="ironingConfig = $event" />
           <FocusSidebar v-if="activeMode === 'focus'" @color-change="handleFocusColorChange" />
@@ -660,30 +751,31 @@ function handleBgUpdate(bg: any) {
 
     <!-- VoxoB-style 3D Editor Layout -->
     <div v-if="activeMode === 'voxel'" class="voxoB-layout flex flex-col flex-1 min-h-0 v-theme-bg0">
-      <VoxelHeader @open-bg="showBgModal = true" @open-export="handleOpenExportModal" @open-dims="handleOpenDims" @toggle-2d="showVoxel2D = !showVoxel2D" @open-slice-grid="showSliceGridModal = true" />
-      
+      <VoxelHeader @open-bg="showBgModal = true" @open-export="handleOpenExportModal" @open-dims="handleOpenDims"
+        @toggle-2d="showVoxel2D = !showVoxel2D" @open-slice-grid="showSliceGridModal = true" />
+
       <div class="flex flex-1 min-h-0" style="gap: 0" :style="{ background: 'var(--b3)' }">
         <!-- Left Panel -->
         <div class="v-theme-bg2 flex-shrink-0 overflow-y-auto" :style="{ width: leftPanelWidth + 'px' }">
           <VoxelLeftPanel />
         </div>
-        <div class="flex-shrink-0 w-[3px] cursor-col-resize hover:bg-blue-500 transition-colors" 
+        <div class="flex-shrink-0 w-[3px] cursor-col-resize hover:bg-blue-500 transition-colors"
           style="background: var(--bd)" @mousedown="startPanelResize($event, 'left')"></div>
-        
+
         <!-- 2D Editor -->
         <template v-if="showVoxel2D">
           <VoxelEditor2D ref="voxelEditor2DRef" class="flex-shrink-0" :style="{ width: editor2DWidth + '%' }" />
-          <div class="flex-shrink-0 w-[3px] cursor-col-resize hover:bg-blue-500 transition-colors" 
+          <div class="flex-shrink-0 w-[3px] cursor-col-resize hover:bg-blue-500 transition-colors"
             style="background: var(--bd)" @mousedown="startPanelResize($event, 'editor2d')"></div>
         </template>
-        
+
         <!-- 3D View -->
         <div class="flex-1 min-w-[60px] flex flex-col overflow-hidden">
           <VoxelEditor3D ref="voxelEditorRef" />
         </div>
-        <div class="flex-shrink-0 w-[3px] cursor-col-resize hover:bg-blue-500 transition-colors" 
+        <div class="flex-shrink-0 w-[3px] cursor-col-resize hover:bg-blue-500 transition-colors"
           style="background: var(--bd)" @mousedown="startPanelResize($event, 'right')"></div>
-        
+
         <!-- Right Panel -->
         <div class="v-theme-bg2 flex-shrink-0 overflow-y-auto" :style="{ width: rightPanelWidth + 'px' }">
           <VoxelToolbar />
@@ -713,39 +805,23 @@ function handleBgUpdate(bg: any) {
     @close="handlePbdsImportCancel" />
 
   <!-- Import flow dialog -->
-  <ImportFlowDialog
-    :is-open="showImportFlow"
-    :pending-file="pendingImportFile"
-    @close="handleCloseImportFlow"
-    @crop-confirm="handleCropConfirmFromFlow"
-    @grid-confirm="handleGridConfirmFromFlow"
-    @pbds-drop="handlePbdsDropFromFlow"
-    @pending-file-consumed="pendingImportFile = null"
-  />
+  <ImportFlowDialog :is-open="showImportFlow" :pending-file="pendingImportFile" @close="handleCloseImportFlow"
+    @crop-confirm="handleCropConfirmFromFlow" @grid-confirm="handleGridConfirmFromFlow"
+    @pbds-drop="handlePbdsDropFromFlow" @pending-file-consumed="pendingImportFile = null" />
 
   <!-- Import confirm dialog -->
   <Teleport to="body">
-    <div
-      v-if="showImportConfirm"
-      class="modal-overlay bg-black/5"
-      @click.self="handleImportCancel"
-    >
+    <div v-if="showImportConfirm" class="modal-overlay bg-black/5" @click.self="handleImportCancel">
       <div class="modal max-w-sm p-6">
         <h3 class="text-base font-semibold text-black mb-2">确认导入</h3>
         <p class="text-sm text-black/60 mb-6">
           当前画布中有未保存的内容，导入新文件后将无法恢复。是否继续？
         </p>
         <div class="flex justify-end gap-3">
-          <button
-            @click="handleImportCancel"
-            class="btn btn-secondary h-9 rounded-lg px-4"
-          >
+          <button @click="handleImportCancel" class="btn btn-secondary h-9 rounded-lg px-4">
             取消
           </button>
-          <button
-            @click="handleImportConfirm"
-            class="btn btn-primary h-9 rounded-lg px-4"
-          >
+          <button @click="handleImportConfirm" class="btn btn-primary h-9 rounded-lg px-4">
             继续导入
           </button>
         </div>
@@ -758,6 +834,46 @@ function handleBgUpdate(bg: any) {
     :current-selections="customPaletteSelections" :selected-color-system="selectedColorSystem"
     @save="handlePaletteEditorSave" @close="handlePaletteEditorClose"
     @update:color-system="paletteStore.selectedColorSystem = $event" />
+
+  <!-- 色板替换二次确认弹窗 -->
+  <Teleport to="body">
+    <div v-if="paletteReplacePreview" class="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4"
+      @click.self="handlePaletteReplaceCancel">
+      <div class="modal max-w-md">
+        <div class="modal-header">
+          <h3 class="modal-title">确认替换颜色</h3>
+        </div>
+        <div class="modal-body">
+          <p class="text-sm text-black/60 mb-4">
+            色板变更后，以下 {{ paletteReplacePreview.changes.length }} 种图纸用色不在新色板中，将替换为最近颜色：
+          </p>
+          <div class="space-y-2">
+            <div v-for="c in paletteReplacePreview.changes" :key="c.sourceHex" class="flex items-center gap-2 text-sm">
+              <span class="w-6 h-6 rounded border border-black/10 flex-shrink-0"
+                :style="{ backgroundColor: c.sourceHex }"></span>
+              <span class="font-medium tabular-nums">{{ c.sourceKey }}</span>
+              <svg class="w-3.5 h-3.5 text-black/40 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M13 5l7 7-7 7M5 12h14" />
+              </svg>
+              <span class="w-6 h-6 rounded border border-black/10 flex-shrink-0"
+                :style="{ backgroundColor: c.targetHex }"></span>
+              <span class="font-medium tabular-nums">{{ c.targetKey }}</span>
+              <span class="ml-auto text-xs text-black/40 tabular-nums">{{ c.count }} 颗</span>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button @click="handlePaletteReplaceCancel" class="btn btn-secondary h-9 rounded-lg px-4">
+            取消
+          </button>
+          <button @click="handlePaletteReplaceConfirm" class="btn btn-primary h-9 rounded-lg px-4">
+            确认替换
+          </button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 
   <!-- Toast -->
   <Teleport to="body">
@@ -776,10 +892,8 @@ function handleBgUpdate(bg: any) {
           {{ ocrProgress.phaseLabel }}
         </p>
         <div v-if="ocrProgress.percent != null" class="w-full bg-black/10 rounded-full h-1.5">
-          <div
-            class="bg-black h-1.5 rounded-full transition-all duration-300"
-            :style="{ width: `${Math.min(100, Math.max(0, ocrProgress.percent))}%` }"
-          ></div>
+          <div class="bg-black h-1.5 rounded-full transition-all duration-300"
+            :style="{ width: `${Math.min(100, Math.max(0, ocrProgress.percent))}%` }"></div>
         </div>
         <p v-if="ocrProgress.percent != null" class="text-black/60 text-xs">
           {{ Math.min(100, Math.max(0, Math.round(ocrProgress.percent))) }}%
@@ -790,7 +904,8 @@ function handleBgUpdate(bg: any) {
 
   <!-- OCR 错误提示 -->
   <Teleport to="body">
-    <div v-if="ocrError" class="fixed top-4 left-1/2 -translate-x-1/2 z-[80] bg-red-600 text-white px-4 py-2 rounded-lg shadow-lg text-sm">
+    <div v-if="ocrError"
+      class="fixed top-4 left-1/2 -translate-x-1/2 z-[80] bg-red-600 text-white px-4 py-2 rounded-lg shadow-lg text-sm">
       {{ ocrError }}
     </div>
   </Teleport>
@@ -799,9 +914,11 @@ function handleBgUpdate(bg: any) {
   <InstallPWA />
 
   <!-- Voxel Modals -->
-  <VoxelExportModal :is-open="showExportModal" :voxel-group="currentVoxelGroup" :renderer-dom-element="currentRendererDomElement" @close="showExportModal = false" />
+  <VoxelExportModal :is-open="showExportModal" :voxel-group="currentVoxelGroup"
+    :renderer-dom-element="currentRendererDomElement" @close="showExportModal = false" />
   <VoxelBgModal :is-open="showBgModal" @close="showBgModal = false" @update:background="handleBgUpdate" />
-  <VoxelSliceGridModal :is-open="showSliceGridModal" @close="showSliceGridModal = false" @exported="handleSliceExported" />
+  <VoxelSliceGridModal :is-open="showSliceGridModal" @close="showSliceGridModal = false"
+    @exported="handleSliceExported" />
 
   <!-- Canvas Dimension Dialog -->
   <Teleport to="body">
@@ -831,13 +948,11 @@ function handleBgUpdate(bg: any) {
           </div>
         </div>
         <div class="flex gap-2 mt-5">
-          <button @click="showDimsModal = false"
-            class="flex-1 py-2 rounded-lg text-sm transition-colors"
+          <button @click="showDimsModal = false" class="flex-1 py-2 rounded-lg text-sm transition-colors"
             :style="{ backgroundColor: 'var(--b3)', border: '1px solid var(--bd)', color: 'var(--t2)' }">
             取消
           </button>
-          <button @click="applyDims"
-            class="flex-1 py-2 rounded-lg text-sm font-medium transition-colors"
+          <button @click="applyDims" class="flex-1 py-2 rounded-lg text-sm font-medium transition-colors"
             :style="{ backgroundColor: 'var(--ac)', color: '#fff' }">
             应用
           </button>

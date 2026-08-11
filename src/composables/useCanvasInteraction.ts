@@ -3,7 +3,7 @@
  * 处理画布上的鼠标事件（点击、悬停、按下、抬起）和工具分发
  */
 
-import { type Ref } from 'vue'
+import { ref, type Ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useBeadStore } from '@/stores/beadStore'
 import { useCanvasStore } from '@/stores/canvasStore'
@@ -18,7 +18,6 @@ import {
   getLinePoints,
   getRectPoints,
   applyColorToPoints as applyColorToPointsUtil,
-  isPointInSelection,
 } from '@/utils/drawingAlgorithms'
 import { TRANSPARENT_KEY, type MappedPixel } from '@/types'
 
@@ -45,6 +44,7 @@ export function useCanvasInteraction(
     lineDrawing, rectDrawing, selectDrawing,
     selectionBoxDragging, selectionBoxDragStart, selectionBoxDragOffset,
     selectionDragging, selectionDragStart, selectionDragOffset, isCopyingSelection, moveToolMode,
+    selectMode, selectedCells,
     currentDrawEnd,
   } = storeToRefs(editorStore)
   const { activeMode } = storeToRefs(uiStore)
@@ -52,6 +52,11 @@ export function useCanvasInteraction(
 
   // 标记是否刚完成拖拽操作，防止mouseup后触发click
   let justFinishedDrag = false
+
+  // 单格选区连续选择状态（长按拖动连续选中格子，类似画笔）
+  const isCellSelecting = ref(false)
+  const lastCellSelectCell = ref<{ row: number; col: number } | null>(null)
+  const cellSelectSubtract = ref(false) // 本次拖动是否为减除模式（Ctrl）
 
   // ========== 辅助函数 ==========
 
@@ -139,7 +144,7 @@ export function useCanvasInteraction(
             const sourceColor = { key: cell.key, color: cell.color }
             const targetColor = selectedEditColor.value
             if (targetColor) {
-              editorStore.saveSnapshot(mappedPixelData.value)
+              editorStore.saveSnapshot(mappedPixelData.value, '颜色替换')
               for (let r = 0; r < mappedPixelData.value.length; r++) {
                 for (let c = 0; c < mappedPixelData.value[r].length; c++) {
                   const currentCell = mappedPixelData.value[r][c]
@@ -154,7 +159,7 @@ export function useCanvasInteraction(
           }
         } else if (selectedEditColor.value) {
           // 洪水填充
-          editorStore.saveSnapshot(mappedPixelData.value)
+          editorStore.saveSnapshot(mappedPixelData.value, '填充')
           const newPixelData = floodFill(mappedPixelData.value, gridDimensions.value!, row, col, { key: selectedEditColor.value.key, color: selectedEditColor.value.color })
           beadStore.mappedPixelData = newPixelData
           scheduleRender()
@@ -176,7 +181,7 @@ export function useCanvasInteraction(
         if (isFloodFillEraseMode.value) {
           // 洪水填充擦除
           const targetColor = cell.color.toUpperCase()
-          editorStore.saveSnapshot(mappedPixelData.value)
+          editorStore.saveSnapshot(mappedPixelData.value, '区域擦除')
           const newData = floodFillArea(
             mappedPixelData.value,
             gridDimensions.value!,
@@ -201,7 +206,7 @@ export function useCanvasInteraction(
           const sourceColor = { key: cell.key, color: cell.color }
           const targetColor = selectedEditColor.value
           if (targetColor) {
-            editorStore.saveSnapshot(mappedPixelData.value)
+            editorStore.saveSnapshot(mappedPixelData.value, '颜色替换')
             for (let r = 0; r < mappedPixelData.value.length; r++) {
               for (let c = 0; c < mappedPixelData.value[r].length; c++) {
                 const currentCell = mappedPixelData.value[r][c]
@@ -284,6 +289,15 @@ export function useCanvasInteraction(
           lastPaintCell.value = { row, col }
         }
       }
+      // 单格选区连续选择（长按拖动连续选中/减除格子）
+      if (isCellSelecting.value && manualTool.value === 'select' && selectMode.value === 'single') {
+        const last = lastCellSelectCell.value
+        if (!last || last.row !== row || last.col !== col) {
+          editorStore.toggleCellSelection(row, col, cellSelectSubtract.value)
+          lastCellSelectCell.value = { row, col }
+          renderPreviewOverlay()
+        }
+      }
       renderPreviewOverlay()
       return
     }
@@ -327,18 +341,34 @@ export function useCanvasInteraction(
         return
       }
       case 'select': {
-        // 如果已有选区且点击在选区内 → 拖拽选区框
-        if (selectionStart.value && selectionEnd.value && isPointInSelection(row, col, editorStore.selectionInfo)) {
+        // 单格选区模式：点击格子并入选区，Ctrl 点击移出选区；支持长按拖动连续选择
+        if (selectMode.value === 'single') {
+          const subtract = e.ctrlKey || e.metaKey
+          isCellSelecting.value = true
+          cellSelectSubtract.value = subtract
+          lastCellSelectCell.value = null
+          editorStore.toggleCellSelection(row, col, subtract)
+          lastCellSelectCell.value = { row, col }
+          scheduleRender()
+          return
+        }
+        // Ctrl：始终开始减除绘制（从选区中挖除矩形）
+        if (e.ctrlKey || e.metaKey) {
+          editorStore.startSelectDrawing({ row, col })
+          return
+        }
+        // 矩形选区模式：点击已选中的格子 → 拖拽选区框（移动选区位置）
+        if (editorStore.isCellSelected(row, col)) {
           editorStore.startSelectionBoxDrag({ row, col })
           return
         }
-        // 否则开始新选区
+        // 否则开始新选区（松开时并入现有选区）
         editorStore.startSelectDrawing({ row, col })
         return
       }
       case 'move': {
-        // 如果已有选区且点击在选区内 → 开始拖拽
-        if (selectionStart.value && selectionEnd.value && isPointInSelection(row, col, editorStore.selectionInfo)) {
+        // 如果点击的是选中的格子 → 开始拖拽
+        if (editorStore.isCellSelected(row, col)) {
           // Ctrl 临时反转模式：复制模式下按Ctrl为剪贴，剪贴模式下按Ctrl为复制
           const baseIsCopy = moveToolMode.value === 'copy'
           const isCopy = e.ctrlKey || e.metaKey ? !baseIsCopy : baseIsCopy
@@ -363,6 +393,14 @@ export function useCanvasInteraction(
       return
     }
 
+    // 单格选区连续选择 - 松开鼠标停止
+    if (isCellSelecting.value) {
+      isCellSelecting.value = false
+      lastCellSelectCell.value = null
+      cellSelectSubtract.value = false
+      return
+    }
+
     // 画线 - 只在真正的 mouseup 时提交（不响应 mouseleave）
     if (lineDrawing.value && lineStart.value && currentDrawEnd.value && e) {
       const points = getLinePoints(lineStart.value.row, lineStart.value.col, currentDrawEnd.value.row, currentDrawEnd.value.col)
@@ -379,8 +417,15 @@ export function useCanvasInteraction(
       return
     }
 
-    // 选区绘制结束 - 只在真正的 mouseup 时确认选区
+    // 选区绘制结束 - 只在真正的 mouseup 时确认选区（默认并入，Ctrl 减除）
     if (selectDrawing.value && selectionStart.value && e) {
+      const s = selectionStart.value
+      const en = selectionEnd.value
+      if (s && en) {
+        const subtract = e.ctrlKey || e.metaKey
+        editorStore.commitSelectionRect(s.row, s.col, en.row, en.col, subtract)
+        scheduleRender()
+      }
       editorStore.endSelectDrawing()
       return
     }
@@ -398,46 +443,51 @@ export function useCanvasInteraction(
       const { dr, dc } = selectionDragOffset.value
       if (dr !== 0 || dc !== 0) {
         const info = editorStore.selectionInfo
-        if (info && mappedPixelData.value && gridDimensions.value) {
+        if (info && mappedPixelData.value && gridDimensions.value && selectedCells.value.size > 0) {
           const { N, M } = gridDimensions.value
           const isCopy = isCopyingSelection.value
-          if (!isCopy) editorStore.saveSnapshot(mappedPixelData.value)
+          // 移动和复制都要进入修改历史
+          editorStore.saveSnapshot(mappedPixelData.value, isCopy ? '复制选区' : '移动选区')
 
-          // 读取选区内容
+          // 读取选区内容（以边界左上角为原点，未选中格子为 null）
           const cells: (MappedPixel | null)[][] = []
           for (let r = info.startRow; r <= info.endRow; r++) {
             const rowCells: (MappedPixel | null)[] = []
             for (let c = info.startCol; c <= info.endCol; c++) {
-              rowCells.push(mappedPixelData.value[r]?.[c] ? { ...mappedPixelData.value[r][c] } : null)
+              if (selectedCells.value.has(`${r},${c}`)) {
+                rowCells.push(mappedPixelData.value[r]?.[c] ? { ...mappedPixelData.value[r][c] } : null)
+              } else {
+                rowCells.push(null)
+              }
             }
             cells.push(rowCells)
           }
 
-          // 如果是移动（非复制），先清空原位置
+          // 如果是移动（非复制），先清空原位置（仅清选中的格子）
           if (!isCopy) {
-            for (let r = info.startRow; r <= info.endRow; r++) {
-              for (let c = info.startCol; c <= info.endCol; c++) {
-                if (mappedPixelData.value[r]?.[c] && !mappedPixelData.value[r][c].isExternal) {
-                  mappedPixelData.value[r][c] = { key: TRANSPARENT_KEY, color: '#FFFFFF', isExternal: true }
-                }
+            for (const key of selectedCells.value) {
+              const [r, c] = key.split(',').map(Number)
+              if (mappedPixelData.value[r]?.[c] && !mappedPixelData.value[r][c].isExternal) {
+                mappedPixelData.value[r][c] = { key: TRANSPARENT_KEY, color: '#FFFFFF', isExternal: true }
               }
             }
           }
 
-          // 写入目标位置
+          // 写入目标位置（从备份的 cells 中读取，避免原位置已被清空）
           for (let r = 0; r < cells.length; r++) {
             for (let c = 0; c < cells[r].length; c++) {
+              const cell = cells[r][c]
+              if (!cell) continue
               const tr = info.startRow + r + dr
               const tc = info.startCol + c + dc
-              if (tr >= 0 && tr < M && tc >= 0 && tc < N && cells[r][c]) {
-                mappedPixelData.value[tr][tc] = { ...cells[r][c]! }
+              if (tr >= 0 && tr < M && tc >= 0 && tc < N) {
+                mappedPixelData.value[tr][tc] = { ...cell }
               }
             }
           }
 
-          // 更新选区位置
-          editorStore.setSelectionStart({ row: info.startRow + dr, col: info.startCol + dc })
-          editorStore.setSelectionEnd({ row: info.endRow + dr, col: info.endCol + dc })
+          // 更新选区位置（平移整个选区集合）
+          editorStore.translateSelection(dr, dc)
           scheduleRender()
         }
       }

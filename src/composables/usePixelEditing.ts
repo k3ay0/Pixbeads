@@ -103,7 +103,7 @@ export function usePixelEditing() {
   }
 
   function handlePaletteColorReplace(sourceColor: { key: string; color: string }, targetColor: { key: string; color: string }) {
-    editorStore.saveSnapshot(beadStore.mappedPixelData || [])
+    editorStore.saveSnapshot(beadStore.mappedPixelData || [], '颜色替换')
     performColorReplace(sourceColor, targetColor)
     editorStore.resetColorReplaceState()
   }
@@ -135,7 +135,7 @@ export function usePixelEditing() {
     const cell = beadStore.mappedPixelData[row]?.[col]
     if (!cell || cell.isExternal) return
 
-    editorStore.saveSnapshot(beadStore.mappedPixelData)
+    editorStore.saveSnapshot(beadStore.mappedPixelData, '区域擦除')
     performFloodFillErase(row, col, cell.key)
   }
 
@@ -160,7 +160,7 @@ export function usePixelEditing() {
         return
       }
 
-      editorStore.saveSnapshot(beadStore.mappedPixelData)
+      editorStore.saveSnapshot(beadStore.mappedPixelData, '颜色替换')
       const sourceColor = {
         key: editorStore.colorReplaceState.sourceColor!.key,
         color: editorStore.colorReplaceState.sourceColor!.color
@@ -173,7 +173,7 @@ export function usePixelEditing() {
 
   function handleMagnifierPixelEdit({ row, col, color }: { row: number; col: number; color: { key: string; color: string } | null }) {
     if (!beadStore.mappedPixelData || !beadStore.gridDimensions) return
-    editorStore.saveSnapshot(beadStore.mappedPixelData)
+    editorStore.saveSnapshot(beadStore.mappedPixelData, '放大镜')
 
     const newData = deepCopyGrid(beadStore.mappedPixelData)
     if (color === null) {
@@ -187,10 +187,30 @@ export function usePixelEditing() {
     beadStore.updateColorStats(stats)
   }
 
+  // 用当前选中的颜色填充选区（Ctrl+Delete 触发）
+  function fillSelection() {
+    if (!beadStore.mappedPixelData) return
+    const color = editorStore.selectedEditColor
+    if (!color || editorStore.selectedCells.size === 0) return
+
+    editorStore.saveSnapshot(beadStore.mappedPixelData, '填充选区')
+
+    const newData = deepCopyGrid(beadStore.mappedPixelData)
+    for (const key of editorStore.selectedCells) {
+      const [r, c] = key.split(',').map(Number)
+      if (!newData[r]?.[c]) continue
+      newData[r][c] = { key: color.key, color: color.color, isExternal: false }
+    }
+
+    beadStore.setPixelData(newData)
+    const stats = recalculateColorStats(newData)
+    beadStore.updateColorStats(stats)
+  }
+
   function performMirrorHorizontal() {
     if (!beadStore.mappedPixelData) return
 
-    editorStore.saveSnapshot(beadStore.mappedPixelData)
+    editorStore.saveSnapshot(beadStore.mappedPixelData, '水平镜像')
 
     const mirrored = mirrorHorizontal(beadStore.mappedPixelData)
     beadStore.setPixelData(mirrored)
@@ -219,6 +239,15 @@ export function usePixelEditing() {
     }
   }
 
+  function jumpToHistoryEdit(index: number) {
+    const snapshot = editorStore.jumpToHistory(index)
+    if (snapshot) {
+      beadStore.setPixelData(snapshot)
+      const stats = recalculateColorStats(snapshot)
+      beadStore.updateColorStats(stats)
+    }
+  }
+
   return {
     performSinglePixelPaint,
     performFloodFillErase,
@@ -234,7 +263,9 @@ export function usePixelEditing() {
     handleFloodFillErase,
     handleColorReplaceClick,
     handleMagnifierPixelEdit,
+    fillSelection,
     undoEdit,
     redoEdit,
+    jumpToHistoryEdit,
   }
 }

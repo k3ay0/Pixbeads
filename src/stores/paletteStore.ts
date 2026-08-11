@@ -72,8 +72,19 @@ export const usePaletteStore = defineStore('palette', () => {
   }
 
   function initDefaultPalette(allHexValues: string[]) {
+    // 默认色板：MARD 221 色（排除 P、Q、R、T、Y、ZG 前缀）
+    const hexToMardKey: Record<string, string> = {}
+    Object.entries(mardToHexMapping).forEach(([mardKey, hex]) => {
+      hexToMardKey[hex.toUpperCase()] = mardKey
+    })
+    const excludedPrefixes = ['P', 'Q', 'R', 'T', 'Y', 'ZG']
+
     const selections: Record<string, boolean> = {}
-    allHexValues.forEach(hex => { selections[hex.toUpperCase()] = true })
+    allHexValues.forEach(hex => {
+      const mardKey = hexToMardKey[hex]
+      const prefix = mardKey?.match(/^[A-Z]+/)?.[0] ?? ''
+      selections[hex] = !excludedPrefixes.includes(prefix)
+    })
     customPaletteSelections.value = selections
   }
 

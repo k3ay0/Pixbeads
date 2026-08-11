@@ -11,8 +11,13 @@ export function useMarchingAnts() {
 
   function startMarchingAnts(onFrame?: () => void) {
     if (marchingAntsAnimId) return
-    function animate() {
-      marchingAntsOffset.value = (marchingAntsOffset.value + 0.5) % 20
+    // 参考专心模式：基于时间增量驱动，速度恒定不随帧率漂移，且不取模避免跳变
+    let lastTime = performance.now()
+    const speed = 10
+    function animate(now: number) {
+      const delta = (now - lastTime) / 1000
+      lastTime = now
+      marchingAntsOffset.value += speed * delta
       onFrame?.()
       marchingAntsAnimId = requestAnimationFrame(animate)
     }
