@@ -122,15 +122,8 @@ function onCardClick(e: MouseEvent) {
           🧩 核心功能 <span>— 从导入到导出,一站式搞定</span>
         </div>
         <div class="gallery">
-          <div
-            v-for="(f, i) in features"
-            :key="f.title"
-            :ref="el => revealRef(el, { threshold: 0.15 })"
-            v-tilt="{ max: 8, scale: 1.04 }"
-            class="pixel-card"
-            :style="staggeredDelay(i)"
-            @click="onCardClick"
-          >
+          <div v-for="(f, i) in features" :key="f.title" :ref="el => revealRef(el, { threshold: 0.15 })"
+            v-tilt="{ max: 8, scale: 1.04 }" class="pixel-card" :style="staggeredDelay(i)" @click="onCardClick">
             <span class="emoji-big">{{ f.icon }}</span>
             <h4>{{ f.title }}</h4>
             <p>{{ f.desc }}</p>
@@ -147,14 +140,8 @@ function onCardClick(e: MouseEvent) {
           🛠️ 四步生成 <span>— 简单直观,零基础快速上手</span>
         </div>
         <div class="gallery steps-grid">
-          <div
-            v-for="(s, i) in steps"
-            :key="s.num"
-            :ref="el => revealRef(el, { threshold: 0.2 })"
-            v-tilt="{ max: 10, scale: 1.05 }"
-            class="pixel-card step-card"
-            :style="staggeredDelay(i)"
-          >
+          <div v-for="(s, i) in steps" :key="s.num" :ref="el => revealRef(el, { threshold: 0.2 })"
+            v-tilt="{ max: 10, scale: 1.05 }" class="pixel-card step-card" :style="staggeredDelay(i)">
             <span class="step-num">{{ s.num }}</span>
             <h4>{{ s.title }}</h4>
             <p>{{ s.desc }}</p>
@@ -168,14 +155,8 @@ function onCardClick(e: MouseEvent) {
           ⚙️ 技术特色 <span>— 严谨算法,只为更准的图纸</span>
         </div>
         <div class="gallery">
-          <div
-            v-for="(t, i) in techPoints"
-            :key="t.title"
-            :ref="el => revealRef(el, { threshold: 0.2 })"
-            v-tilt="{ max: 6, scale: 1.03 }"
-            class="pixel-card tech-card"
-            :style="staggeredDelay(i)"
-          >
+          <div v-for="(t, i) in techPoints" :key="t.title" :ref="el => revealRef(el, { threshold: 0.2 })"
+            v-tilt="{ max: 6, scale: 1.03 }" class="pixel-card tech-card" :style="staggeredDelay(i)">
             <h4>{{ t.title }}</h4>
             <p>{{ t.desc }}</p>
           </div>
@@ -191,7 +172,15 @@ function onCardClick(e: MouseEvent) {
         <div class="footer-row">
           <span>© 2026 Pixbeads · 拼豆图纸生成器</span>
           <div class="social">
-            <a href="https://github.com/k3ay0/Pixbeads" target="_blank" rel="noopener noreferrer" aria-label="GitHub">🐙</a>
+            <a href="https://github.com/k3ay0/Pixbeads" target="_blank" rel="noopener noreferrer"
+              aria-label="GitHub"><svg aria-hidden="true" data-component="Octicon" height="24" viewBox="0 0 24 24"
+                version="1.1" width="24" data-view-component="true" class="octicon octicon-mark-github">
+                <path
+                  d="M10.226 17.284c-2.965-.36-5.054-2.493-5.054-5.256 0-1.123.404-2.336 1.078-3.144-.292-.741-.247-2.314.09-2.965.898-.112 2.111.36 2.83 1.01.853-.269 1.752-.404 2.853-.404 1.1 0 1.999.135 2.807.382.696-.629 1.932-1.1 2.83-.988.315.606.36 2.179.067 2.942.72.854 1.101 2 1.101 3.167 0 2.763-2.089 4.852-5.098 5.234.763.494 1.28 1.572 1.28 2.807v2.336c0 .674.561 1.056 1.235.786 4.066-1.55 7.255-5.615 7.255-10.646C23.5 6.188 18.334 1 11.978 1 5.62 1 .5 6.188.5 12.545c0 4.986 3.167 9.12 7.435 10.669.606.225 1.19-.18 1.19-.786V20.63a2.9 2.9 0 0 1-1.078.224c-1.483 0-2.359-.808-2.987-2.313-.247-.607-.517-.966-1.034-1.033-.27-.023-.359-.135-.359-.27 0-.27.45-.471.898-.471.652 0 1.213.404 1.797 1.235.45.651.921.943 1.483.943.561 0 .92-.202 1.437-.719.382-.381.674-.718.944-.943">
+                </path>
+              </svg>
+              <span>Github</span>
+            </a>
           </div>
         </div>
       </footer>
@@ -201,9 +190,17 @@ function onCardClick(e: MouseEvent) {
 
 <style>
 @keyframes pixbeads-gradient-flow {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
+  0% {
+    background-position: 0% 50%;
+  }
+
+  50% {
+    background-position: 100% 50%;
+  }
+
+  100% {
+    background-position: 0% 50%;
+  }
 }
 
 .pixel-page {
@@ -248,9 +245,26 @@ function onCardClick(e: MouseEvent) {
   will-change: transform;
 }
 
-.orb-1 { width: 260px; height: 260px; top: 8%; left: -80px; }
-.orb-2 { width: 180px; height: 180px; top: 45%; right: -60px; }
-.orb-3 { width: 220px; height: 220px; bottom: 5%; left: 18%; }
+.orb-1 {
+  width: 260px;
+  height: 260px;
+  top: 8%;
+  left: -80px;
+}
+
+.orb-2 {
+  width: 180px;
+  height: 180px;
+  top: 45%;
+  right: -60px;
+}
+
+.orb-3 {
+  width: 220px;
+  height: 220px;
+  bottom: 5%;
+  left: 18%;
+}
 
 /* ---- 导航栏 ---- */
 .navbar {
@@ -295,7 +309,7 @@ function onCardClick(e: MouseEvent) {
   flex-wrap: wrap;
 }
 
-.nav-links > a:not(.btn-pixel) {
+.nav-links>a:not(.btn-pixel) {
   color: rgba(0, 0, 0, 0.55);
   text-decoration: none;
   font-size: 15px;
@@ -306,7 +320,7 @@ function onCardClick(e: MouseEvent) {
   cursor: pointer;
 }
 
-.nav-links > a:not(.btn-pixel)::after {
+.nav-links>a:not(.btn-pixel)::after {
   content: '';
   position: absolute;
   bottom: 0;
@@ -319,15 +333,15 @@ function onCardClick(e: MouseEvent) {
   border-radius: 4px;
 }
 
-.nav-links > a:not(.btn-pixel):hover {
+.nav-links>a:not(.btn-pixel):hover {
   color: #000;
 }
 
-.nav-links > a:not(.btn-pixel):hover::after {
+.nav-links>a:not(.btn-pixel):hover::after {
   width: 100%;
 }
 
-.nav-links > a:not(.btn-pixel):active {
+.nav-links>a:not(.btn-pixel):active {
   transform: scale(0.94);
 }
 
@@ -434,8 +448,17 @@ function onCardClick(e: MouseEvent) {
 }
 
 @keyframes pixbeads-pulse-dot {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.5; transform: scale(0.7); }
+
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.5;
+    transform: scale(0.7);
+  }
 }
 
 .hero h1 {
@@ -588,11 +611,30 @@ function onCardClick(e: MouseEvent) {
   transform: scale(1.15);
 }
 
-.pixel-card:hover .pixel-dots span:nth-child(1) { background: #e5484d; transition-delay: 0.02s; }
-.pixel-card:hover .pixel-dots span:nth-child(2) { background: #ff942f; transition-delay: 0.06s; }
-.pixel-card:hover .pixel-dots span:nth-child(3) { background: #30a46c; transition-delay: 0.10s; }
-.pixel-card:hover .pixel-dots span:nth-child(4) { background: #0091ff; transition-delay: 0.14s; }
-.pixel-card:hover .pixel-dots span:nth-child(5) { background: #6e56cf; transition-delay: 0.18s; }
+.pixel-card:hover .pixel-dots span:nth-child(1) {
+  background: #e5484d;
+  transition-delay: 0.02s;
+}
+
+.pixel-card:hover .pixel-dots span:nth-child(2) {
+  background: #ff942f;
+  transition-delay: 0.06s;
+}
+
+.pixel-card:hover .pixel-dots span:nth-child(3) {
+  background: #30a46c;
+  transition-delay: 0.10s;
+}
+
+.pixel-card:hover .pixel-dots span:nth-child(4) {
+  background: #0091ff;
+  transition-delay: 0.14s;
+}
+
+.pixel-card:hover .pixel-dots span:nth-child(5) {
+  background: #6e56cf;
+  transition-delay: 0.18s;
+}
 
 /* ---- 步骤卡片 ---- */
 .step-card {
@@ -638,8 +680,15 @@ function onCardClick(e: MouseEvent) {
 }
 
 @keyframes pixbeads-float-up {
-  0% { opacity: 1; transform: translateY(0) scale(0.8); }
-  100% { opacity: 0; transform: translateY(-80px) scale(1.4); }
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(0.8);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateY(-80px) scale(1.4);
+  }
 }
 
 /* ---- 页脚 ---- */
@@ -676,15 +725,22 @@ function onCardClick(e: MouseEvent) {
 
 .social {
   display: flex;
+  align-items: center;
   gap: 16px;
 }
 
 .social a {
+  display: inline-flex;
+  align-items: center;
   color: rgba(0, 0, 0, 0.45);
   text-decoration: none;
   transition: color 0.25s ease, transform 0.2s ease;
   font-size: 20px;
   cursor: pointer;
+}
+
+.social a svg {
+  display: block;
 }
 
 .social a:hover {
@@ -702,35 +758,44 @@ function onCardClick(e: MouseEvent) {
     padding: 24px 20px 32px;
     border-radius: 32px;
   }
+
   .pixel-page {
     padding: 12px;
   }
+
   .navbar {
     flex-direction: column;
     align-items: stretch;
     gap: 20px;
   }
+
   .nav-links {
     justify-content: space-between;
     gap: 12px;
   }
-  .nav-links > a:not(.btn-pixel) {
+
+  .nav-links>a:not(.btn-pixel) {
     font-size: 13px;
   }
+
   .btn-pixel {
     font-size: 10px;
     padding: 10px 18px;
   }
+
   .hero h1 {
     font-size: 2rem;
   }
+
   .gallery {
     grid-template-columns: repeat(2, 1fr);
     gap: 14px;
   }
+
   .pixel-card .emoji-big {
     font-size: 38px;
   }
+
   .footer-row {
     flex-direction: column;
     text-align: center;
@@ -742,9 +807,11 @@ function onCardClick(e: MouseEvent) {
     grid-template-columns: 1fr 1fr;
     gap: 10px;
   }
+
   .pixel-card {
     padding: 16px 10px;
   }
+
   .pixel-card .emoji-big {
     font-size: 30px;
   }
@@ -752,26 +819,56 @@ function onCardClick(e: MouseEvent) {
 
 /* ---- 呼吸 keyframes (配合 JS 漂移, 只动 opacity) ---- */
 @keyframes pixbeads-breathe {
-  0%, 100% { opacity: 0.5; }
-  50% { opacity: 0.85; }
+
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+
+  50% {
+    opacity: 0.85;
+  }
 }
 
 @keyframes pixbeads-breathe-slow {
-  0%, 100% { opacity: 0.5; }
-  50% { opacity: 0.9; }
+
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+
+  50% {
+    opacity: 0.9;
+  }
 }
 
 @keyframes pixbeads-breathe-slower {
-  0%, 100% { opacity: 0.5; }
-  50% { opacity: 1; }
+
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+
+  50% {
+    opacity: 1;
+  }
 }
 
-.pixbeads-breathe { animation: pixbeads-breathe 4s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
-.pixbeads-breathe-slow { animation: pixbeads-breathe-slow 5s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
-.pixbeads-breathe-slower { animation: pixbeads-breathe-slower 7s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+.pixbeads-breathe {
+  animation: pixbeads-breathe 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.pixbeads-breathe-slow {
+  animation: pixbeads-breathe-slow 5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.pixbeads-breathe-slower {
+  animation: pixbeads-breathe-slower 7s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
 
 /* ---- 尊重用户动效偏好 ---- */
 @media (prefers-reduced-motion: reduce) {
+
   *,
   *::before,
   *::after {
