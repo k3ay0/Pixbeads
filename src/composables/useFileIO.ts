@@ -4,7 +4,9 @@ import { usePaletteStore } from '@/stores/paletteStore'
 import { useCanvasStore } from '@/stores/canvasStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { useUiStore } from '@/stores/uiStore'
-import { importPbds, exportPbds, downloadGridImage, downloadStatsImage } from '@/utils/downloader'
+import { useVoxelStore } from '@/stores/voxelStore'
+import { useComponentStore } from '@/stores/componentStore'
+import { importPbds, exportPbds, downloadGridImage, downloadStatsImage, type PbdsVoxelData } from '@/utils/downloader'
 import { recalculateColorStats } from '@/utils/pixelation'
 import { calculateCenterOffset } from '@/utils/canvasUtils'
 import type { MappedPixel, GridDimensions, ColorSystem } from '@/types'
@@ -15,6 +17,8 @@ export function useFileIO() {
   const canvasStore = useCanvasStore()
   const editorStore = useEditorStore()
   const uiStore = useUiStore()
+  const voxelStore = useVoxelStore()
+  const componentStore = useComponentStore()
 
   function triggerFileInput(fileInput: HTMLInputElement | null) {
     uiStore.closeAllMenus()
@@ -35,7 +39,7 @@ export function useFileIO() {
     }
   }
 
-  function handleImportConfirm(data: { mappedPixelData: MappedPixel[][]; gridDimensions: GridDimensions; colorSystem: ColorSystem }) {
+  function handleImportConfirm(data: { mappedPixelData: MappedPixel[][]; gridDimensions: GridDimensions; colorSystem: ColorSystem; voxelData?: PbdsVoxelData }) {
     beadStore.setPixelData(data.mappedPixelData, data.gridDimensions)
     paletteStore.selectedColorSystem = data.colorSystem
     beadStore.originalImageSrc = null
@@ -49,6 +53,18 @@ export function useFileIO() {
     editorStore.saveSnapshot(data.mappedPixelData)
 
     beadStore.updateGranularity(data.gridDimensions.N)
+
+    // 新版 pbds：恢复体素编辑信息 + 组件信息（旧版无 voxelData 则跳过）
+    if (data.voxelData) {
+      const v = data.voxelData.voxel
+      voxelStore.setDimensions(v.dimW, v.dimH, v.dimD)
+      voxelStore.voxels = new Map(v.voxels)
+      voxelStore.layerNames = new Map(v.layerNames)
+      voxelStore.layerVisibility = new Map(v.layerVisibility)
+      voxelStore.currentAxis = v.currentAxis
+      voxelStore.currentZ = v.currentZ
+      componentStore.importComponents(data.voxelData.components)
+    }
 
     uiStore.showImportDialog = false
 
@@ -95,12 +111,30 @@ export function useFileIO() {
 
   async function handleExportPbds() {
     uiStore.closeAllMenus()
+
+    // 组装体素编辑信息 + 组件信息（写入 pbds 包内 voxelData.json）
+    const voxelData: PbdsVoxelData = {
+      version: '1.0',
+      voxel: {
+        dimW: voxelStore.dimW,
+        dimH: voxelStore.dimH,
+        dimD: voxelStore.dimD,
+        voxels: Array.from(voxelStore.voxels.entries()),
+        layerNames: Array.from(voxelStore.layerNames.entries()),
+        layerVisibility: Array.from(voxelStore.layerVisibility.entries()),
+        currentAxis: voxelStore.currentAxis,
+        currentZ: voxelStore.currentZ,
+      },
+      components: componentStore.components,
+    }
+
     await exportPbds({
       mappedPixelData: beadStore.mappedPixelData,
       gridDimensions: beadStore.gridDimensions,
       colorCounts: beadStore.colorCounts,
       totalBeadCount: beadStore.totalBeadCount,
       selectedColorSystem: paletteStore.selectedColorSystem,
+      voxelData,
     })
     uiStore.showToast('导出成功')
   }

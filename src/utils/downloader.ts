@@ -427,6 +427,8 @@ export function exportCsv({
 
 import JSZip from 'jszip'
 import type { PaletteColor } from '@/types'
+import type { VoxelData } from '@/stores/voxelStore'
+import type { VoxelComponent } from '@/stores/componentStore'
 
 export interface PbdsImportResult {
   mappedPixelData: MappedPixel[][]
@@ -434,6 +436,27 @@ export interface PbdsImportResult {
   colorCounts: ColorCounts
   totalBeadCount: number
   sourceColorSystem: ColorSystem
+  /** 新版本 pbds 附带：体素编辑信息 + 组件信息（旧版文件为 undefined） */
+  voxelData?: PbdsVoxelData
+}
+
+/** pbds 包内 voxelData.json 结构：体素编辑区信息 + 组件库信息 */
+export interface PbdsVoxelData {
+  version: string
+  voxel: {
+    dimW: number
+    dimH: number
+    dimD: number
+    /** key = "x,y,z" */
+    voxels: Array<[string, VoxelData]>
+    /** key = "axis:value"（图层名） */
+    layerNames: Array<[string, string]>
+    /** key = "axis:value"（图层可见性） */
+    layerVisibility: Array<[string, boolean]>
+    currentAxis: 'x' | 'y' | 'z'
+    currentZ: number
+  }
+  components: VoxelComponent[]
 }
 
 interface ColorEntry {
@@ -507,19 +530,22 @@ export function convertToCurrentSystem(
 
 /**
  * 导出 .pbds 文件
+ * @param voxelData 可选：体素编辑信息 + 组件信息（写入包内 voxelData.json，供新版导入恢复）
  */
 export async function exportPbds({
   mappedPixelData,
   gridDimensions,
   colorCounts,
   totalBeadCount,
-  selectedColorSystem
+  selectedColorSystem,
+  voxelData
 }: {
   mappedPixelData: MappedPixel[][] | null
   gridDimensions: GridDimensions | null
   colorCounts: ColorCounts | null
   totalBeadCount: number
   selectedColorSystem: ColorSystem
+  voxelData?: PbdsVoxelData
 }): Promise<void> {
   if (!mappedPixelData || !gridDimensions || !colorCounts) return
 
@@ -538,9 +564,9 @@ export async function exportPbds({
     index++
   }
 
-  // 生成 metadata.json
+  // 生成 metadata.json（带 voxelData 时为 2.0 版本，供导入按版本判断）
   const metadata = {
-    version: '1.0',
+    version: voxelData ? '2.0' : '1.0',
     gridWidth: N,
     gridHeight: M,
     colorSystem: selectedColorSystem,
@@ -574,6 +600,10 @@ export async function exportPbds({
   zip.file('metadata.json', metadataJson)
   zip.file('colormap.json', colormapJson)
   zip.file('pattern.json', patternJson)
+  // 新版：附带体素编辑信息 + 组件信息（可选，兼容旧版读取）
+  if (voxelData) {
+    zip.file('voxelData.json', JSON.stringify(voxelData))
+  }
 
   const blob = await zip.generateAsync({ type: 'blob' })
   triggerBlobDownload(blob, `pixbeads-${N}x${M}-${selectedColorSystem}.pbds`)
@@ -603,12 +633,26 @@ export async function importPbds(file: File): Promise<PbdsImportResult> {
   const patternText = await patternFile.async('text')
   const pattern = parsePattern(patternText, colorMap)
 
+  // 新版（version >= 2.0）：读取 voxelData.json（体素编辑信息 + 组件信息），旧版按版本号跳过
+  let voxelData: PbdsVoxelData | undefined
+  if (metadata.versionMajor >= 2) {
+    const voxelDataFile = zip.file('voxelData.json')
+    if (voxelDataFile) {
+      try {
+        voxelData = JSON.parse(await voxelDataFile.async('text')) as PbdsVoxelData
+      } catch {
+        voxelData = undefined
+      }
+    }
+  }
+
   return {
     mappedPixelData: pattern,
     gridDimensions: { N: metadata.gridWidth, M: metadata.gridHeight },
     colorCounts: recalculateColorStats(pattern).colorCounts,
     totalBeadCount: metadata.totalBeads,
-    sourceColorSystem: metadata.colorSystem
+    sourceColorSystem: metadata.colorSystem,
+    voxelData
   }
 }
 
@@ -617,13 +661,17 @@ function parseMetadata(text: string): {
   gridHeight: number
   colorSystem: ColorSystem
   totalBeads: number
+  /** 主版本号（如 "2.0" → 2），用于判断是否读取 voxelData.json */
+  versionMajor: number
 } {
   const data = JSON.parse(text)
+  const version = String(data.version ?? '1.0')
   return {
     gridWidth: data.gridWidth,
     gridHeight: data.gridHeight,
     colorSystem: data.colorSystem as ColorSystem,
-    totalBeads: data.totalBeads
+    totalBeads: data.totalBeads,
+    versionMajor: parseInt(version.split('.')[0], 10) || 1,
   }
 }
 

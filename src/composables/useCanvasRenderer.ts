@@ -11,6 +11,7 @@ import { useEditorStore } from '@/stores/editorStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useFocusStore } from '@/stores/focusStore'
 import { usePaletteStore } from '@/stores/paletteStore'
+import { useComponentStore } from '@/stores/componentStore'
 import { CELL_SIZE } from '@/constants/canvasConstants'
 import { getLinePoints, getRectPoints } from '@/utils/drawingAlgorithms'
 import { getColorKeyByHex, getDisplayKey } from '@/utils/colorSystemUtils'
@@ -28,6 +29,7 @@ export function useCanvasRenderer(
   const uiStore = useUiStore()
   const focusStore = useFocusStore()
   const paletteStore = usePaletteStore()
+  const componentStore = useComponentStore()
 
   const { mappedPixelData, gridDimensions } = storeToRefs(beadStore)
   const { previewCanvas, canvasZoom, canvasTranslate } = storeToRefs(canvasStore)
@@ -368,6 +370,56 @@ export function useCanvasRenderer(
     if (manualTool.value === 'select' && hc && !selectionStart.value) {
       drawCell(hc.row, hc.col, 'rgba(59,130,246,0.15)', 'rgba(59,130,246,0.4)')
     }
+
+    // ===== 组件拆分标注（编辑模式 2D 图纸拆分预览） =====
+    const splitItems = componentStore.splitPreview
+    if (splitItems && splitItems.length > 0) {
+      const selId = componentStore.selectedSplitId
+      splitItems.forEach((item) => {
+        const isSel = item.id === selId
+        // 半透明填充每格
+        ctx.fillStyle = item.color
+        ctx.globalAlpha = isSel ? 0.45 : 0.25
+        for (const key of item.pixelKeys) {
+          const [r, c] = key.split(',').map(Number)
+          if (r < 0 || r >= M || c < 0 || c >= N) continue
+          ctx.fillRect(c * CELL_SIZE, r * CELL_SIZE, CELL_SIZE, CELL_SIZE)
+        }
+        ctx.globalAlpha = 1
+        // 外轮廓边框 + 编号
+        const { minR, minC, maxR, maxC } = itemBounds(item.pixelKeys)
+        if (minR === Infinity) return
+        ctx.strokeStyle = item.color
+        ctx.lineWidth = isSel ? 2.5 : 1.2
+        ctx.strokeRect(
+          minC * CELL_SIZE + 0.5,
+          minR * CELL_SIZE + 0.5,
+          (maxC - minC + 1) * CELL_SIZE - 1,
+          (maxR - minR + 1) * CELL_SIZE - 1,
+        )
+        // 编号徽标（左上角）
+        ctx.fillStyle = item.color
+        ctx.fillRect(minC * CELL_SIZE, minR * CELL_SIZE, 14, 14)
+        ctx.fillStyle = '#fff'
+        ctx.font = 'bold 10px sans-serif'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(String(item.pixelKeys.length > 0 ? (componentStore.splitPreview?.indexOf(item) ?? 0) + 1 : 1), minC * CELL_SIZE + 7, minR * CELL_SIZE + 7)
+      })
+    }
+  }
+
+  /** 拆分标注分组包围盒（"row,col" key 列表） */
+  function itemBounds(keys: string[]): { minR: number; minC: number; maxR: number; maxC: number } {
+    let minR = Infinity, minC = Infinity, maxR = -Infinity, maxC = -Infinity
+    for (const key of keys) {
+      const [r, c] = key.split(',').map(Number)
+      if (r < minR) minR = r
+      if (r > maxR) maxR = r
+      if (c < minC) minC = c
+      if (c > maxC) maxC = c
+    }
+    return { minR, minC, maxR, maxC }
   }
 
   function clearPreviewOverlay() {
@@ -377,10 +429,37 @@ export function useCanvasRenderer(
     if (ctx) ctx.clearRect(0, 0, overlay.width, overlay.height)
   }
 
+  /** 拆分标注渲染入口：存在拆分预览时重绘 overlay（含标注层） */
+  function renderSplitOverlay() {
+    if (componentStore.splitPreview && componentStore.splitPreview.length > 0) {
+      renderPreviewOverlay()
+    }
+  }
+
+  /** 清空拆分标注（overlay 整体清除） */
+  function clearSplitOverlay() {
+    clearPreviewOverlay()
+  }
+
+  // 拆分预览/选中变化 → 自动重绘或清除标注层（编辑模式 2D 图纸标注）
+  watch(
+    [() => componentStore.splitPreview, () => componentStore.selectedSplitId],
+    () => {
+      if (componentStore.splitPreview && componentStore.splitPreview.length > 0) {
+        renderPreviewOverlay()
+      } else {
+        clearPreviewOverlay()
+      }
+    },
+    { deep: true },
+  )
+
   return {
     scheduleRender,
     renderCanvas,
     renderPreviewOverlay,
     clearPreviewOverlay,
+    renderSplitOverlay,
+    clearSplitOverlay,
   }
 }

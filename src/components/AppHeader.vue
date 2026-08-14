@@ -29,19 +29,14 @@ const { activeMode, workspace, showExportMenu } = storeToRefs(uiStore)
 const modes = MODES
 
 // 模式按钮是否可用：
-// - none：初始状态，等待导入图纸或新建 2D 画布，全部禁用
-// - 2d：只开放 优化/编辑/预览/专心，3D 编辑禁用
-// - 3d：只开放 3D 编辑，其它禁用
+// - none：初始状态，等待导入图纸或新建画布，全部禁用
+// - 有画布后（2d/3d）：全部模式开放，可在顶部自由切换（含 3D 编辑）
 function isModeEnabled(modeKey: AppMode): boolean {
-  if (workspace.value === 'none') return false
-  if (workspace.value === '3d') return modeKey === 'voxel'
-  return modeKey !== 'voxel'
+  return workspace.value !== 'none'
 }
 
 function modeDisabledHint(modeKey: AppMode): string {
-  if (workspace.value === 'none') return '请先导入图纸或新建画布'
-  if (workspace.value === '3d') return '新建 3D 画布后仅开放 3D 编辑'
-  return ''
+  return workspace.value === 'none' ? '请先导入图纸或新建画布' : ''
 }
 
 function toggleExportMenu() {

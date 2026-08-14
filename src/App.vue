@@ -530,9 +530,9 @@ watch(originalImageSrc, () => { if (!originalImageSrc.value) scheduleRender() })
 watch([() => canvasStore.canvasZoom, () => canvasStore.canvasTranslate], () => {
   scheduleRender()
 })
-// 从预览/专心模式返回时重新渲染canvas
+// 从预览/专心/3D 体素模式返回时重新渲染canvas（CanvasArea 在这些模式下会被卸载重建）
 watch(activeMode, (newMode, oldMode) => {
-  if (oldMode === 'preview' || oldMode === 'focus') {
+  if (oldMode === 'preview' || oldMode === 'focus' || oldMode === 'voxel') {
     // 延迟一帧确保DOM已更新
     requestAnimationFrame(() => scheduleRender())
   }
@@ -670,6 +670,13 @@ function handleOpenDims() {
   showDimsModal.value = true
 }
 
+/** 编辑模式确认导入组件后：切换到 3D 体素编辑器 */
+function handleEnter3DEditor() {
+  uiStore.setWorkspace('3d')
+  switchMode('voxel')
+}
+
+/** 3D 体素编辑器返回：切回 2D 编辑模式（有像素图纸时）或优化模式 */
 function applyDims() {
   const w = Math.max(1, Math.min(128, editDimW.value))
   const h = Math.max(1, Math.min(128, editDimH.value))
@@ -759,7 +766,7 @@ function handleBgUpdate(bg: any) {
             @undo-bg-removal="handleUndoBgRemoval" />
           <EditSidebar v-if="activeMode === 'edit'" @color-select="handlePaletteColorSelect"
             @color-replace="handlePaletteColorReplace" @mirror-horizontal="handleMirrorHorizontal"
-            @toggle-edit-history="showEditHistory = !showEditHistory" />
+            @toggle-edit-history="showEditHistory = !showEditHistory" @enter-3d-editor="handleEnter3DEditor" />
           <PreviewSidebar v-if="activeMode === 'preview'" :config="ironingConfig"
             @download-preview="handleDownloadPreview" @update:config="ironingConfig = $event" />
           <FocusSidebar v-if="activeMode === 'focus'" @color-change="handleFocusColorChange" />
@@ -776,7 +783,7 @@ function handleBgUpdate(bg: any) {
 
     <!-- VoxoB-style 3D Editor Layout -->
     <div v-if="activeMode === 'voxel'" class="voxoB-layout flex flex-col flex-1 min-h-0 v-theme-bg0">
-      <VoxelHeader @open-bg="showBgModal = true" @open-export="handleOpenExportModal" @open-dims="handleOpenDims"
+      <VoxelHeader @open-bg="showBgModal = true" @open-dims="handleOpenDims"
         @toggle-2d="showVoxel2D = !showVoxel2D" @open-slice-grid="showSliceGridModal = true" />
 
       <div class="flex flex-1 min-h-0" style="gap: 0" :style="{ background: 'var(--b3)' }">
