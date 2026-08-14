@@ -2,6 +2,9 @@ import { ref } from 'vue'
 import * as THREE from 'three'
 import { useVoxelStore, type Point3D, type VoxelTool, type VoxelData } from '@/stores/voxelStore'
 import { useVoxelGeometry } from '@/composables/useVoxelGeometry'
+import { useComponentStore, type VoxelComponent } from '@/stores/componentStore'
+import { remapComponentCellsToAxis } from '@/stores/componentStore'
+import { useVoxelHistory, type VoxelAction } from '@/composables/useVoxelHistory'
 
 // Simple color distance: sum of absolute RGB differences
 function colorDistance(a: string, b: string): number {
@@ -122,7 +125,9 @@ export function useVoxelInteraction(
   onToolAction: ToolActionCallback,
 ) {
   const store = useVoxelStore()
-  const { showGhost, clearGhost } = useVoxelGeometry()
+  const componentStore = useComponentStore()
+  const { showGhost, showComponentGhost, clearGhost, rebuildAllMeshes } = useVoxelGeometry()
+  const { pushUndo } = useVoxelHistory()
 
   const raycaster = new THREE.Raycaster()
   const pointer = new THREE.Vector2()
@@ -190,6 +195,17 @@ export function useVoxelInteraction(
   }
 
   function handlePointerMove(event: PointerEvent): void {
+    const comp = componentStore.activeComponent
+    if (comp) {
+      // Component placement mode — 悬停时本地渲染 3D 幽灵预览
+      const hit = raycast(event)
+      if (!hit || !hit.adjacent) return
+      const anchor = sliceAnchor(hit.adjacent)
+      const mappedCells = remapComponentCellsToAxis(comp.cells, store.currentAxis)
+      showComponentGhost(mappedCells, anchor, store.currentAxis)
+      return
+    }
+
     if (!anchor.value) return
 
     const hit = raycast(event)
@@ -197,6 +213,13 @@ export function useVoxelInteraction(
 
     // Update ghost preview for 2-click tools
     updateGhostPreview(hit, anchor.value)
+  }
+
+  /** 鼠标移出 3D 画布：清除组件放置的本地幽灵预览 */
+  function handlePointerLeave(): void {
+    if (componentStore.activeComponent) {
+      clearGhost()
+    }
   }
 
   function handleContextMenu(event: Event): void {
@@ -212,6 +235,11 @@ export function useVoxelInteraction(
       pasteAnchor.value = null
       clearGhost()
     }
+    // Cancel component placement
+    if (componentStore.activeComponent) {
+      componentStore.clearActive()
+      clearGhost()
+    }
   }
 
   function processToolClick(hit: HitResult): void {
@@ -219,6 +247,13 @@ export function useVoxelInteraction(
     const isDel = tool === 'eraser'
     const pos = isDel ? (hit.existing || hit.adjacent) : hit.adjacent
     if (!pos) return
+
+    // === COMPONENT PLACEMENT MODE (takes precedence over tools) ===
+    const comp = componentStore.activeComponent
+    if (comp) {
+      placeComponent(comp, pos)
+      return
+    }
 
     // === SINGLE-CLICK TOOLS ===
     if (tool === 'eraser') {
@@ -369,6 +404,41 @@ export function useVoxelInteraction(
         onToolAction(tool, positions, store.selectedColor || '#ff3070', 'draw')
       }
     }
+  }
+
+  /** 组件放置：把组件 cells 以 anchor 为原点盖章写入体素空间，并入撤销栈。
+   *  目标平面 = 2D 编辑器当前所选轴（与 2D 视图一致），方向 = 平面垂直方向。
+   *  锚点固定轴坐标强制 = currentZ（蓝色切片平面位置），保证组件落在切片平面上。 */
+  function sliceAnchor(anchor: Point3D): Point3D {
+    const axis = store.currentAxis
+    const fixed = store.currentZ
+    if (axis === 'x') return { x: fixed, y: anchor.y, z: anchor.z }
+    if (axis === 'y') return { x: anchor.x, y: fixed, z: anchor.z }
+    return { x: anchor.x, y: anchor.y, z: fixed }
+  }
+
+  function placeComponent(comp: VoxelComponent, anchor: Point3D): void {
+    const actions: VoxelAction[] = []
+    const direction = store.currentAxis
+    const cells = remapComponentCellsToAxis(comp.cells, direction)
+    const base = sliceAnchor(anchor)
+
+    for (const cell of cells) {
+      const x = base.x + cell.dx
+      const y = base.y + cell.dy
+      const z = base.z + cell.dz
+      const result = store.setVoxel(x, y, z, cell.color, cell.alpha ?? 255, direction)
+      if (result) actions.push({ x, y, z, prev: result.prev, next: result.next })
+    }
+
+    if (actions.length > 0) {
+      pushUndo(actions, 'place-component')
+      rebuildAllMeshes()
+    }
+
+    // Stay in placement mode for repeated placement
+    clearGhost()
+    showComponentGhost(cells, base, direction)
   }
 
   function computeToolPositions(anch: AnchorState, end: Point3D): Point3D[] {
@@ -543,6 +613,7 @@ export function useVoxelInteraction(
     canvas.addEventListener('pointerdown', handlePointerDown)
     canvas.addEventListener('pointerup', handlePointerUp)
     canvas.addEventListener('pointermove', handlePointerMove)
+    canvas.addEventListener('pointerleave', handlePointerLeave)
     canvas.addEventListener('contextmenu', handleContextMenu)
   }
 
@@ -550,6 +621,7 @@ export function useVoxelInteraction(
     canvas.removeEventListener('pointerdown', handlePointerDown)
     canvas.removeEventListener('pointerup', handlePointerUp)
     canvas.removeEventListener('pointermove', handlePointerMove)
+    canvas.removeEventListener('pointerleave', handlePointerLeave)
     canvas.removeEventListener('contextmenu', handleContextMenu)
   }
 
