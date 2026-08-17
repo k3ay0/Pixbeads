@@ -724,7 +724,8 @@ function handleBgUpdate(bg: any) {
   <div class="h-screen flex flex-col bg-white overflow-hidden font-sans">
     <!-- Header -->
     <AppHeader @switch-mode="switchMode" @trigger-file-input="triggerFileInput" @trigger-pbds-input="triggerPbdsInput"
-      @open-palette-editor="showPaletteEditor = true" @export-pbds="handleExportPbds"
+      @open-palette-editor="showPaletteEditor = true" @open-import-flow="showImportFlow = true"
+      @export-pbds="handleExportPbds"
       @download-image="handleDownloadImage" @download-stats="handleDownloadStats"
       @open-new-canvas="showNewCanvasModal = true" />
 

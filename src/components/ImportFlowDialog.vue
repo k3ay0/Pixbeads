@@ -150,20 +150,13 @@ function handleClose() {
   emit('close')
 }
 
-// 点击外部关闭
-function handleBackdropClick(e: MouseEvent) {
-  if ((e.target as HTMLElement).classList.contains('backdrop')) {
-    handleClose()
-  }
-}
 </script>
 
 <template>
   <Teleport to="body">
     <div
       v-if="isOpen"
-      class="modal-overlay backdrop"
-      @click="handleBackdropClick"
+      class="modal-overlay"
     >
       <div
         class="modal max-w-4xl h-[80vh]"

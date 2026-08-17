@@ -287,7 +287,7 @@ const dragStart = ref({ x: 0, y: 0 });
 const cropStart = ref({ x: 0, y: 0, width: 0, height: 0 });
 
 const HANDLE_SIZE = 12;
-const MIN_CROP_SIZE = 20;
+const MIN_CROP_SIZE = 0;
 const SNAP_THRESHOLD = 5; // 吸附阈值（像素）
 
 // 检测到的边缘位置（用于智能吸附）
