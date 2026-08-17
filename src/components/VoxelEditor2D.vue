@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useVoxelStore, type VoxelData } from '@/stores/voxelStore'
+import { useComponentStore, type VoxelComponent } from '@/stores/componentStore'
+import { remapComponentCellsToAxis } from '@/stores/componentStore'
 import { useVoxelHistory, type VoxelAction } from '@/composables/useVoxelHistory'
 import { useVoxelGeometry } from '@/composables/useVoxelGeometry'
 
 const store = useVoxelStore()
+const componentStore = useComponentStore()
 const { pushUndo } = useVoxelHistory()
 
 // ===== REFS =====
@@ -256,6 +259,79 @@ function renderGhost() {
   for (const [sx, sy] of ghostPts.value) {
     ctx.fillRect(sx * cs, sy * cs, cs, cs)
   }
+}
+
+// ===== COMPONENT PLACEMENT (2D) =====
+
+/** 世界坐标 → 当前切面屏幕坐标（screenToVoxel 的逆映射） */
+function voxelToScreen(wx: number, wy: number, wz: number): { sx: number; sy: number } {
+  if (sAx.value === 'y') return { sx: wx, sy: wz }
+  if (sAx.value === 'z') return { sx: wx, sy: store.dimH - 1 - wy }
+  return { sx: wz, sy: store.dimH - 1 - wy }
+}
+
+/** 在当前切面上放置组件（目标平面 = sAx，方向 = 平面垂直方向） */
+function placeComponent2D(c: { sx: number; sy: number }): void {
+  const comp = componentStore.activeComponent
+  if (!comp) return
+  const anchor = screenToVoxel(c.sx, c.sy)
+  const direction = sAx.value
+  const cells = remapComponentCellsToAxis(comp.cells, direction)
+
+  const actions: VoxelAction[] = []
+  for (const cell of cells) {
+    const x = anchor.x + cell.dx
+    const y = anchor.y + cell.dy
+    const z = anchor.z + cell.dz
+    const result = store.setVoxel(x, y, z, cell.color, cell.alpha ?? 255, direction)
+    if (result) actions.push({ x, y, z, prev: result.prev, next: result.next })
+  }
+
+  if (actions.length > 0) {
+    pushUndo(actions, 'place-component')
+    const { rebuildAllMeshes } = useVoxelGeometry()
+    rebuildAllMeshes()
+  }
+  renderCanvas()
+}
+
+/** 悬停预览：把激活组件按多色半透明格子画到幽灵 canvas（anchor 为世界坐标锚点） */
+function renderComponentGhostAt(anchor: { x: number; y: number; z: number }): void {
+  const ghost = ghostCanvasRef.value
+  if (!ghost) return
+  const ctx = ghost.getContext('2d')
+  if (!ctx) return
+  ctx.clearRect(0, 0, ghost.width, ghost.height)
+
+  const comp = componentStore.activeComponent
+  if (!comp) return
+
+  const direction = sAx.value
+  const cells = remapComponentCellsToAxis(comp.cells, direction)
+  const cs = cellSize.value * zoom.value
+
+  for (const cell of cells) {
+    const p = voxelToScreen(anchor.x + cell.dx, anchor.y + cell.dy, anchor.z + cell.dz)
+    ctx.globalAlpha = 0.35
+    ctx.fillStyle = cell.color
+    ctx.fillRect(p.sx * cs, p.sy * cs, cs, cs)
+  }
+  ctx.globalAlpha = 1
+}
+
+/** 2D 悬停：本地渲染 2D 预览（放置模式） */
+function updateHoverAnchor(c: { sx: number; sy: number }): void {
+  const comp = componentStore.activeComponent
+  if (!comp) return
+  const anchor = screenToVoxel(c.sx, c.sy)
+  // 固定轴 = 当前切面 sIdx（与 store.currentZ 同步），与 3D 的 sliceAnchor 一致
+  renderComponentGhostAt(anchor)
+}
+
+/** 清除幽灵 canvas（组件放置取消或失活时） */
+function clearComponentGhost(): void {
+  const ghost = ghostCanvasRef.value
+  ghost?.getContext('2d')?.clearRect(0, 0, ghost.width, ghost.height)
 }
 
 // ===== CELL PAINTING (accumulates undo actions) =====
@@ -604,6 +680,12 @@ function handleMouseDown(e: MouseEvent) {
   const tool = store.currentTool
   const mode = store.editMode
 
+  // Component placement — takes precedence over tools
+  if (componentStore.activeComponent) {
+    placeComponent2D(c)
+    return
+  }
+
   // Eyedropper
   if (tool === 'eyedropper') {
     const w = screenToVoxel(c.sx, c.sy)
@@ -696,6 +778,12 @@ function handleMouseMove(e: MouseEvent) {
   const c = cellFromEvent(e)
   if (!c) return
 
+  // Component placement — hover ghost preview
+  if (componentStore.activeComponent) {
+    updateHoverAnchor(c)
+    return
+  }
+
   const tool = store.currentTool
 
   // Pen — continuous drawing with Bresenham line fill
@@ -741,6 +829,10 @@ function handleMouseUp(_e: MouseEvent) {
 }
 
 function handleMouseLeave() {
+  // Component placement: 鼠标离开 2D 画布 → 清空本地 2D 预览
+  if (componentStore.activeComponent) {
+    clearComponentGhost()
+  }
   if (drawing.value) {
     drawing.value = false
     flushPending()
@@ -752,6 +844,11 @@ function handleContextMenu(e: MouseEvent) {
   e.preventDefault()
   if (toolAnchor.value) {
     cancelAnchor()
+  }
+  // Cancel component placement
+  if (componentStore.activeComponent) {
+    componentStore.clearActive()
+    clearComponentGhost()
   }
 }
 
@@ -778,6 +875,7 @@ function moveSlice(dir: number) {
   store.currentLayer = sIdx.value
   store.currentAxis = sAx.value
   store.currentZ = sIdx.value
+  store.layerAxis = sAx.value
   syncingFrom2D = false
   cancelAnchor()
   renderCanvas()
@@ -786,6 +884,11 @@ function moveSlice(dir: number) {
 // ===== WATCHERS =====
 watch(() => store.currentTool, () => {
   cancelAnchor()
+})
+
+// Component placement deactivated (toolbar cancel / 3D cancel) → clear 2D ghost
+watch(() => componentStore.activeComponent, () => {
+  clearComponentGhost()
 })
 
 watch([() => store.selectedColor, () => store.editMode, () => store.brushSize], () => {

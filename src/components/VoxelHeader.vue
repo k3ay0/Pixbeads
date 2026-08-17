@@ -7,7 +7,6 @@ import { useVoxelGeometry } from '@/composables/useVoxelGeometry'
 
 const emit = defineEmits<{
   'open-bg': []
-  'open-export': []
   'open-dims': []
   'toggle-2d': []
   'open-slice-grid': []
@@ -97,11 +96,6 @@ function setLang(e: Event): void {
     <button class="px-2 py-1 v-theme-bg3 rounded whitespace-nowrap hover:!border-cyan-400"
       @click="emit('open-bg')" style="border: 1px solid var(--bd)">
       🎨 背景
-    </button>
-    <button
-      class="px-2 py-1 v-theme-bg3 rounded whitespace-nowrap hover:!border-pink-400 v-theme-accent2"
-      @click="emit('open-export')" style="border: 1px solid var(--bd)">
-      ⬇ 导出
     </button>
     <button
       class="px-2 py-1 v-theme-bg3 rounded whitespace-nowrap hover:!border-cyan-400"

@@ -46,14 +46,15 @@ export function useVoxelGeometry() {
   const store = useVoxelStore()
 
   // --- Material factory ---
+  // 材质参数偏向"色准"：无金属度、低粗糙度，使 3D 显示色尽量接近 2D 图纸的 hex 原色
   function createMaterial(color: string, alpha: number): THREE.MeshStandardMaterial {
     const opacity = alpha / 255
     return new THREE.MeshStandardMaterial({
       color,
       transparent: opacity < 1,
       opacity,
-      roughness: 0.5,
-      metalness: 0.1,
+      roughness: 0.85,
+      metalness: 0,
       flatShading: true,
     })
   }
@@ -240,11 +241,47 @@ export function useVoxelGeometry() {
   function clearGhost(): void {
     for (const mesh of ghostMeshes) {
       ghostGroup.remove(mesh)
+      ;(mesh.material as THREE.Material)?.dispose()
     }
     ghostMeshes = []
     if (ghostMaterial) {
       ghostMaterial.dispose()
       ghostMaterial = null
+    }
+  }
+
+  /**
+   * 组件放置预览：按格子颜色创建独立材质的半透明幽灵。
+   * cells 为相对偏移（dx/dy/dz），anchor 为放置锚点，direction 为统一方向（组件轴）。
+   */
+  function showComponentGhost(
+    cells: Array<{ dx: number; dy: number; dz: number; color: string }>,
+    anchor: { x: number; y: number; z: number },
+    direction: VoxelDirection = 'y',
+  ): void {
+    clearGhost()
+
+    if (cells.length === 0) return
+
+    const geometry = getSharedGeometry()
+    const rot = getDirectionRotation(direction)
+
+    for (const cell of cells) {
+      const mat = new THREE.MeshStandardMaterial({
+        color: cell.color,
+        transparent: true,
+        opacity: 0.35,
+        depthWrite: false,
+      })
+      const mesh = new THREE.Mesh(geometry, mat)
+      const x = anchor.x + cell.dx
+      const y = anchor.y + cell.dy
+      const z = anchor.z + cell.dz
+      const pos = getMeshPosition(x, y, z, direction)
+      mesh.position.set(pos.x, pos.y, pos.z)
+      mesh.rotation.set(rot.x, rot.y, rot.z)
+      ghostGroup.add(mesh)
+      ghostMeshes.push(mesh)
     }
   }
 
@@ -323,6 +360,7 @@ export function useVoxelGeometry() {
 
     // Ghost preview
     showGhost,
+    showComponentGhost,
     clearGhost,
 
     // Wireframe

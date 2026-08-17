@@ -3,6 +3,7 @@ import { computed, onMounted, onBeforeUnmount, ref, watch, nextTick } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useVoxelStore, type VoxelData, type VoxelMap } from '@/stores/voxelStore'
 import { usePaletteStore } from '@/stores/paletteStore'
+import { useComponentStore, type VoxelComponent } from '@/stores/componentStore'
 import { useVoxelHistory, type VoxelAction } from '@/composables/useVoxelHistory'
 import { useVoxelGeometry } from '@/composables/useVoxelGeometry'
 import { getColorKeyByHex, sortColorsByHue } from '@/utils/colorSystemUtils'
@@ -10,6 +11,7 @@ import { hexToRgb, findClosestPaletteColor, isLightColor } from '@/utils/colorUt
 
 const voxelStore = useVoxelStore()
 const paletteStore = usePaletteStore()
+const componentStore = useComponentStore()
 const { activeBeadPalette, selectedColorSystem } = storeToRefs(paletteStore)
 const { pushUndo } = useVoxelHistory()
 const { rebuildAllMeshes } = useVoxelGeometry()
@@ -64,6 +66,14 @@ const dropMode = ref<'before' | 'after' | 'swap'>('swap')
 // --- Inline rename state ---
 const editingLayerVal = ref<number | null>(null)
 const editingName = ref('')
+
+// --- Component save name input (Tauri 不支持 window.prompt) ---
+const showComponentNameInput = ref(false)
+const componentNameInput = ref('')
+
+// --- Project save name input (Tauri 不支持 window.prompt) ---
+const showProjectNameInput = ref(false)
+const projectNameInput = ref('')
 
 function setLayerAxis(ax: 'x' | 'y' | 'z') {
   layerAxis.value = ax
@@ -889,10 +899,19 @@ function refreshProjectList(): void {
 }
 
 function saveProject(): void {
-  const store = voxelStore
-  const name = window.prompt('Project name:')
-  if (!name) return
+  // Tauri WebView 不支持 window.prompt，改用内联输入
+  showProjectNameInput.value = true
+  projectNameInput.value = ''
+  nextTick(() => {
+    document.querySelector<HTMLInputElement>('.project-name-input')?.focus()
+  })
+}
 
+function confirmSaveProject(): void {
+  const name = projectNameInput.value
+  showProjectNameInput.value = false
+  if (!name || !name.trim()) return
+  const store = voxelStore
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     const data = raw ? JSON.parse(raw) : {}
@@ -905,6 +924,10 @@ function saveProject(): void {
   } catch (e) {
     console.error('Save failed:', e)
   }
+}
+
+function cancelSaveProject(): void {
+  showProjectNameInput.value = false
 }
 
 function loadProject(): void {
@@ -940,6 +963,64 @@ function deleteProject(): void {
     refreshProjectList()
   } catch (e) {
     console.error('Delete failed:', e)
+  }
+}
+
+// ============================================================
+// Component module
+// ============================================================
+
+/** 渲染组件缩略图：cells 为二维局部坐标（x/y），直接按图纸绘制 */
+function renderComponentThumb(el: HTMLCanvasElement | null, comp: VoxelComponent): void {
+  if (!el) return
+  const ctx = el.getContext('2d')
+  if (!ctx) return
+  const cell = 6
+  const cw = Math.max(1, comp.w) * cell
+  const ch = Math.max(1, comp.h) * cell
+  el.width = cw
+  el.height = ch
+  ctx.clearRect(0, 0, cw, ch)
+
+  for (const c of comp.cells) {
+    ctx.globalAlpha = (c.alpha ?? 255) / 255
+    ctx.fillStyle = c.color
+    ctx.fillRect(c.x * cell, c.y * cell, cell - 1, cell - 1)
+  }
+  ctx.globalAlpha = 1
+}
+
+function saveComponentFromSlice(): void {
+  // Tauri WebView 不支持 window.prompt，改用内联输入
+  showComponentNameInput.value = true
+  componentNameInput.value = ''
+  nextTick(() => {
+    document.querySelector<HTMLInputElement>('.component-name-input')?.focus()
+  })
+}
+
+function confirmSaveComponent(): void {
+  const name = componentNameInput.value
+  showComponentNameInput.value = false
+  if (!name || !name.trim()) return
+  const comps = componentStore.saveComponentFromSlice(name)
+  if (comps.length === 0) {
+    alert('当前图层没有方向垂直切面的体素，无法保存为组件。')
+  } else if (comps.length > 1) {
+    alert(`已保存为 ${comps.length} 个组件（按连通区域拆分）。`)
+  }
+}
+
+function cancelSaveComponent(): void {
+  showComponentNameInput.value = false
+}
+
+/** 点击组件：已激活则取消，否则激活进入 3D 放置模式 */
+function toggleComponentActive(id: string): void {
+  if (componentStore.activeComponentId === id) {
+    componentStore.clearActive()
+  } else {
+    componentStore.setActive(id)
   }
 }
 
@@ -1284,6 +1365,54 @@ onMounted(() => {
       </div>
     </div>
 
+    <!-- 组件 -->
+    <div class="panel px-4 py-3 space-y-2">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-bold text-gray-700">组件</h3>
+        <button v-if="componentStore.activeComponent" @click="componentStore.clearActive()"
+          class="text-xs px-2 py-0.5 rounded bg-red-500 text-white" title="取消放置">
+          ✕ 取消放置
+        </button>
+      </div>
+      <button v-if="!showComponentNameInput" @click="saveComponentFromSlice"
+        class="w-full text-xs py-1.5 rounded bg-gray-100 hover:bg-gray-200 font-medium text-gray-700">
+        📥 保存当前图层为组件
+      </button>
+      <div v-else class="space-y-1">
+        <input v-model="componentNameInput" class="component-name-input w-full text-xs border border-gray-300 rounded px-2 py-1 outline-none focus:border-blue-400"
+          placeholder="组件名称" @keydown.enter="confirmSaveComponent" @keydown.escape="cancelSaveComponent" />
+        <div class="flex gap-1">
+          <button @click="confirmSaveComponent"
+            class="flex-1 text-xs py-1 rounded bg-blue-500 text-white font-medium hover:bg-blue-600">
+            确定
+          </button>
+          <button @click="cancelSaveComponent"
+            class="flex-1 text-xs py-1 rounded bg-gray-100 text-gray-600 hover:bg-gray-200">
+            取消
+          </button>
+        </div>
+      </div>
+      <div v-if="componentStore.activeComponent" class="text-[10px] text-blue-600 bg-blue-50 rounded px-2 py-1">
+        放置中：在 2D / 3D 视图中点击放置，右键取消
+      </div>
+      <div v-if="componentStore.components.length === 0" class="text-[10px] text-gray-400 py-1 text-center">
+        暂无组件
+      </div>
+      <div v-else class="space-y-1 max-h-40 overflow-y-auto">
+        <div v-for="comp in componentStore.components" :key="comp.id" @click="toggleComponentActive(comp.id)"
+          class="flex items-center gap-2 px-2 py-1 rounded cursor-pointer transition-colors"
+          :class="componentStore.activeComponentId === comp.id
+            ? 'bg-blue-600 text-white'
+            : 'bg-gray-100 hover:bg-gray-200 text-gray-700'">
+          <canvas :ref="(el) => renderComponentThumb(el as HTMLCanvasElement | null, comp)" class="w-8 h-8 rounded flex-shrink-0"
+            style="image-rendering: pixelated; background: #eee" />
+          <span class="text-xs truncate flex-1">{{ comp.name }}</span>
+          <span class="text-[9px] opacity-60 font-mono">{{ comp.axis.toUpperCase() }}</span>
+          <span class="text-[10px] cursor-pointer" title="删除" @click.stop="componentStore.deleteComponent(comp.id)">🗑</span>
+        </div>
+      </div>
+    </div>
+
     <!-- Actions Grid (2 columns) -->
     <div class="panel px-4 py-3 space-y-2">
       <h3 class="text-sm font-bold text-gray-700">操作</h3>
@@ -1298,10 +1427,24 @@ onMounted(() => {
     <!-- Project Save / Load -->
     <div class="panel px-4 py-3 space-y-2">
       <h3 class="text-sm font-bold text-gray-700">项目</h3>
-      <button @click="saveProject"
+      <button v-if="!showProjectNameInput" @click="saveProject"
         class="w-full text-xs py-1.5 rounded bg-green-500 text-white hover:bg-green-600 font-medium">
         💾 保存项目
       </button>
+      <div v-else class="space-y-1">
+        <input v-model="projectNameInput" class="project-name-input w-full text-xs border border-gray-300 rounded px-2 py-1 outline-none focus:border-blue-400"
+          placeholder="项目名称" @keydown.enter="confirmSaveProject" @keydown.escape="cancelSaveProject" />
+        <div class="flex gap-1">
+          <button @click="confirmSaveProject"
+            class="flex-1 text-xs py-1 rounded bg-blue-500 text-white font-medium hover:bg-blue-600">
+            确定
+          </button>
+          <button @click="cancelSaveProject"
+            class="flex-1 text-xs py-1 rounded bg-gray-100 text-gray-600 hover:bg-gray-200">
+            取消
+          </button>
+        </div>
+      </div>
       <div v-if="projectNames.length > 0" class="space-y-1">
         <select v-model="selectedProject" class="w-full text-xs border border-gray-200 rounded px-2 py-1 bg-white">
           <option value="" disabled>选择项目...</option>

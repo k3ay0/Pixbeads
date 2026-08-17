@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ColorSystem, MappedPixel, GridDimensions, ColorCounts, PaletteColor } from '@/types'
-import { convertToCurrentSystem, colorDistance } from '@/utils/downloader'
+import { convertToCurrentSystem, colorDistance, type PbdsVoxelData } from '@/utils/downloader'
 import { hexToRgb } from '@/utils/pixelation'
 
 interface PbdsImportResult {
@@ -9,6 +9,7 @@ interface PbdsImportResult {
   colorCounts: ColorCounts
   totalBeadCount: number
   sourceColorSystem: ColorSystem
+  voxelData?: PbdsVoxelData
 }
 
 const props = defineProps<{
@@ -20,7 +21,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: []
-  confirm: [data: { mappedPixelData: MappedPixel[][]; gridDimensions: GridDimensions; colorSystem: ColorSystem }]
+  confirm: [data: { mappedPixelData: MappedPixel[][]; gridDimensions: GridDimensions; colorSystem: ColorSystem; voxelData?: PbdsVoxelData }]
 }>()
 
 // 计算颜色统计
@@ -62,7 +63,8 @@ function handleUseOriginal() {
   emit('confirm', {
     mappedPixelData: props.importData.mappedPixelData,
     gridDimensions: props.importData.gridDimensions,
-    colorSystem: props.importData.sourceColorSystem
+    colorSystem: props.importData.sourceColorSystem,
+    voxelData: props.importData.voxelData
   })
 }
 
@@ -79,7 +81,8 @@ function handleConvert() {
   emit('confirm', {
     mappedPixelData: result.mappedPixelData,
     gridDimensions: props.importData.gridDimensions,
-    colorSystem: props.currentColorSystem
+    colorSystem: props.currentColorSystem,
+    voxelData: props.importData.voxelData
   })
 }
 

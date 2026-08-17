@@ -496,17 +496,24 @@ function initScene(): void {
   controls.dampingFactor = 0.08
   controls.minDistance = 3
   controls.maxDistance = 200
+  // 左键留给工具交互（放置/绘制），旋转改为中键拖动，右键平移
+  controls.mouseButtons = {
+    LEFT: null,
+    MIDDLE: THREE.MOUSE.ROTATE,
+    RIGHT: THREE.MOUSE.PAN,
+  }
   controls.update()
 
   // --- Lights ---
-  const ambient = new THREE.AmbientLight(0xffffff, 0.55)
+  // 光照以白色为主且总量接近 1，使 3D 显示色尽量接近 2D 图纸的 hex 原色
+  const ambient = new THREE.AmbientLight(0xffffff, 0.75)
   scene.add(ambient)
 
-  const dir1 = new THREE.DirectionalLight(0xffffff, 0.6)
+  const dir1 = new THREE.DirectionalLight(0xffffff, 0.25)
   dir1.position.set(40, 60, 40)
   scene.add(dir1)
 
-  const dir2 = new THREE.DirectionalLight(0x6688ff, 0.2)
+  const dir2 = new THREE.DirectionalLight(0xffffff, 0.1)
   dir2.position.set(-20, 10, -20)
   scene.add(dir2)
 

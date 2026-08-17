@@ -5,6 +5,7 @@ import { useBeadStore } from '../stores/beadStore'
 import { usePaletteStore } from '../stores/paletteStore'
 import { useEditorStore } from '../stores/editorStore'
 import { useFocusStore } from '../stores/focusStore'
+import { useComponentStore, type SplitPreviewItem } from '../stores/componentStore'
 import { getColorKeyByHex, sortColorsByHue } from '../utils/colorSystemUtils'
 import { hexToRgb, replaceAllColor, recalculateColorStats } from '../utils/pixelation'
 import { findClosestPaletteColor, isLightColor } from '../utils/colorUtils'
@@ -15,12 +16,14 @@ const emit = defineEmits<{
   (e: 'color-replace', source: any, target: any): void
   (e: 'mirror-horizontal'): void
   (e: 'toggle-edit-history'): void
+  (e: 'enter-3d-editor'): void
 }>()
 
 const beadStore = useBeadStore()
 const paletteStore = usePaletteStore()
 const editorStore = useEditorStore()
 const focusStore = useFocusStore()
+const componentStore = useComponentStore()
 
 const { mappedPixelData } = storeToRefs(beadStore)
 const { selectedColorSystem, activeBeadPalette } = storeToRefs(paletteStore)
@@ -67,6 +70,67 @@ const colorPanelCollapsed = ref(false)
 const hueSortEnabled = ref(false)
 const showAllColors = ref(false) // false=当前图中色, true=全部色块
 const selectedCategory = ref('all') // 分类筛选，'all'=全部
+
+// ========== 组件拆分导入（编辑模式 2D 图纸） ==========
+const editingSplitNameId = ref<string | null>(null) // 内联改名中的分组 id
+const splitNameInput = ref('') // 改名输入值
+
+/** 拆分当前 2D 图纸 → 生成预览（画布标注 + 侧栏分组列表） */
+function startSplitImport() {
+  if (!mappedPixelData.value) return
+  componentStore.previewSplitGrid(mappedPixelData.value)
+}
+
+/** 微调后重新拆分（基于当前画布最新像素） */
+function resplitImport() {
+  if (!mappedPixelData.value) return
+  componentStore.previewSplitGrid(mappedPixelData.value)
+}
+
+/** 确认导入全部预览分组到组件库 */
+function confirmSplitImport() {
+  const created = componentStore.confirmImportSplit()
+  if (created.length > 0) {
+    alert(`已导入 ${created.length} 个组件到体素组件库。`)
+    // 切换到 3D 体素编辑器（由父组件完成模式切换与清理）
+    emit('enter-3d-editor')
+  }
+}
+
+function cancelSplitImport() {
+  componentStore.cancelSplitImport()
+  editingSplitNameId.value = null
+}
+
+function selectSplitItem(id: string) {
+  componentStore.setSelectedSplitId(id)
+}
+
+function removeSplitItem(id: string) {
+  componentStore.removeSplitItem(id)
+}
+
+function startRenameSplit(item: SplitPreviewItem) {
+  editingSplitNameId.value = item.id
+  splitNameInput.value = item.name
+  nextTick(() => {
+    document.querySelector<HTMLInputElement>('.split-rename-input')?.focus()
+    document.querySelector<HTMLInputElement>('.split-rename-input')?.select()
+  })
+}
+
+function confirmRenameSplit() {
+  if (editingSplitNameId.value) {
+    componentStore.renameSplitItem(editingSplitNameId.value, splitNameInput.value)
+  }
+  editingSplitNameId.value = null
+  splitNameInput.value = ''
+}
+
+function cancelRenameSplit() {
+  editingSplitNameId.value = null
+  splitNameInput.value = ''
+}
 
 // ========== HSV 颜色选择器 ==========
 const pickerHue = ref(0)        // 0-360
@@ -863,6 +927,69 @@ const toolNameMap: Record<string, string> = {
         </div>
       </Transition>
     </Teleport>
+
+    <!-- 组件拆分导入 -->
+    <div class="panel p-4 space-y-3">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">组件拆分导入</h3>
+        <span v-if="componentStore.splitPreview?.length" class="text-[10px] text-gray-400 dark:text-gray-500">
+          {{ componentStore.splitPreview.length }} 个组件
+        </span>
+      </div>
+
+      <p class="text-[11px] text-gray-400 dark:text-gray-500 leading-relaxed">
+        按连通区域自动拆分当前图纸为组件，画布中将标注各组件，可微调后导入体素组件库。
+      </p>
+
+      <!-- 拆分预览分组列表 -->
+      <div v-if="componentStore.splitPreview?.length" class="space-y-1.5">
+        <div v-for="item in componentStore.splitPreview" :key="item.id"
+          class="flex items-center gap-2 px-2 py-1.5 rounded border transition-colors cursor-pointer"
+          :class="componentStore.selectedSplitId === item.id
+            ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30'
+            : 'border-gray-200 dark:border-gray-700 hover:border-gray-300'"
+          @click="selectSplitItem(item.id)">
+          <span class="w-4 h-4 rounded flex-shrink-0" :style="{ backgroundColor: item.color }"></span>
+          <!-- 内联改名 -->
+          <input v-if="editingSplitNameId === item.id" v-model="splitNameInput"
+            class="split-rename-input flex-1 min-w-0 text-xs px-1 py-0.5 rounded border border-blue-400 outline-none bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200"
+            @blur="confirmRenameSplit" @keydown.enter="confirmRenameSplit" @keydown.escape="cancelRenameSplit"
+            @click.stop />
+          <span v-else class="flex-1 min-w-0 text-xs text-gray-700 dark:text-gray-300 truncate cursor-text"
+            @click.stop="startRenameSplit(item)">{{ item.name }}</span>
+          <span class="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums flex-shrink-0">{{ item.cells.length }} 格</span>
+          <button class="text-[11px] text-red-500 hover:text-red-600 flex-shrink-0" title="删除该分组"
+            @click.stop="removeSplitItem(item.id)">✕</button>
+        </div>
+      </div>
+
+      <!-- 操作按钮 -->
+      <div v-if="!componentStore.splitPreview?.length" class="flex gap-2">
+        <button @click="startSplitImport"
+          class="flex-1 py-1.5 rounded-lg text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 transition-colors">
+          🔀 拆分当前图纸
+        </button>
+      </div>
+      <div v-else class="space-y-2">
+        <div class="flex gap-2">
+          <button @click="resplitImport"
+            class="flex-1 py-1.5 rounded-lg text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
+            🔄 重新拆分
+          </button>
+          <button @click="confirmSplitImport"
+            class="flex-1 py-1.5 rounded-lg text-xs font-medium bg-green-500 text-white hover:bg-green-600 transition-colors">
+            ✓ 确认导入
+          </button>
+          <button @click="cancelSplitImport"
+            class="flex-1 py-1.5 rounded-lg text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
+            ✕ 取消
+          </button>
+        </div>
+        <p class="text-[10px] text-gray-400 dark:text-gray-500 leading-relaxed">
+          微调：在画布用画笔/橡皮修改像素后，点「重新拆分」更新分组。
+        </p>
+      </div>
+    </div>
 
     <!-- Display settings card -->
     <div class="panel p-4 space-y-3">
